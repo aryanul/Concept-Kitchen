@@ -1,0 +1,19 @@
+{
+  "name": "ck-nest-hrms",
+  "private": true,
+  "version": "0.0.0",
+  "description": "CK Nest HRMS — internal Human Resources Management System.",
+  "workspaces": [
+    "web",
+    "server",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "run-p dev:web dev:server",
+    "dev:web": "npm --workspace web run dev",
+    "dev:server": "npm --workspace server run dev"
+  },
+  "devDependencies": {
+    "npm-run-all2": "^7.0.2"
+  }
+}

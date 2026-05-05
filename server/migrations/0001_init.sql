@@ -1,0 +1,12 @@
+-- Migration 0001: branches
+-- Smoke-test schema. Other Phase 1 tables follow in 0002.
+
+CREATE TABLE branches (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  code VARCHAR(16) NOT NULL UNIQUE,
+  name VARCHAR(120) NOT NULL,
+  city VARCHAR(80) NOT NULL,
+  kind VARCHAR(32) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB;

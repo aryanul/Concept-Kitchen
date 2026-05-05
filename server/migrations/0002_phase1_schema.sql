@@ -1,0 +1,275 @@
+-- Migration 0002: full Phase 1 schema (19 tables, dependency-ordered)
+-- Currency stored as BIGINT paise (rupees * 100). Booleans as TINYINT(1).
+
+CREATE TABLE users (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  email VARCHAR(190) NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  role ENUM('HR_ADMIN','MANAGER','EMPLOYEE','FINANCE') NOT NULL,
+  employee_id CHAR(26) NULL UNIQUE,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB;
+
+CREATE TABLE departments (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  name VARCHAR(120) NOT NULL UNIQUE,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB;
+
+CREATE TABLE shifts (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  code VARCHAR(16) NOT NULL UNIQUE,
+  name VARCHAR(80) NOT NULL,
+  start_time CHAR(5) NOT NULL,
+  end_time CHAR(5) NOT NULL,
+  kind VARCHAR(32) NOT NULL,
+  break_min INT NOT NULL DEFAULT 45,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB;
+
+CREATE TABLE salary_grades (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  code VARCHAR(16) NOT NULL UNIQUE,
+  kind VARCHAR(32) NOT NULL,
+  min_gross BIGINT NOT NULL,
+  max_gross BIGINT NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB;
+
+CREATE TABLE employees (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  code VARCHAR(20) NOT NULL UNIQUE,
+  first_name VARCHAR(50) NOT NULL,
+  last_name VARCHAR(50) NOT NULL,
+  designation VARCHAR(120) NOT NULL,
+  status ENUM('ACTIVE','PROBATION','ON_LEAVE','EXITED') NOT NULL DEFAULT 'ACTIVE',
+  joining_date DATE NOT NULL,
+  exit_date DATE NULL,
+  email VARCHAR(190) NOT NULL UNIQUE,
+  phone VARCHAR(20) NOT NULL,
+  branch_id CHAR(26) NOT NULL,
+  department_id CHAR(26) NOT NULL,
+  manager_id CHAR(26) NULL,
+  grade_id CHAR(26) NOT NULL,
+  ctc BIGINT NOT NULL,
+  bank_name VARCHAR(120) NULL,
+  bank_account VARCHAR(40) NULL,
+  ifsc VARCHAR(20) NULL,
+  pan VARCHAR(15) NULL,
+  aadhaar VARCHAR(20) NULL,
+  pf VARCHAR(40) NULL,
+  esic VARCHAR(40) NULL,
+  uan VARCHAR(40) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  CONSTRAINT fk_employees_branch     FOREIGN KEY (branch_id)     REFERENCES branches(id)      ON DELETE RESTRICT,
+  CONSTRAINT fk_employees_department FOREIGN KEY (department_id) REFERENCES departments(id)   ON DELETE RESTRICT,
+  CONSTRAINT fk_employees_grade      FOREIGN KEY (grade_id)      REFERENCES salary_grades(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_employees_manager    FOREIGN KEY (manager_id)    REFERENCES employees(id)     ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+ALTER TABLE users
+  ADD CONSTRAINT fk_users_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE SET NULL;
+
+CREATE TABLE roster_entries (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  employee_id CHAR(26) NOT NULL,
+  shift_id CHAR(26) NOT NULL,
+  date DATE NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_roster_employee_date (employee_id, date),
+  CONSTRAINT fk_roster_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+  CONSTRAINT fk_roster_shift    FOREIGN KEY (shift_id)    REFERENCES shifts(id)    ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE TABLE attendance (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  employee_id CHAR(26) NOT NULL,
+  date DATE NOT NULL,
+  in_at DATETIME(3) NULL,
+  out_at DATETIME(3) NULL,
+  total_min INT NOT NULL DEFAULT 0,
+  ot_min INT NOT NULL DEFAULT 0,
+  source ENUM('BIOMETRIC','MANUAL','GEO') NOT NULL DEFAULT 'BIOMETRIC',
+  is_late TINYINT(1) NOT NULL DEFAULT 0,
+  notes VARCHAR(255) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_attendance_employee_date (employee_id, date),
+  CONSTRAINT fk_attendance_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE holidays (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  date DATE NOT NULL UNIQUE,
+  name VARCHAR(120) NOT NULL,
+  kind VARCHAR(20) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB;
+
+CREATE TABLE holiday_branches (
+  holiday_id CHAR(26) NOT NULL,
+  branch_id  CHAR(26) NOT NULL,
+  PRIMARY KEY (holiday_id, branch_id),
+  CONSTRAINT fk_hb_holiday FOREIGN KEY (holiday_id) REFERENCES holidays(id) ON DELETE CASCADE,
+  CONSTRAINT fk_hb_branch  FOREIGN KEY (branch_id)  REFERENCES branches(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE leaves (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  employee_id CHAR(26) NOT NULL,
+  type ENUM('EL','CL','SL','LWP','TOUR','COMP_OFF') NOT NULL,
+  from_date DATE NOT NULL,
+  to_date DATE NOT NULL,
+  days DECIMAL(4,1) NOT NULL,
+  reason VARCHAR(500) NOT NULL,
+  status ENUM('PENDING','APPROVED','REJECTED','CANCELLED') NOT NULL DEFAULT 'PENDING',
+  attachment VARCHAR(500) NULL,
+  approver_id CHAR(26) NULL,
+  decided_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  CONSTRAINT fk_leaves_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+  CONSTRAINT fk_leaves_approver FOREIGN KEY (approver_id) REFERENCES employees(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE leave_balances (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  employee_id CHAR(26) NOT NULL,
+  type ENUM('EL','CL','SL','LWP','TOUR','COMP_OFF') NOT NULL,
+  year INT NOT NULL,
+  opening DECIMAL(5,1) NOT NULL,
+  consumed DECIMAL(5,1) NOT NULL DEFAULT 0,
+  closing DECIMAL(5,1) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_leave_balance (employee_id, type, year),
+  CONSTRAINT fk_lb_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE payroll_periods (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  month INT NOT NULL,
+  year INT NOT NULL,
+  status ENUM('DRAFT','APPROVED','DISBURSED') NOT NULL DEFAULT 'DRAFT',
+  run_at DATETIME(3) NULL,
+  approved_at DATETIME(3) NULL,
+  disbursed_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_payroll_period (month, year)
+) ENGINE=InnoDB;
+
+CREATE TABLE payroll_items (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  period_id CHAR(26) NOT NULL,
+  employee_id CHAR(26) NOT NULL,
+  days_paid DECIMAL(5,2) NOT NULL,
+  gross BIGINT NOT NULL,
+  earnings JSON NOT NULL,
+  deductions JSON NOT NULL,
+  loan_recovery BIGINT NOT NULL DEFAULT 0,
+  net BIGINT NOT NULL,
+  status ENUM('DRAFT','APPROVED','DISBURSED') NOT NULL DEFAULT 'DRAFT',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_payroll_item (period_id, employee_id),
+  CONSTRAINT fk_pi_period   FOREIGN KEY (period_id)   REFERENCES payroll_periods(id) ON DELETE CASCADE,
+  CONSTRAINT fk_pi_employee FOREIGN KEY (employee_id) REFERENCES employees(id)       ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE TABLE loans (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  employee_id CHAR(26) NOT NULL,
+  kind ENUM('LOAN','ADVANCE') NOT NULL,
+  principal BIGINT NOT NULL,
+  outstanding BIGINT NOT NULL,
+  emi BIGINT NOT NULL,
+  tenure_months INT NOT NULL,
+  remaining INT NOT NULL,
+  status ENUM('ACTIVE','CLOSED','DEFAULTED') NOT NULL DEFAULT 'ACTIVE',
+  purpose VARCHAR(500) NULL,
+  started_at DATE NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  CONSTRAINT fk_loans_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE loan_payments (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  loan_id CHAR(26) NOT NULL,
+  amount BIGINT NOT NULL,
+  payroll_item_id CHAR(26) NULL,
+  paid_at DATETIME(3) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  CONSTRAINT fk_lp_loan    FOREIGN KEY (loan_id)         REFERENCES loans(id)         ON DELETE CASCADE,
+  CONSTRAINT fk_lp_payroll FOREIGN KEY (payroll_item_id) REFERENCES payroll_items(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE increments (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  employee_id CHAR(26) NOT NULL,
+  cycle_year INT NOT NULL,
+  current_ctc BIGINT NOT NULL,
+  proposed_ctc BIGINT NOT NULL,
+  hike_pct DECIMAL(6,2) NOT NULL,
+  rating VARCHAR(40) NOT NULL,
+  stage VARCHAR(40) NOT NULL,
+  effective DATE NULL,
+  remarks VARCHAR(500) NULL,
+  approvals JSON NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  CONSTRAINT fk_increments_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE tours (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  code VARCHAR(20) NOT NULL UNIQUE,
+  employee_id CHAR(26) NOT NULL,
+  from_city VARCHAR(80) NOT NULL,
+  to_city VARCHAR(80) NOT NULL,
+  from_date DATE NOT NULL,
+  to_date DATE NOT NULL,
+  advance BIGINT NOT NULL,
+  expense BIGINT NOT NULL DEFAULT 0,
+  status VARCHAR(20) NOT NULL,
+  itinerary JSON NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  CONSTRAINT fk_tours_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE incentives (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  employee_id CHAR(26) NOT NULL,
+  kind VARCHAR(40) NOT NULL,
+  month INT NOT NULL,
+  year INT NOT NULL,
+  amount BIGINT NOT NULL,
+  status VARCHAR(20) NOT NULL,
+  pushed TINYINT(1) NOT NULL DEFAULT 0,
+  pushed_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  CONSTRAINT fk_incentives_employee FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE audit_logs (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  actor_id CHAR(26) NOT NULL,
+  action VARCHAR(60) NOT NULL,
+  resource VARCHAR(60) NOT NULL,
+  resource_id CHAR(26) NOT NULL,
+  before_data JSON NULL,
+  after_data JSON NULL,
+  at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY idx_audit_resource (resource, resource_id),
+  KEY idx_audit_actor (actor_id, at)
+) ENGINE=InnoDB;
