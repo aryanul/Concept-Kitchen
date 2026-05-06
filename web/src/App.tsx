@@ -1,6 +1,17 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { LoginPage } from './routes/login/LoginPage';
 import { DashboardPage } from './routes/dashboard/DashboardPage';
+import { EmployeesPage } from './routes/employees/EmployeesPage';
+import { HolidaysPage } from './routes/holidays/HolidaysPage';
+import { ShiftsPage } from './routes/shifts/ShiftsPage';
+import { SalaryMasterPage } from './routes/salary-master/SalaryMasterPage';
+import { AttendancePage } from './routes/attendance/AttendancePage';
+import { LeavesPage } from './routes/leaves/LeavesPage';
+import { PayrollPage } from './routes/payroll/PayrollPage';
+import { LoansPage } from './routes/loans/LoansPage';
+import { IncrementsPage } from './routes/increments/IncrementsPage';
+import { ToursPage } from './routes/tours/ToursPage';
+import { IncentivesPage } from './routes/incentives/IncentivesPage';
 import { StubPage } from './routes/StubPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AppLayout } from './components/shell/AppLayout';
@@ -15,17 +26,17 @@ export default function App() {
             <Route path="/" element={<DashboardPage />} />
 
             {/* Phase 1 — placeholders until each module is built */}
-            <Route path="/employees"     element={<StubPage title="Employee Master"             phase="Phase 1" />} />
-            <Route path="/shifts"        element={<StubPage title="Duty Shifts & Rosters"       phase="Phase 1" />} />
-            <Route path="/holidays"      element={<StubPage title="Holidays"                    phase="Phase 1" />} />
-            <Route path="/attendance"    element={<StubPage title="Attendance & Exceptions"     phase="Phase 1" />} />
-            <Route path="/salary-master" element={<StubPage title="Salary Structure & Compo."   phase="Phase 1" />} />
-            <Route path="/payroll"       element={<StubPage title="Payroll Runs & Pay-slips"    phase="Phase 1" />} />
-            <Route path="/loans"         element={<StubPage title="Advances & Loans"            phase="Phase 1" />} />
-            <Route path="/increments"    element={<StubPage title="Increments & Appraisals"     phase="Phase 1" />} />
-            <Route path="/leaves"        element={<StubPage title="Leaves & Approvals"          phase="Phase 1" />} />
-            <Route path="/tours"         element={<StubPage title="Tour & Travel"               phase="Phase 1" />} />
-            <Route path="/incentives"    element={<StubPage title="Incentives & Perks"          phase="Phase 1" />} />
+            <Route path="/employees"     element={<EmployeesPage />} />
+            <Route path="/shifts"        element={<ShiftsPage />} />
+            <Route path="/holidays"      element={<HolidaysPage />} />
+            <Route path="/attendance"    element={<AttendancePage />} />
+            <Route path="/salary-master" element={<SalaryMasterPage />} />
+            <Route path="/payroll"       element={<PayrollPage />} />
+            <Route path="/loans"         element={<LoansPage />} />
+            <Route path="/increments"    element={<IncrementsPage />} />
+            <Route path="/leaves"        element={<LeavesPage />} />
+            <Route path="/tours"         element={<ToursPage />} />
+            <Route path="/incentives"    element={<IncentivesPage />} />
 
             {/* Phase 2 stubs */}
             <Route path="/job-profile"   element={<StubPage title="Job Profile"  phase="Phase 2" />} />

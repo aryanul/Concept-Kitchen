@@ -7,7 +7,10 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "migrate": "tsx src/migrate.ts",
-    "seed:ref": "tsx scripts/seed-reference.ts"
+    "seed:ref": "tsx scripts/seed-reference.ts",
+    "seed:employees": "tsx scripts/seed-employees.ts",
+    "seed:transactional": "tsx scripts/seed-transactional.ts",
+    "seed:all": "npm run seed:ref && npm run seed:employees && npm run seed:transactional"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",
