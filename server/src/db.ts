@@ -26,6 +26,6 @@ export async function query<T = unknown>(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params: any[] = []
 ): Promise<T[]> {
-  const [rows] = await pool.execute<RowDataPacket[]>(sql, params);
+  const [rows] = await pool.query<RowDataPacket[]>(sql, params);
   return rows as unknown as T[];
 }
