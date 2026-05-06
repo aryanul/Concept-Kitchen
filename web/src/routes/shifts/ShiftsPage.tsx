@@ -1,8 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Clock, Coffee, Pencil } from 'lucide-react';
+import { toast } from 'sonner';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
+import { Button } from '../../components/ui/Button';
+import { Modal } from '../../components/ui/Modal';
 
 type Shift = {
   id: string;
@@ -22,18 +28,54 @@ const KIND_TONE: Record<string, { bg: string; fg: string }> = {
   Office:     { bg: 'oklch(0.95 0.05 145)', fg: 'oklch(0.42 0.12 145)' },
 };
 
+const schema = z.object({
+  name: z.string().min(1, 'Required'),
+  startTime: z.string().min(1, 'Required'),
+  endTime: z.string().min(1, 'Required'),
+  kind: z.string().min(1, 'Required'),
+  breakMin: z.coerce.number().int().min(0),
+});
+type FormValues = z.infer<typeof schema>;
+
 export function ShiftsPage() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [editShift, setEditShift] = useState<Shift | null>(null);
 
-  useEffect(() => {
+  const fetchShifts = () => {
     api
       .get<ListResp>('/shifts')
       .then((r) => setShifts(r.data.data))
       .catch(() => setError('Failed to load shifts.'))
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(fetchShifts, []);
+
+  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<FormValues>({ resolver: zodResolver(schema) });
+
+  const openEdit = (s: Shift) => {
+    setEditShift(s);
+    reset({
+      name: s.name,
+      startTime: s.start_time,
+      endTime: s.end_time,
+      kind: s.kind,
+      breakMin: s.break_min,
+    });
+  };
+
+  const onSubmit = async (data: FormValues) => {
+    if (!editShift) return;
+    try {
+      await api.patch(`/shifts/${editShift.id}`, data);
+      toast.success('Shift updated');
+      setEditShift(null); fetchShifts();
+    } catch { toast.error('Failed to update shift'); }
+  };
+
+  const inp: React.CSSProperties = { width: '100%', height: 38, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' };
 
   return (
     <div>
@@ -73,6 +115,7 @@ export function ShiftsPage() {
                   </div>
                   <button
                     aria-label="Edit shift"
+                    onClick={() => openEdit(s)}
                     style={{
                       width: 30,
                       height: 30,
@@ -150,6 +193,37 @@ export function ShiftsPage() {
           assignments — manually or by importing from biometrics — that grid lights up here.
         </div>
       </Card>
+
+      <Modal open={!!editShift} onClose={() => { setEditShift(null); reset(); }} title="Edit Shift" width={420}
+        footer={<>
+          <Button onClick={() => { setEditShift(null); reset(); }}>Cancel</Button>
+          <Button variant="primary" type="submit" form="shift-form" disabled={isSubmitting}>{isSubmitting ? 'Saving…' : 'Save'}</Button>
+        </>}
+      >
+        <form id="shift-form" onSubmit={handleSubmit(onSubmit)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <F2 label="Name *" error={errors.name?.message}><input {...register('name')} style={inp} /></F2>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <F2 label="Start time *" error={errors.startTime?.message}><input type="time" {...register('startTime')} style={inp} /></F2>
+              <F2 label="End time *" error={errors.endTime?.message}><input type="time" {...register('endTime')} style={inp} /></F2>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <F2 label="Kind *" error={errors.kind?.message}><input {...register('kind')} style={inp} /></F2>
+              <F2 label="Break (min) *" error={errors.breakMin?.message}><input type="number" {...register('breakMin')} style={inp} /></F2>
+            </div>
+          </div>
+        </form>
+      </Modal>
     </div>
+  );
+}
+
+function F2({ label, error, children }: { label: string; error?: string; children: ReactNode }) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--ck-ink-soft)' }}>{label}</span>
+      {children}
+      {error && <span style={{ fontSize: 11.5, color: 'var(--ck-danger-fg)' }}>{error}</span>}
+    </label>
   );
 }

@@ -3,6 +3,7 @@ import express, { type ErrorRequestHandler } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import bcrypt from 'bcryptjs';
+import { ulid } from 'ulid';
 import { query } from './db';
 import { signAccessToken, authRequired, type Role } from './auth';
 
@@ -25,6 +26,30 @@ app.use(
   })
 );
 app.use(express.json());
+
+type AuditPayload = Record<string, unknown> | null;
+
+async function writeAudit(
+  actorId: string,
+  action: string,
+  resource: string,
+  resourceId: string,
+  beforeData: AuditPayload,
+  afterData: AuditPayload
+) {
+  await query(
+    'INSERT INTO audit_logs (id, actor_id, action, resource, resource_id, before_data, after_data) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [
+      ulid(),
+      actorId,
+      action,
+      resource,
+      resourceId,
+      beforeData ? JSON.stringify(beforeData) : null,
+      afterData ? JSON.stringify(afterData) : null,
+    ]
+  );
+}
 
 app.get('/api/v1/healthz', (_req, res) => {
   res.json({ status: 'ok', uptime: process.uptime() });
@@ -303,12 +328,17 @@ app.get('/api/v1/employees/:id', authRequired, async (req, res, next) => {
         bank_name: string | null;
         bank_account: string | null;
         ifsc: string | null;
+        pan: string | null;
+        aadhaar: string | null;
+        pf: string | null;
+        esic: string | null;
+        uan: string | null;
       }
     >(
       `SELECT
          e.id, e.code, e.first_name, e.last_name, e.designation, e.status,
          e.joining_date, e.email, e.phone, e.ctc,
-         e.bank_name, e.bank_account, e.ifsc,
+         e.bank_name, e.bank_account, e.ifsc, e.pan, e.aadhaar, e.pf, e.esic, e.uan,
          b.id AS branch_id, b.code AS branch_code, b.name AS branch_name,
          d.id AS department_id, d.name AS department_name,
          g.id AS grade_id, g.code AS grade_code
@@ -489,6 +519,371 @@ app.get('/api/v1/incentives', authRequired, async (req, res, next) => {
        ORDER BY i.created_at DESC`
     );
     res.json({ data: rows });
+  } catch (err) { next(err); }
+});
+
+// ─── MUTATIONS ───────────────────────────────────────────────────────────────
+
+// Create employee
+app.post('/api/v1/employees', authRequired, async (req, res, next) => {
+  try {
+    const { firstName, lastName, email, phone, designation, branchId, departmentId,
+      gradeId, ctcRupees, joiningDate, bankName, bankAccount, ifsc, pan, aadhaar } = req.body ?? {};
+    if (!firstName || !lastName || !email || !phone || !designation || !branchId || !departmentId || !gradeId || !ctcRupees || !joiningDate) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'Required fields missing' } });
+    }
+    const [maxRow] = await query<{ n: number }>(
+      'SELECT COALESCE(MAX(CAST(SUBSTRING(code, 8) AS UNSIGNED)), 0) AS n FROM employees'
+    );
+    const code = `CK-EMP-${String((maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
+    const id = ulid();
+    await query(
+      `INSERT INTO employees (id, code, first_name, last_name, designation, status, joining_date, email, phone,
+       branch_id, department_id, grade_id, ctc, bank_name, bank_account, ifsc, pan, aadhaar)
+       VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, code, firstName, lastName, designation, joiningDate, email, phone,
+       branchId, departmentId, gradeId, Math.round(Number(ctcRupees) * 100),
+       bankName || null, bankAccount || null, ifsc || null, pan || null, aadhaar || null]
+    );
+    await writeAudit(req.user!.id, 'create', 'employee', id, null, {
+      id, code, firstName, lastName, designation, joiningDate, email, phone,
+      branchId, departmentId, gradeId, ctcRupees,
+    });
+    res.status(201).json({ data: { id, code } });
+  } catch (err) { next(err); }
+});
+
+// Update employee
+app.patch('/api/v1/employees/:id', authRequired, async (req, res, next) => {
+  try {
+    const allowed = ['first_name','last_name','designation','status','phone','bank_name','bank_account','ifsc','pan','aadhaar','branch_id','department_id','grade_id'];
+    const updates: string[] = [];
+    const values: unknown[] = [];
+    const before = await query('SELECT * FROM employees WHERE id = ? LIMIT 1', [req.params.id]);
+    for (const [k, v] of Object.entries(req.body ?? {})) {
+      if (allowed.includes(k)) { updates.push(`${k} = ?`); values.push(v); }
+    }
+    if (!updates.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields to update' } });
+    values.push(req.params.id);
+    await query(`UPDATE employees SET ${updates.join(', ')} WHERE id = ?`, values);
+    const after = await query('SELECT * FROM employees WHERE id = ? LIMIT 1', [req.params.id]);
+    await writeAudit(req.user!.id, 'update', 'employee', req.params.id, before[0] ?? null, after[0] ?? null);
+    res.json({ data: { id: req.params.id } });
+  } catch (err) { next(err); }
+});
+
+// Soft-delete employee (mark exited)
+app.delete('/api/v1/employees/:id', authRequired, async (req, res, next) => {
+  try {
+    const before = await query('SELECT * FROM employees WHERE id = ? LIMIT 1', [req.params.id]);
+    await query("UPDATE employees SET status = 'EXITED', exit_date = CURDATE() WHERE id = ?", [req.params.id]);
+    const after = await query('SELECT * FROM employees WHERE id = ? LIMIT 1', [req.params.id]);
+    await writeAudit(req.user!.id, 'exit', 'employee', req.params.id, before[0] ?? null, after[0] ?? null);
+    res.json({ data: { id: req.params.id, status: 'EXITED' } });
+  } catch (err) { next(err); }
+});
+
+// Apply leave
+app.post('/api/v1/leaves', authRequired, async (req, res, next) => {
+  try {
+    const { employeeId, type, fromDate, toDate, days, reason } = req.body ?? {};
+    if (!employeeId || !type || !fromDate || !toDate || !days || !reason) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'Required fields missing' } });
+    }
+    const id = ulid();
+    await query(
+      `INSERT INTO leaves (id, employee_id, type, from_date, to_date, days, reason, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDING')`,
+      [id, employeeId, type, fromDate, toDate, days, reason]
+    );
+    await writeAudit(req.user!.id, 'create', 'leave', id, null, { employeeId, type, fromDate, toDate, days, reason });
+    res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+// Approve / reject leave
+app.post('/api/v1/leaves/:id/decide', authRequired, async (req, res, next) => {
+  try {
+    const { decision } = req.body ?? {};
+    if (!['APPROVED','REJECTED'].includes(decision)) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'decision must be APPROVED or REJECTED' } });
+    }
+    const before = await query('SELECT * FROM leaves WHERE id = ? LIMIT 1', [req.params.id]);
+    await query(
+      `UPDATE leaves SET status = ?, approver_id = ?, decided_at = NOW() WHERE id = ?`,
+      [decision, req.user!.id, req.params.id]
+    );
+    const after = await query('SELECT * FROM leaves WHERE id = ? LIMIT 1', [req.params.id]);
+    await writeAudit(req.user!.id, 'decide', 'leave', req.params.id, before[0] ?? null, after[0] ?? null);
+    res.json({ data: { id: req.params.id, status: decision } });
+  } catch (err) { next(err); }
+});
+
+// Manual attendance punch
+app.post('/api/v1/attendance/punch', authRequired, async (req, res, next) => {
+  try {
+    const { employeeId, date, inAt, outAt, source = 'MANUAL', notes } = req.body ?? {};
+    if (!employeeId || !date) return res.status(400).json({ error: { code: 'VALIDATION', message: 'employeeId and date required' } });
+    const existing = await query<{ id: string }>('SELECT id FROM attendance WHERE employee_id = ? AND date = ?', [employeeId, date]);
+    const totalMin = inAt && outAt
+      ? Math.max(0, Math.round((new Date(outAt).getTime() - new Date(inAt).getTime()) / 60000))
+      : 0;
+    if (existing.length) {
+      const before = await query('SELECT * FROM attendance WHERE id = ? LIMIT 1', [existing[0].id]);
+      await query('UPDATE attendance SET in_at = ?, out_at = ?, total_min = ?, source = ?, notes = ? WHERE id = ?',
+        [inAt || null, outAt || null, totalMin, source, notes || null, existing[0].id]);
+      const after = await query('SELECT * FROM attendance WHERE id = ? LIMIT 1', [existing[0].id]);
+      await writeAudit(req.user!.id, 'update', 'attendance', existing[0].id, before[0] ?? null, after[0] ?? null);
+      res.json({ data: { id: existing[0].id } });
+    } else {
+      const id = ulid();
+      await query('INSERT INTO attendance (id, employee_id, date, in_at, out_at, total_min, source, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, employeeId, date, inAt || null, outAt || null, totalMin, source, notes || null]);
+      await writeAudit(req.user!.id, 'create', 'attendance', id, null, { employeeId, date, inAt, outAt, source, notes });
+      res.status(201).json({ data: { id } });
+    }
+  } catch (err) { next(err); }
+});
+
+// Add holiday
+app.post('/api/v1/holidays', authRequired, async (req, res, next) => {
+  try {
+    const { date, name, kind, branchIds } = req.body ?? {};
+    if (!date || !name || !kind) return res.status(400).json({ error: { code: 'VALIDATION', message: 'date, name, kind required' } });
+    const id = ulid();
+    await query('INSERT INTO holidays (id, date, name, kind) VALUES (?, ?, ?, ?)', [id, date, name, kind]);
+    if (Array.isArray(branchIds) && branchIds.length) {
+      for (const bid of branchIds) {
+        await query('INSERT INTO holiday_branches (holiday_id, branch_id) VALUES (?, ?)', [id, bid]);
+      }
+    }
+    await writeAudit(req.user!.id, 'create', 'holiday', id, null, { date, name, kind, branchIds: branchIds ?? [] });
+    res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+// Edit holiday
+app.patch('/api/v1/holidays/:id', authRequired, async (req, res, next) => {
+  try {
+    const { name, kind, date } = req.body ?? {};
+    const before = await query('SELECT * FROM holidays WHERE id = ? LIMIT 1', [req.params.id]);
+    if (name || kind || date) {
+      const updates: string[] = [];
+      const vals: unknown[] = [];
+      if (name) { updates.push('name = ?'); vals.push(name); }
+      if (kind) { updates.push('kind = ?'); vals.push(kind); }
+      if (date) { updates.push('date = ?'); vals.push(date); }
+      vals.push(req.params.id);
+      await query(`UPDATE holidays SET ${updates.join(', ')} WHERE id = ?`, vals);
+    }
+    const after = await query('SELECT * FROM holidays WHERE id = ? LIMIT 1', [req.params.id]);
+    await writeAudit(req.user!.id, 'update', 'holiday', req.params.id, before[0] ?? null, after[0] ?? null);
+    res.json({ data: { id: req.params.id } });
+  } catch (err) { next(err); }
+});
+
+// New loan / advance
+app.post('/api/v1/loans', authRequired, async (req, res, next) => {
+  try {
+    const { employeeId, kind, principalRupees, emiRupees, tenureMonths, purpose, startedAt } = req.body ?? {};
+    if (!employeeId || !kind || !principalRupees || !emiRupees || !tenureMonths) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'Required fields missing' } });
+    }
+    const principal = Math.round(Number(principalRupees) * 100);
+    const emi = Math.round(Number(emiRupees) * 100);
+    const id = ulid();
+    await query(
+      `INSERT INTO loans (id, employee_id, kind, principal, outstanding, emi, tenure_months, remaining, status, purpose, started_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)`,
+      [id, employeeId, kind, principal, principal, emi, tenureMonths, tenureMonths, purpose || null, startedAt || new Date().toISOString().slice(0,10)]
+    );
+    await writeAudit(req.user!.id, 'create', 'loan', id, null, { employeeId, kind, principalRupees, emiRupees, tenureMonths, purpose, startedAt });
+    res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+// Close loan
+app.post('/api/v1/loans/:id/close', authRequired, async (req, res, next) => {
+  try {
+    const before = await query('SELECT * FROM loans WHERE id = ? LIMIT 1', [req.params.id]);
+    await query("UPDATE loans SET status = 'CLOSED', outstanding = 0, remaining = 0 WHERE id = ?", [req.params.id]);
+    const after = await query('SELECT * FROM loans WHERE id = ? LIMIT 1', [req.params.id]);
+    await writeAudit(req.user!.id, 'close', 'loan', req.params.id, before[0] ?? null, after[0] ?? null);
+    res.json({ data: { id: req.params.id, status: 'CLOSED' } });
+  } catch (err) { next(err); }
+});
+
+// Decide increment stage
+app.post('/api/v1/increments/:id/decide', authRequired, async (req, res, next) => {
+  try {
+    const { decision, remarks } = req.body ?? {};
+    const STAGE_PROGRESSION: Record<string, string> = { manager_review: 'hr', hr: 'finance', finance: 'done' };
+    const [rows] = await query<{ stage: string; approvals: string }>('SELECT stage, approvals FROM increments WHERE id = ?', [req.params.id]);
+    if (!rows) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Not found' } });
+    const inc = rows as unknown as { stage: string; approvals: string };
+    const approvals = JSON.parse(inc.approvals || '[]');
+    approvals.push({ stage: inc.stage, decision, remarks, by: req.user!.id, at: new Date().toISOString() });
+    const nextStage = decision === 'approve' ? (STAGE_PROGRESSION[inc.stage] ?? 'done') : 'done';
+    const before = await query('SELECT * FROM increments WHERE id = ? LIMIT 1', [req.params.id]);
+    await query('UPDATE increments SET stage = ?, approvals = ?, remarks = ? WHERE id = ?',
+      [nextStage, JSON.stringify(approvals), remarks || null, req.params.id]);
+    const after = await query('SELECT * FROM increments WHERE id = ? LIMIT 1', [req.params.id]);
+    await writeAudit(req.user!.id, 'decide', 'increment', req.params.id, before[0] ?? null, after[0] ?? null);
+    res.json({ data: { id: req.params.id, stage: nextStage } });
+  } catch (err) { next(err); }
+});
+
+// Add incentive
+app.post('/api/v1/incentives', authRequired, async (req, res, next) => {
+  try {
+    const { employeeId, kind, month, year, amountRupees } = req.body ?? {};
+    if (!employeeId || !kind || !month || !year || !amountRupees) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'Required fields missing' } });
+    }
+    const id = ulid();
+    await query(
+      `INSERT INTO incentives (id, employee_id, kind, month, year, amount, status) VALUES (?, ?, ?, ?, ?, ?, 'draft')`,
+      [id, employeeId, kind, month, year, Math.round(Number(amountRupees) * 100)]
+    );
+    await writeAudit(req.user!.id, 'create', 'incentive', id, null, { employeeId, kind, month, year, amountRupees });
+    res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+// Decide incentive
+app.post('/api/v1/incentives/:id/decide', authRequired, async (req, res, next) => {
+  try {
+    const { decision } = req.body ?? {};
+    const status = decision === 'approve' ? 'approved' : 'rejected';
+    const before = await query('SELECT * FROM incentives WHERE id = ? LIMIT 1', [req.params.id]);
+    await query('UPDATE incentives SET status = ? WHERE id = ?', [status, req.params.id]);
+    const after = await query('SELECT * FROM incentives WHERE id = ? LIMIT 1', [req.params.id]);
+    await writeAudit(req.user!.id, 'decide', 'incentive', req.params.id, before[0] ?? null, after[0] ?? null);
+    res.json({ data: { id: req.params.id, status } });
+  } catch (err) { next(err); }
+});
+
+// Push incentives to payroll
+app.post('/api/v1/incentives/push-to-payroll', authRequired, async (req, res, next) => {
+  try {
+    const { ids } = req.body ?? {};
+    if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'ids array required' } });
+    for (const id of ids) {
+      const before = await query('SELECT * FROM incentives WHERE id = ? LIMIT 1', [id]);
+      await query("UPDATE incentives SET pushed = 1, pushed_at = NOW() WHERE id = ?", [id]);
+      const after = await query('SELECT * FROM incentives WHERE id = ? LIMIT 1', [id]);
+      await writeAudit(req.user!.id, 'push_to_payroll', 'incentive', id, before[0] ?? null, after[0] ?? null);
+    }
+    res.json({ data: { pushed: ids.length } });
+  } catch (err) { next(err); }
+});
+
+// Create payroll period
+app.post('/api/v1/payroll/periods', authRequired, async (req, res, next) => {
+  try {
+    const { month, year } = req.body ?? {};
+    if (!month || !year) return res.status(400).json({ error: { code: 'VALIDATION', message: 'month and year required' } });
+    const existing = await query<{ id: string }>('SELECT id FROM payroll_periods WHERE month = ? AND year = ? LIMIT 1', [month, year]);
+    if (existing.length) {
+      return res.status(409).json({ error: { code: 'ALREADY_EXISTS', message: 'Payroll period already exists' } });
+    }
+    const id = ulid();
+    await query('INSERT INTO payroll_periods (id, month, year, status) VALUES (?, ?, ?, "DRAFT")', [id, month, year]);
+    await query('UPDATE payroll_periods SET run_at = NOW() WHERE id = ?', [id]);
+
+    const employees = await query<{ id: string; ctc: number }>(
+      "SELECT id, ctc FROM employees WHERE status IN ('ACTIVE','PROBATION','ON_LEAVE')"
+    );
+    for (const emp of employees) {
+      const gross = Math.round(Number(emp.ctc) / 12);
+      await query(
+        `INSERT INTO payroll_items (id, period_id, employee_id, days_paid, gross, earnings, deductions, loan_recovery, net, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT')`,
+        [ulid(), id, emp.id, 30, gross, JSON.stringify([]), JSON.stringify([]), 0, gross]
+      );
+    }
+    await writeAudit(req.user!.id, 'run', 'payroll_period', id, null, { month, year, status: 'DRAFT', employees: employees.length });
+    res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/payroll/periods/:id/approve', authRequired, async (req, res, next) => {
+  try {
+    const before = await query('SELECT * FROM payroll_periods WHERE id = ? LIMIT 1', [req.params.id]);
+    await query('UPDATE payroll_periods SET status = "APPROVED", approved_at = NOW() WHERE id = ?', [req.params.id]);
+    await query('UPDATE payroll_items SET status = "APPROVED" WHERE period_id = ?', [req.params.id]);
+    const after = await query('SELECT * FROM payroll_periods WHERE id = ? LIMIT 1', [req.params.id]);
+    await writeAudit(req.user!.id, 'approve', 'payroll_period', req.params.id, before[0] ?? null, after[0] ?? null);
+    res.json({ data: { id: req.params.id, status: 'APPROVED' } });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/payroll/periods/:id/disburse', authRequired, async (req, res, next) => {
+  try {
+    const before = await query('SELECT * FROM payroll_periods WHERE id = ? LIMIT 1', [req.params.id]);
+    await query('UPDATE payroll_periods SET status = "DISBURSED", disbursed_at = NOW() WHERE id = ?', [req.params.id]);
+    await query('UPDATE payroll_items SET status = "DISBURSED" WHERE period_id = ?', [req.params.id]);
+    const after = await query('SELECT * FROM payroll_periods WHERE id = ? LIMIT 1', [req.params.id]);
+    await writeAudit(req.user!.id, 'disburse', 'payroll_period', req.params.id, before[0] ?? null, after[0] ?? null);
+    res.json({ data: { id: req.params.id, status: 'DISBURSED' } });
+  } catch (err) { next(err); }
+});
+
+// New tour request
+app.post('/api/v1/tours', authRequired, async (req, res, next) => {
+  try {
+    const { employeeId, fromCity, toCity, fromDate, toDate, advanceRupees, itinerary } = req.body ?? {};
+    if (!employeeId || !fromCity || !toCity || !fromDate || !toDate || !advanceRupees) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'Required fields missing' } });
+    }
+    const [maxRow] = await query<{ n: number }>(
+      'SELECT COALESCE(MAX(CAST(SUBSTRING(code, 8) AS UNSIGNED)), 0) AS n FROM tours'
+    );
+    const code = `CK-TOUR-${String((maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
+    const id = ulid();
+    await query(
+      `INSERT INTO tours (id, code, employee_id, from_city, to_city, from_date, to_date, advance, expense, status, itinerary)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'requested', ?)`,
+      [id, code, employeeId, fromCity, toCity, fromDate, toDate, Math.round(Number(advanceRupees) * 100), JSON.stringify(itinerary ?? [])]
+    );
+    await writeAudit(req.user!.id, 'create', 'tour', id, null, { employeeId, fromCity, toCity, fromDate, toDate, advanceRupees });
+    res.status(201).json({ data: { id, code } });
+  } catch (err) { next(err); }
+});
+
+// Settle tour expenses
+app.post('/api/v1/tours/:id/settle', authRequired, async (req, res, next) => {
+  try {
+    const { expenseRupees } = req.body ?? {};
+    if (!expenseRupees) return res.status(400).json({ error: { code: 'VALIDATION', message: 'expenseRupees required' } });
+    const before = await query('SELECT * FROM tours WHERE id = ? LIMIT 1', [req.params.id]);
+    await query(
+      "UPDATE tours SET expense = ?, status = 'settled' WHERE id = ?",
+      [Math.round(Number(expenseRupees) * 100), req.params.id]
+    );
+    const after = await query('SELECT * FROM tours WHERE id = ? LIMIT 1', [req.params.id]);
+    await writeAudit(req.user!.id, 'settle', 'tour', req.params.id, before[0] ?? null, after[0] ?? null);
+    res.json({ data: { id: req.params.id, status: 'settled' } });
+  } catch (err) { next(err); }
+});
+
+// Update shift
+app.patch('/api/v1/shifts/:id', authRequired, async (req, res, next) => {
+  try {
+    const { name, startTime, endTime, kind, breakMin } = req.body ?? {};
+    const before = await query('SELECT * FROM shifts WHERE id = ? LIMIT 1', [req.params.id]);
+    const updates: string[] = [];
+    const vals: unknown[] = [];
+    if (name) { updates.push('name = ?'); vals.push(name); }
+    if (startTime) { updates.push('start_time = ?'); vals.push(startTime); }
+    if (endTime) { updates.push('end_time = ?'); vals.push(endTime); }
+    if (kind) { updates.push('kind = ?'); vals.push(kind); }
+    if (breakMin !== undefined) { updates.push('break_min = ?'); vals.push(breakMin); }
+    if (!updates.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields to update' } });
+    vals.push(req.params.id);
+    await query(`UPDATE shifts SET ${updates.join(', ')} WHERE id = ?`, vals);
+    const after = await query('SELECT * FROM shifts WHERE id = ? LIMIT 1', [req.params.id]);
+    await writeAudit(req.user!.id, 'update', 'shift', req.params.id, before[0] ?? null, after[0] ?? null);
+    res.json({ data: { id: req.params.id } });
   } catch (err) { next(err); }
 });
 

@@ -12,7 +12,7 @@ export function AppLayout() {
         <main
           key={location.pathname}
           className="ck-page-enter"
-          style={{ padding: '28px 32px 60px', flex: 1 }}
+          style={{ padding: '18px 24px 48px', flex: 1 }}
         >
           <Outlet />
         </main>

@@ -12,8 +12,9 @@ export function Card({ children, padding = 24, style }: Props) {
       style={{
         background: 'var(--ck-surface)',
         border: '1px solid var(--ck-line)',
-        borderRadius: 14,
+        borderRadius: 10,
         padding,
+        boxShadow: 'var(--ck-shadow-sm)',
         ...style,
       }}
     >

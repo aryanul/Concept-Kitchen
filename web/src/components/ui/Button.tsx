@@ -22,11 +22,11 @@ const SIZES: Record<Size, { p: string; fs: number; h: number; iconSize: number }
 };
 
 const VARIANTS: Record<Variant, { bg: string; fg: string; border: string; hover: string }> = {
-  primary:   { bg: '#272727',     fg: '#fff',     border: '#272727', hover: '#000' },
-  accent:    { bg: '#E91E63',     fg: '#fff',     border: '#E91E63', hover: '#C2185B' },
-  secondary: { bg: '#fff',        fg: '#272727',  border: '#E5E7EB', hover: '#F9FAFB' },
-  ghost:     { bg: 'transparent', fg: '#4D4D4D',  border: 'transparent', hover: '#F3F4F6' },
-  danger:    { bg: '#E8504C',     fg: '#fff',     border: '#E8504C', hover: '#c8413d' },
+  primary:   { bg: '#6f6f6f',     fg: '#fff',     border: '#6f6f6f', hover: '#5f5f5f' },
+  accent:    { bg: '#6f6f6f',     fg: '#fff',     border: '#6f6f6f', hover: '#5f5f5f' },
+  secondary: { bg: '#fff',        fg: '#2f2f2f',  border: '#d8d8d8', hover: '#f3f3f3' },
+  ghost:     { bg: 'transparent', fg: '#4a4a4a',  border: 'transparent', hover: '#f1f1f1' },
+  danger:    { bg: '#e8504c',     fg: '#fff',     border: '#e8504c', hover: '#c8413d' },
 };
 
 export function Button({
@@ -56,7 +56,7 @@ export function Button({
         background: hover && !disabled ? v.hover : v.bg,
         color: v.fg,
         border: `1px solid ${v.border}`,
-        borderRadius: 10,
+        borderRadius: 12,
         display: 'inline-flex',
         alignItems: 'center',
         gap: 8,

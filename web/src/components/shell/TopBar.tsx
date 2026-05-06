@@ -51,7 +51,7 @@ export function TopBar() {
   return (
     <div
       style={{
-        padding: '14px 32px',
+        padding: '10px 24px',
         background: 'var(--ck-surface)',
         borderBottom: '1px solid var(--ck-line)',
         display: 'flex',
@@ -65,29 +65,25 @@ export function TopBar() {
       <div
         style={{
           flex: '1 1 0',
-          maxWidth: 520,
-          height: 42,
-          padding: '0 16px',
-          background: 'var(--ck-line-soft)',
-          borderRadius: 12,
+          maxWidth: 360,
+          height: 36,
+          padding: '0 12px',
+          background: 'var(--ck-surface)',
+          border: '1px solid var(--ck-line)',
+          borderRadius: 10,
           display: 'flex',
           alignItems: 'center',
           gap: 10,
         }}
       >
-        <Search size={18} strokeWidth={2} style={{ color: 'var(--ck-ink-soft)' }} />
+        <Search size={16} strokeWidth={2} style={{ color: 'var(--ck-muted)' }} />
         <input
-          placeholder="Search employees, payroll, leaves…"
+          placeholder="Search"
           style={{
             flex: 1, border: 'none', outline: 'none',
             background: 'transparent', fontSize: 13.5, color: 'var(--ck-ink)',
           }}
         />
-        <kbd style={{
-          padding: '2px 8px', background: 'var(--ck-surface)',
-          border: '1px solid var(--ck-line)', borderRadius: 5,
-          fontSize: 11, color: 'var(--ck-muted)', fontFamily: 'var(--ck-font-mono)',
-        }}>⌘K</kbd>
       </div>
       <div style={{ flex: 1 }} />
 
@@ -99,15 +95,15 @@ export function TopBar() {
         type="button"
         aria-label="Notifications"
         style={{
-          width: 42, height: 42, borderRadius: 10,
-          border: '1px solid var(--ck-line)', background: 'var(--ck-surface)',
+          width: 36, height: 36, borderRadius: 10,
+          border: '1px solid var(--ck-line)', background: 'var(--ck-line-soft)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           position: 'relative', color: 'var(--ck-ink-soft)', cursor: 'pointer',
         }}
       >
-        <Bell size={18} strokeWidth={1.8} />
+        <Bell size={16} strokeWidth={1.8} />
         <span style={{
-          position: 'absolute', top: 9, right: 11,
+          position: 'absolute', top: 7, right: 9,
           width: 7, height: 7, borderRadius: '50%',
           background: 'var(--ck-accent)', border: '2px solid var(--ck-surface)',
         }} />
@@ -118,10 +114,10 @@ export function TopBar() {
         <div
           onClick={() => setMenuOpen((o) => !o)}
           style={{
-            height: 42, padding: '0 14px 0 6px', borderRadius: 10,
+            height: 36, padding: '0 12px 0 6px', borderRadius: 10,
             border: `1px solid ${menuOpen ? 'var(--ck-accent)' : 'var(--ck-line)'}`,
             display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
-            background: 'var(--ck-surface)',
+            background: 'var(--ck-line-soft)',
           }}
         >
           <Avatar name={fullName || niceFirst} hue={340} size={32} />
@@ -231,13 +227,13 @@ function MenuItem({
 function Chip({ icon: Cmp, label }: { icon: LucideIcon; label: string }) {
   return (
     <div style={{
-      height: 38, padding: '0 14px', borderRadius: 999,
+      height: 32, padding: '0 12px', borderRadius: 999,
       border: '1px solid var(--ck-line)',
       display: 'flex', alignItems: 'center', gap: 8,
-      color: 'var(--ck-ink-soft)', fontSize: 12.5, fontWeight: 500,
-      background: 'var(--ck-surface)',
+      color: 'var(--ck-ink-soft)', fontSize: 12, fontWeight: 500,
+      background: 'var(--ck-line-soft)',
     }}>
-      <Cmp size={14} strokeWidth={2} />
+      <Cmp size={13} strokeWidth={2} />
       <span>{label}</span>
     </div>
   );

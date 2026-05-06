@@ -75,11 +75,11 @@ export function Sidebar() {
         top: 0,
       }}
     >
-      <div style={{ padding: '22px 22px 16px' }}>
+      <div style={{ padding: '18px 18px 12px' }}>
         <BrandWordmark markSize={36} />
       </div>
 
-      <nav style={{ padding: '0 12px 16px', flex: 1, overflowY: 'auto' }}>
+      <nav style={{ padding: '0 10px 16px', flex: 1, overflowY: 'auto' }}>
         {NAV.map((item) => (
           <div key={item.id} style={{ marginBottom: 2 }}>
             {isGroup(item) ? (
@@ -91,14 +91,7 @@ export function Sidebar() {
                   onToggle={() => setOpen((o) => ({ ...o, [item.id]: !o[item.id] }))}
                 />
                 {open[item.id] && (
-                  <div
-                    style={{
-                      marginTop: 2,
-                      marginLeft: 14,
-                      paddingLeft: 8,
-                      borderLeft: '1px solid var(--ck-line)',
-                    }}
-                  >
+                  <div style={{ marginTop: 4, marginLeft: 10 }}>
                     {item.children.map((c) => (
                       <SubLink key={c.id} to={c.path} label={c.label} icon={c.icon} />
                     ))}
@@ -151,16 +144,16 @@ function TopLink({ to, label, icon: Cmp }: { to: string; label: string; icon: Lu
         display: 'flex',
         alignItems: 'center',
         gap: 12,
-        padding: '11px 14px',
-        borderRadius: 10,
-        background: isActive ? 'var(--ck-ink)' : 'transparent',
+        padding: '10px 14px',
+        borderRadius: 999,
+        background: isActive ? '#6f6f6f' : 'transparent',
         color: isActive ? '#fff' : 'var(--ck-ink)',
-        fontSize: 13.5,
-        fontWeight: 500,
+        fontSize: 13,
+        fontWeight: 600,
         transition: 'background 120ms',
       })}
     >
-      <Cmp size={18} strokeWidth={1.7} />
+      <Cmp size={17} strokeWidth={1.7} />
       <span style={{ flex: 1 }}>{label}</span>
     </NavLink>
   );
@@ -177,17 +170,17 @@ function GroupHead({
         alignItems: 'center',
         gap: 12,
         width: '100%',
-        padding: '11px 14px',
-        borderRadius: 10,
+        padding: '10px 14px',
+        borderRadius: 999,
         border: 'none',
-        background: expanded ? 'var(--ck-line-soft)' : 'transparent',
-        color: 'var(--ck-ink)',
-        fontSize: 13.5,
-        fontWeight: 500,
+        background: expanded ? '#6f6f6f' : 'transparent',
+        color: expanded ? '#fff' : 'var(--ck-ink)',
+        fontSize: 13,
+        fontWeight: 600,
         textAlign: 'left',
       }}
     >
-      <Cmp size={18} strokeWidth={1.7} />
+      <Cmp size={17} strokeWidth={1.7} />
       <span style={{ flex: 1 }}>{label}</span>
       {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
     </button>
@@ -203,12 +196,12 @@ function SubLink({ to, label, icon: Cmp }: { to: string; label: string; icon?: L
         alignItems: 'center',
         gap: 10,
         padding: '8px 12px',
-        borderRadius: 8,
-        background: isActive ? 'var(--ck-line-soft)' : 'transparent',
+        borderRadius: 10,
+        background: isActive ? '#e9e9e9' : 'transparent',
         color: isActive ? 'var(--ck-ink)' : 'var(--ck-ink-soft)',
         fontSize: 12.5,
         fontWeight: isActive ? 600 : 500,
-        marginBottom: 1,
+        marginBottom: 4,
       })}
     >
       {Cmp && <Cmp size={15} strokeWidth={1.7} />}

@@ -1,5 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Plus, ArrowRight } from 'lucide-react';
+import { toast } from 'sonner';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
@@ -7,6 +11,7 @@ import { Button } from '../../components/ui/Button';
 import { Avatar } from '../../components/ui/Avatar';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { inrPaiseToRupeesShort, formatDate } from '../../lib/format';
+import { Modal } from '../../components/ui/Modal';
 
 type Tour = {
   id: string; code: string; from_city: string; to_city: string; from_date: string; to_date: string;
@@ -16,31 +21,77 @@ type Tour = {
 type Resp = { data: Tour[] };
 const STATUS_LABELS: Record<string,string> = { requested: 'Requested', approved: 'Approved', in_progress: 'In Progress', settled: 'Settled', rejected: 'Rejected' };
 
+const requestSchema = z.object({
+  employeeId: z.string().min(1, 'Required'),
+  fromCity: z.string().min(1, 'Required'),
+  toCity: z.string().min(1, 'Required'),
+  fromDate: z.string().min(1, 'Required'),
+  toDate: z.string().min(1, 'Required'),
+  advanceRupees: z.coerce.number().positive(),
+  notes: z.string().optional(),
+});
+type RequestForm = z.infer<typeof requestSchema>;
+
+const settleSchema = z.object({
+  expenseRupees: z.coerce.number().positive(),
+  notes: z.string().optional(),
+});
+type SettleForm = z.infer<typeof settleSchema>;
+
 export function ToursPage() {
   const [tours, setTours] = useState<Tour[]>([]);
   const [loading, setLoading] = useState(true);
+  const [addOpen, setAddOpen] = useState(false);
+  const [settleOpen, setSettleOpen] = useState<Tour | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
+  const fetchTours = () => {
     api.get<Resp>('/tours').then((r) => setTours(r.data.data)).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(fetchTours, []);
+
+  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<RequestForm>({ resolver: zodResolver(requestSchema) });
+  const settleForm = useForm<SettleForm>({ resolver: zodResolver(settleSchema) });
+
+  const onSubmit = async (data: RequestForm) => {
+    try {
+      await api.post('/tours', { ...data, itinerary: data.notes ? [{ notes: data.notes }] : [] });
+      toast.success('Tour request created');
+      reset(); setAddOpen(false); fetchTours();
+    } catch { toast.error('Failed to create tour request'); }
+  };
+
+  const onSettle = async (data: SettleForm) => {
+    if (!settleOpen) return;
+    setSaving(true);
+    try {
+      await api.post(`/tours/${settleOpen.id}/settle`, data);
+      toast.success('Tour settled');
+      setSettleOpen(null); settleForm.reset(); fetchTours();
+    } catch { toast.error('Failed to settle tour'); }
+    finally { setSaving(false); }
+  };
+
+  const inp: React.CSSProperties = { width: '100%', height: 38, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' };
 
   return (
     <div>
       <PageHeader title="Tour & Travel" subtitle="Employee travel requests, advances and expense settlements."
-        actions={<Button icon={Plus} variant="primary">New Tour Request</Button>} />
+        actions={<Button icon={Plus} variant="primary" onClick={() => setAddOpen(true)}>New Tour Request</Button>} />
       <Card padding={0}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: 'var(--ck-bg)', textAlign: 'left' }}>
-                {['Tour ID', 'Employee', 'Route', 'Dates', 'Advance', 'Expense', 'Status'].map((h) => (
+                {['Tour ID', 'Employee', 'Route', 'Dates', 'Advance', 'Expense', 'Status', 'Actions'].map((h) => (
                   <th key={h} style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {!loading && tours.length === 0 && (
-                <tr><td colSpan={7} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>No tour requests yet.</td></tr>
+                <tr><td colSpan={8} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>No tour requests yet.</td></tr>
               )}
               {tours.map((t, i) => (
                 <tr key={t.id} style={{ borderTop: '1px solid var(--ck-line)' }}
@@ -67,12 +118,70 @@ export function ToursPage() {
                     {Number(t.expense) ? inrPaiseToRupeesShort(t.expense) : '—'}
                   </td>
                   <td style={{ padding: '12px 16px' }}><StatusPill status={STATUS_LABELS[t.status] ?? t.status} /></td>
+                  <td style={{ padding: '12px 16px' }}>
+                    {t.status !== 'settled' && (
+                      <Button size="sm" variant="ghost" onClick={() => { setSettleOpen(t); settleForm.reset({ expenseRupees: Number(t.expense) / 100 || 0, notes: '' }); }}>
+                        Settle
+                      </Button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </Card>
+
+      <Modal open={addOpen} onClose={() => { reset(); setAddOpen(false); }} title="New Tour Request" width={520}
+        footer={<>
+          <Button onClick={() => { reset(); setAddOpen(false); }}>Cancel</Button>
+          <Button variant="primary" type="submit" form="tour-form" disabled={isSubmitting}>{isSubmitting ? 'Saving…' : 'Create'}</Button>
+        </>}
+      >
+        <form id="tour-form" onSubmit={handleSubmit(onSubmit)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <F2 label="Employee ID *" error={errors.employeeId?.message}><input {...register('employeeId')} placeholder="CK-EMP-001" style={inp} /></F2>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <F2 label="From city *" error={errors.fromCity?.message}><input {...register('fromCity')} style={inp} /></F2>
+              <F2 label="To city *" error={errors.toCity?.message}><input {...register('toCity')} style={inp} /></F2>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <F2 label="From date *" error={errors.fromDate?.message}><input type="date" {...register('fromDate')} style={inp} /></F2>
+              <F2 label="To date *" error={errors.toDate?.message}><input type="date" {...register('toDate')} style={inp} /></F2>
+            </div>
+            <F2 label="Advance (₹) *" error={errors.advanceRupees?.message}><input type="number" {...register('advanceRupees')} style={inp} /></F2>
+            <F2 label="Notes"><textarea {...register('notes')} rows={3} style={{ ...inp, height: 'auto', padding: 10 }} /></F2>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal open={!!settleOpen} onClose={() => { setSettleOpen(null); settleForm.reset(); }} title="Settle Tour" width={420}
+        footer={<>
+          <Button onClick={() => { setSettleOpen(null); settleForm.reset(); }}>Cancel</Button>
+          <Button variant="primary" type="submit" form="tour-settle-form" disabled={saving}>{saving ? 'Saving…' : 'Settle'}</Button>
+        </>}
+      >
+        <form id="tour-settle-form" onSubmit={settleForm.handleSubmit(onSettle)}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <F2 label="Expense (₹) *" error={settleForm.formState.errors.expenseRupees?.message}>
+              <input type="number" {...settleForm.register('expenseRupees')} style={inp} />
+            </F2>
+            <F2 label="Notes">
+              <textarea {...settleForm.register('notes')} rows={3} style={{ ...inp, height: 'auto', padding: 10 }} />
+            </F2>
+          </div>
+        </form>
+      </Modal>
     </div>
+  );
+}
+
+function F2({ label, error, children }: { label: string; error?: string; children: ReactNode }) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--ck-ink-soft)' }}>{label}</span>
+      {children}
+      {error && <span style={{ fontSize: 11.5, color: 'var(--ck-danger-fg)' }}>{error}</span>}
+    </label>
   );
 }

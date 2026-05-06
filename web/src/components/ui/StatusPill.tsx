@@ -1,10 +1,10 @@
 const TONES = {
-  success: { bg: 'oklch(0.95 0.05 145)',  fg: 'oklch(0.42 0.12 145)', dot: 'oklch(0.55 0.16 145)' },
-  warning: { bg: 'oklch(0.96 0.06 70)',   fg: 'oklch(0.5 0.13 60)',   dot: 'oklch(0.62 0.16 60)'  },
-  info:    { bg: 'oklch(0.95 0.05 250)',  fg: 'oklch(0.45 0.13 250)', dot: 'oklch(0.6 0.16 250)'  },
-  danger:  { bg: 'oklch(0.95 0.05 25)',   fg: 'oklch(0.45 0.15 25)',  dot: 'oklch(0.6 0.18 25)'   },
-  neutral: { bg: 'oklch(0.94 0.005 250)', fg: 'oklch(0.45 0.01 250)', dot: 'oklch(0.6 0.01 250)'  },
-  brand:   { bg: 'oklch(0.95 0.06 340)',  fg: 'oklch(0.45 0.16 340)', dot: 'oklch(0.6 0.2 340)'   },
+  success: { bg: '#f1f1f1', fg: '#4a4a4a', border: '#d9d9d9' },
+  warning: { bg: '#f1f1f1', fg: '#4a4a4a', border: '#d9d9d9' },
+  info:    { bg: '#f1f1f1', fg: '#4a4a4a', border: '#d9d9d9' },
+  danger:  { bg: '#f1f1f1', fg: '#4a4a4a', border: '#d9d9d9' },
+  neutral: { bg: '#f1f1f1', fg: '#4a4a4a', border: '#d9d9d9' },
+  brand:   { bg: '#f1f1f1', fg: '#4a4a4a', border: '#d9d9d9' },
 };
 
 export type Tone = keyof typeof TONES;
@@ -28,16 +28,16 @@ export function StatusPill({ status, tone }: Props) {
         display: 'inline-flex',
         alignItems: 'center',
         gap: 6,
-        padding: '4px 10px',
+        padding: '3px 10px',
         borderRadius: 999,
         background: t.bg,
         color: t.fg,
+        border: `1px solid ${t.border}`,
         fontSize: 11.5,
         fontWeight: 600,
         whiteSpace: 'nowrap',
       }}
     >
-      <span style={{ width: 6, height: 6, borderRadius: '50%', background: t.dot }} />
       {status}
     </span>
   );
