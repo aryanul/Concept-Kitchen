@@ -6,6 +6,7 @@ type Props = {
 };
 
 export function Avatar({ name, initials, size = 36, hue = 220 }: Props) {
+  const tint = hue;
   const ini =
     initials ||
     (name
@@ -23,8 +24,8 @@ export function Avatar({ name, initials, size = 36, hue = 220 }: Props) {
         width: size,
         height: size,
         borderRadius: '50%',
-        background: '#e6e6e6',
-        color: '#6d6d6d',
+        background: `oklch(0.9 0.01 ${tint})`,
+        color: `oklch(0.45 0.02 ${tint})`,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',

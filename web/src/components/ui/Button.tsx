@@ -13,6 +13,7 @@ type Props = {
   onClick?: (e: MouseEvent<HTMLButtonElement>) => void;
   disabled?: boolean;
   type?: 'button' | 'submit' | 'reset';
+  form?: string;
 };
 
 const SIZES: Record<Size, { p: string; fs: number; h: number; iconSize: number }> = {
@@ -37,6 +38,7 @@ export function Button({
   onClick,
   disabled,
   type = 'button',
+  form,
 }: Props) {
   const sz = SIZES[size];
   const v = VARIANTS[variant];
@@ -44,6 +46,7 @@ export function Button({
   return (
     <button
       type={type}
+      form={form}
       onClick={onClick}
       disabled={disabled}
       onMouseEnter={() => setHover(true)}

@@ -27,7 +27,7 @@ app.use(
 );
 app.use(express.json());
 
-type AuditPayload = Record<string, unknown> | null;
+type AuditPayload = unknown | null;
 
 async function writeAudit(
   actorId: string,
