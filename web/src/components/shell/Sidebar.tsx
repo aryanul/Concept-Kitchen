@@ -15,6 +15,11 @@ type Leaf  = { id: string; path: string; label: string; icon?: LucideIcon };
 type Group = { id: string; label: string; icon: LucideIcon; defaultOpen?: boolean; children: Leaf[] };
 type Item  = (Leaf & { icon: LucideIcon }) | Group;
 
+type SidebarProps = {
+  isOpen: boolean;
+  onClose: () => void;
+};
+
 const NAV: Item[] = [
   { id: 'dashboard', path: '/', label: 'Dashboard', icon: Home },
   {
@@ -50,7 +55,7 @@ const NAV: Item[] = [
 
 const isGroup = (i: Item): i is Group => 'children' in i;
 
-export function Sidebar() {
+export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const user = useAuth((s) => s.user);
   const [open, setOpen] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
@@ -62,20 +67,8 @@ export function Sidebar() {
   const role = user?.role ? humanizeRole(user.role) : '';
 
   return (
-    <aside
-      style={{
-        width: 'var(--ck-sidebar-w)',
-        flexShrink: 0,
-        background: 'var(--ck-surface)',
-        borderRight: '1px solid var(--ck-line)',
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        position: 'sticky',
-        top: 0,
-      }}
-    >
-      <div style={{ padding: '18px 18px 12px' }}>
+    <aside className={`ck-sidebar${isOpen ? ' is-open' : ''}`}>
+      <div style={{ padding: '18px 18px 12px', flexShrink: 0 }}>
         <BrandWordmark markSize={36} />
       </div>
 
@@ -93,39 +86,22 @@ export function Sidebar() {
                 {open[item.id] && (
                   <div style={{ marginTop: 4, marginLeft: 10 }}>
                     {item.children.map((c) => (
-                      <SubLink key={c.id} to={c.path} label={c.label} icon={c.icon} />
+                      <SubLink key={c.id} to={c.path} label={c.label} icon={c.icon} onNavigate={onClose} />
                     ))}
                   </div>
                 )}
               </>
             ) : (
-              <TopLink to={item.path} label={item.label} icon={item.icon} />
+              <TopLink to={item.path} label={item.label} icon={item.icon} onNavigate={onClose} />
             )}
           </div>
         ))}
       </nav>
 
-      <div
-        style={{
-          padding: 12,
-          borderTop: '1px solid var(--ck-line)',
-          display: 'flex',
-          gap: 10,
-          alignItems: 'center',
-        }}
-      >
+      <div style={{ padding: 12, borderTop: '1px solid var(--ck-line)', display: 'flex', gap: 10, alignItems: 'center', flexShrink: 0 }}>
         <Avatar name={userName || '?'} hue={340} size={36} />
         <div style={{ flex: 1, lineHeight: 1.2, minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              color: 'var(--ck-ink)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ck-ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {userName || '—'}
           </div>
           <div style={{ fontSize: 11.5, color: 'var(--ck-muted)' }}>{role || '—'}</div>
@@ -135,51 +111,32 @@ export function Sidebar() {
   );
 }
 
-function TopLink({ to, label, icon: Cmp }: { to: string; label: string; icon: LucideIcon }) {
+function TopLink({ to, label, icon: Cmp, onNavigate }: { to: string; label: string; icon: LucideIcon; onNavigate: () => void }) {
   return (
-    <NavLink
-      to={to}
-      end={to === '/'}
+    <NavLink to={to} end={to === '/'} onClick={onNavigate}
       style={({ isActive }) => ({
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        padding: '10px 14px',
-        borderRadius: 999,
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '10px 14px', borderRadius: 999,
         background: isActive ? '#6f6f6f' : 'transparent',
         color: isActive ? '#fff' : 'var(--ck-ink)',
-        fontSize: 13,
-        fontWeight: 600,
-        transition: 'background 120ms',
-      })}
-    >
+        fontSize: 13, fontWeight: 600, transition: 'background 120ms',
+      })}>
       <Cmp size={17} strokeWidth={1.7} />
       <span style={{ flex: 1 }}>{label}</span>
     </NavLink>
   );
 }
 
-function GroupHead({
-  icon: Cmp, label, expanded, onToggle,
-}: { icon: LucideIcon; label: string; expanded: boolean; onToggle: () => void }) {
+function GroupHead({ icon: Cmp, label, expanded, onToggle }: { icon: LucideIcon; label: string; expanded: boolean; onToggle: () => void }) {
   return (
-    <button
-      onClick={onToggle}
+    <button onClick={onToggle}
       style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        width: '100%',
-        padding: '10px 14px',
-        borderRadius: 999,
-        border: 'none',
+        display: 'flex', alignItems: 'center', gap: 12, width: '100%',
+        padding: '10px 14px', borderRadius: 999, border: 'none',
         background: expanded ? '#6f6f6f' : 'transparent',
         color: expanded ? '#fff' : 'var(--ck-ink)',
-        fontSize: 13,
-        fontWeight: 600,
-        textAlign: 'left',
-      }}
-    >
+        fontSize: 13, fontWeight: 600, textAlign: 'left',
+      }}>
       <Cmp size={17} strokeWidth={1.7} />
       <span style={{ flex: 1 }}>{label}</span>
       {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
@@ -187,23 +144,16 @@ function GroupHead({
   );
 }
 
-function SubLink({ to, label, icon: Cmp }: { to: string; label: string; icon?: LucideIcon }) {
+function SubLink({ to, label, icon: Cmp, onNavigate }: { to: string; label: string; icon?: LucideIcon; onNavigate: () => void }) {
   return (
-    <NavLink
-      to={to}
+    <NavLink to={to} onClick={onNavigate}
       style={({ isActive }) => ({
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '8px 12px',
-        borderRadius: 10,
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '8px 12px', borderRadius: 10,
         background: isActive ? '#e9e9e9' : 'transparent',
         color: isActive ? 'var(--ck-ink)' : 'var(--ck-ink-soft)',
-        fontSize: 12.5,
-        fontWeight: isActive ? 600 : 500,
-        marginBottom: 4,
-      })}
-    >
+        fontSize: 12.5, fontWeight: isActive ? 600 : 500, marginBottom: 4,
+      })}>
       {Cmp && <Cmp size={15} strokeWidth={1.7} />}
       <span style={{ flex: 1 }}>{label}</span>
     </NavLink>
@@ -211,18 +161,8 @@ function SubLink({ to, label, icon: Cmp }: { to: string; label: string; icon?: L
 }
 
 function humanize(slug: string) {
-  return slug
-    .replace(/[._-]+/g, ' ')
-    .split(' ')
-    .filter(Boolean)
-    .map((s) => s[0].toUpperCase() + s.slice(1))
-    .join(' ');
+  return slug.replace(/[._-]+/g, ' ').split(' ').filter(Boolean).map((s) => s[0].toUpperCase() + s.slice(1)).join(' ');
 }
-
 function humanizeRole(role: string) {
-  return role
-    .toLowerCase()
-    .split('_')
-    .map((s) => s[0].toUpperCase() + s.slice(1))
-    .join(' ');
+  return role.toLowerCase().split('_').map((s) => s[0].toUpperCase() + s.slice(1)).join(' ');
 }

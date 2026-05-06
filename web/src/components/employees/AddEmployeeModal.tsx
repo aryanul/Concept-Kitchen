@@ -63,7 +63,7 @@ export function AddEmployeeModal({ open, onClose, onCreated, branches, departmen
         </Button>
       </>}>
       <form id="add-employee-form" onSubmit={handleSubmit(onSubmit)}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div className="ck-form-grid-2">
           <F label="First name *" error={errors.firstName?.message}><input {...register('firstName')} style={inp} /></F>
           <F label="Last name *"  error={errors.lastName?.message}><input {...register('lastName')}  style={inp} /></F>
           <F label="Email *"      error={errors.email?.message}><input type="email" {...register('email')} style={inp} /></F>
@@ -91,7 +91,7 @@ export function AddEmployeeModal({ open, onClose, onCreated, branches, departmen
           <F label="Annual CTC (₹) *" error={errors.ctcRupees?.message}><input type="number" {...register('ctcRupees')} placeholder="600000" style={inp} /></F>
         </div>
         <div style={{ borderTop: '1px solid var(--ck-line)', margin: '18px 0 14px', paddingTop: 14, fontSize: 12, fontWeight: 600, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Bank &amp; Statutory (optional)</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div className="ck-form-grid-2">
           <F label="Bank name"><input {...register('bankName')} style={inp} /></F>
           <F label="Account number"><input {...register('bankAccount')} style={inp} /></F>
           <F label="IFSC"><input {...register('ifsc')} style={inp} /></F>

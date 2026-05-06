@@ -84,7 +84,7 @@ export function AttendancePage() {
       <PageHeader title="Attendance & Exceptions" subtitle="Daily punch-in/out records across all branches."
         actions={<Button icon={Plus} variant="primary" onClick={() => setMarkOpen(true)}>Mark Attendance</Button>} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 22 }}>
+      <div className="ck-stats-4">
         {[{ label: 'Present', tint: 145 }, { label: 'Late', tint: 60 }, { label: 'On Leave', tint: 250 }, { label: 'Absent', tint: 25 }].map((s) => (
           <Card key={s.label} padding={20}>
             <div style={{ width: 36, height: 36, borderRadius: 10, background: `oklch(0.95 0.04 ${s.tint})`, color: `oklch(0.45 0.13 ${s.tint})`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700, marginBottom: 10 }}>{s.label[0]}</div>

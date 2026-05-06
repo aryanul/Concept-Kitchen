@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  Search, Bell, Clock, Cloud, Calendar, ChevronDown, LogOut, User,
+  Search, Bell, Clock, Cloud, Calendar, ChevronDown, LogOut, User, Menu,
   type LucideIcon,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../ui/Avatar';
 import { useAuth } from '../../stores/auth';
 
-export function TopBar() {
+type TopBarProps = { onMenuClick: () => void };
+
+export function TopBar({ onMenuClick }: TopBarProps) {
   const user = useAuth((s) => s.user);
   const clear = useAuth((s) => s.clear);
   const navigate = useNavigate();
@@ -56,13 +58,29 @@ export function TopBar() {
         borderBottom: '1px solid var(--ck-line)',
         display: 'flex',
         alignItems: 'center',
-        gap: 16,
+        gap: 12,
         position: 'sticky',
         top: 0,
         zIndex: 20,
       }}
     >
+      {/* Hamburger — visible on mobile only via CSS */}
+      <button
+        type="button"
+        aria-label="Open menu"
+        onClick={onMenuClick}
+        className="ck-hamburger"
+        style={{
+          width: 36, height: 36, borderRadius: 10, border: '1px solid var(--ck-line)',
+          background: 'var(--ck-surface)', alignItems: 'center', justifyContent: 'center',
+          color: 'var(--ck-ink)', cursor: 'pointer', flexShrink: 0,
+        }}
+      >
+        <Menu size={18} />
+      </button>
+
       <div
+        className="ck-topbar-search-max"
         style={{
           flex: '1 1 0',
           maxWidth: 360,
@@ -85,11 +103,13 @@ export function TopBar() {
           }}
         />
       </div>
-      <div style={{ flex: 1 }} />
+      <div className="ck-topbar-spacer" />
 
-      <Chip icon={Clock} label={tStr} />
-      <Chip icon={Cloud} label="28°C" />
-      <Chip icon={Calendar} label={dStr} />
+      <div className="ck-topbar-chips">
+        <Chip icon={Clock} label={tStr} />
+        <Chip icon={Cloud} label="28°C" />
+        <Chip icon={Calendar} label={dStr} />
+      </div>
 
       <button
         type="button"
@@ -121,12 +141,13 @@ export function TopBar() {
           }}
         >
           <Avatar name={fullName || niceFirst} hue={340} size={32} />
-          <div style={{ lineHeight: 1.15 }}>
+          <div className="ck-user-text">
             <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ck-ink)' }}>{niceFirst}</div>
             <div style={{ fontSize: 10.5, color: 'var(--ck-faint)' }}>{role}</div>
           </div>
           <ChevronDown
             size={14}
+            className="ck-user-chevron"
             style={{
               color: 'var(--ck-muted)',
               transition: 'transform 160ms',

@@ -113,14 +113,7 @@ export function DashboardPage() {
         }
       />
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: 14,
-          marginBottom: 22,
-        }}
-      >
+      <div className="ck-stats-4">
         {stats.map((s) => (
           <Card key={s.label} padding={20}>
             <div
@@ -174,7 +167,7 @@ export function DashboardPage() {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14, marginBottom: 22 }}>
+      <div className="ck-dash-split">
         <Card padding={0}>
           <div
             style={{

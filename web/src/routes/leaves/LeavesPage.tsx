@@ -85,7 +85,7 @@ export function LeavesPage() {
       <PageHeader title="Leaves & Approvals" subtitle="Apply, track and approve employee leave requests."
         actions={<Button icon={Plus} variant="primary" onClick={() => setApplyOpen(true)}>Apply Leave</Button>} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 12, marginBottom: 22 }}>
+      <div className="ck-stats-6">
         {LEAVE_TYPES_OPTS.map((t, i) => (
           <Card key={t} padding={16}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>

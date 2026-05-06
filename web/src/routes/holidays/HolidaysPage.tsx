@@ -67,7 +67,7 @@ export function HolidaysPage() {
       <PageHeader title="Holidays" subtitle="Public, regional and optional holidays for the year."
         actions={<Button icon={Plus} variant="primary" onClick={() => setAddOpen(true)}>Add Holiday</Button>} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 22 }}>
+      <div className="ck-stats-4">
         <StatTile icon={CalendarDays} label="Total Holidays" value={String(stats.total)} tint={250} />
         <StatTile label="Public"   value={String(stats.byKind['Public']   || 0)} tint={250} />
         <StatTile label="Regional" value={String(stats.byKind['Regional'] || 0)} tint={145} />

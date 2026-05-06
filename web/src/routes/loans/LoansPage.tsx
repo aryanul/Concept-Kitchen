@@ -71,7 +71,7 @@ export function LoansPage() {
       <PageHeader title="Advances & Loans" subtitle="Employee loan and advance disbursements."
         actions={<Button icon={Plus} variant="primary" onClick={() => setAddOpen(true)}>New Loan</Button>} />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 22 }}>
+      <div className="ck-stats-4">
         {[
           { label: 'Total Disbursed', value: stats ? inrPaiseToRupeesShort(stats.total_principal) : '—', tint: 250 },
           { label: 'Outstanding', value: stats ? inrPaiseToRupeesShort(stats.total_outstanding) : '—', tint: 60 },

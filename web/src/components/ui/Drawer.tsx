@@ -5,11 +5,12 @@ type Props = {
   open: boolean;
   onClose: () => void;
   title?: string;
+  /** Width is handled by the `.ck-drawer-panel` CSS class (responsive-aware). */
   width?: number;
   children: ReactNode;
 };
 
-export function Drawer({ open, onClose, width = 720, children }: Props) {
+export function Drawer({ open, onClose, children }: Props) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     if (open) { document.addEventListener('keydown', h); document.body.style.overflow = 'hidden'; }
@@ -27,10 +28,11 @@ export function Drawer({ open, onClose, width = 720, children }: Props) {
           transition: 'opacity 220ms',
         }}
       />
-      {/* Panel */}
+      {/* Panel — ck-drawer-panel caps width at 100vw on mobile */}
       <div
+        className="ck-drawer-panel"
         style={{
-          position: 'fixed', top: 0, right: 0, height: '100vh', width,
+          position: 'fixed', top: 0, right: 0, height: '100vh',
           background: 'var(--ck-surface)',
           boxShadow: '-8px 0 32px rgba(15,23,42,0.12)',
           zIndex: 40, display: 'flex', flexDirection: 'column',
