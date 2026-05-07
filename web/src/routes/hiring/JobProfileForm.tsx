@@ -10,8 +10,9 @@ import { Button } from '../../components/ui/Button';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type Dept = { id: string; name: string };
+type Shift = { id: string; code: string; name: string; start_time: string; end_time: string };
 
-interface StepData {
+export interface StepData {
   // Step 1
   jobTitle: string; alternateTitle: string; departmentId: string;
   division: string; designation: string; locationApplicable: string;
@@ -103,8 +104,14 @@ export function JobProfileForm({
   const [tagInput, setTagInput] = useState('');
   const [challengeInput, setChallengeInput] = useState('');
   const [atmInput, setAtmInput] = useState({ task: '', description: '' });
+  const [shifts, setShifts] = useState<Shift[]>([]);
 
   const upd = (patch: Partial<StepData>) => setData((d) => ({ ...d, ...patch }));
+
+  useEffect(() => {
+    setData({ ...DEFAULT_STEP_DATA, ...initialData });
+    setActiveStep(1);
+  }, [editId, initialData]);
 
   const saveProfile = async () => {
     if (!data.departmentId && !data.jobTitle && !data.designation) {
@@ -121,6 +128,7 @@ export function JobProfileForm({
         designation: data.designation || undefined,
         locationApplicable: data.locationApplicable || undefined,
         workShift: data.workShift || undefined,
+        reportingDeptId: data.reportingDept || undefined,
         reportingDivision: data.reportingDivision || undefined,
         reportingDesignation: data.reportingDesignation || undefined,
         jpStatus: 'Partially Done',
@@ -137,6 +145,13 @@ export function JobProfileForm({
     } catch { toast.error('Failed to save'); }
     finally { setSaving(false); }
   };
+
+  useEffect(() => {
+    api
+      .get<{ data: Shift[] }>('/shifts')
+      .then((r) => setShifts(r.data.data))
+      .catch(() => {});
+  }, []);
 
   return (
     <div style={{ display: 'flex', height: '100%', minHeight: 600 }}>
@@ -186,13 +201,13 @@ export function JobProfileForm({
 
         {/* Step content */}
         <div style={{ padding: 24, flex: 1 }}>
-          {activeStep === 1 && <Step1 data={data} upd={upd} depts={depts} />}
+          {activeStep === 1 && <Step1 data={data} upd={upd} depts={depts} shifts={shifts} />}
           {activeStep === 2 && <Step2 data={data} upd={upd} />}
           {activeStep === 3 && <Step3 data={data} upd={upd} tagInput={tagInput} setTagInput={setTagInput} />}
           {activeStep === 4 && <Step4 data={data} upd={upd} input={challengeInput} setInput={setChallengeInput} />}
           {activeStep === 5 && <Step5 data={data} upd={upd} />}
           {activeStep === 6 && <Step6 data={data} upd={upd} />}
-          {activeStep === 7 && <Step7 data={data} upd={upd} depts={depts} />}
+          {activeStep === 7 && <Step7 data={data} upd={upd} depts={depts} shifts={shifts} />}
           {activeStep === 8 && <Step8 data={data} upd={upd} atmInput={atmInput} setAtmInput={setAtmInput} />}
           {activeStep === 9 && <Step9 />}
           {activeStep === 10 && <Step10 data={data} upd={upd} />}
@@ -239,14 +254,27 @@ function FG({ label, children, full, span }: { label: string; children: ReactNod
 }
 
 // ─── Step 1 — Basic Job Information ───────────────────────────────────────────
-function Step1({ data, upd, depts }: { data: StepData; upd: (p: Partial<StepData>) => void; depts: Dept[] }) {
+function Step1({
+  data,
+  upd,
+  depts,
+  shifts,
+}: {
+  data: StepData;
+  upd: (p: Partial<StepData>) => void;
+  depts: Dept[];
+  shifts: Shift[];
+}) {
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
         <FG label="Job Title*"><input value={data.jobTitle} onChange={(e) => upd({ jobTitle: e.target.value })} placeholder="Enter Job Title" style={inp} /></FG>
         <FG label="Alternate Title*"><input value={data.alternateTitle} onChange={(e) => upd({ alternateTitle: e.target.value })} placeholder="Enter Alternate Title" style={inp} /></FG>
         <FG label="Department*">
-          <input value={depts.find((d) => d.id === data.departmentId)?.name ?? data.departmentId} readOnly style={{ ...inp, background: 'var(--ck-line-soft)', color: 'var(--ck-ink)' }} placeholder="—" />
+          <select value={data.departmentId} onChange={(e) => upd({ departmentId: e.target.value })} style={inp}>
+            <option value="">Select</option>
+            {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
         </FG>
         <FG label="Division*"><input value={data.division} onChange={(e) => upd({ division: e.target.value })} placeholder="e.g. Operation" style={inp} /></FG>
         <FG label="Designation*"><input value={data.designation} onChange={(e) => upd({ designation: e.target.value })} placeholder="e.g. Team Leader" style={inp} /></FG>
@@ -287,10 +315,14 @@ function Step1({ data, upd, depts }: { data: StepData; upd: (p: Partial<StepData
       </div>
 
       <FG label="Work Shift*">
-        <div style={{ display: 'flex', gap: 8, maxWidth: 300 }}>
-          <input value={data.workShift} onChange={(e) => upd({ workShift: e.target.value })} placeholder="09 Hours" style={{ ...inp, flex: 1 }} />
-          <button style={{ width: 36, height: 38, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Plus size={16} /></button>
-        </div>
+        <select value={data.workShift} onChange={(e) => upd({ workShift: e.target.value })} style={{ ...inp, maxWidth: 300 }}>
+          <option value="">Select shift</option>
+          {shifts.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} ({s.start_time} - {s.end_time})
+            </option>
+          ))}
+        </select>
       </FG>
     </div>
   );
@@ -462,7 +494,17 @@ function Step6({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => v
 }
 
 // ─── Step 7 — Career Path (reuses Step 1 layout) ─────────────────────────────
-function Step7({ data, upd, depts }: { data: StepData; upd: (p: Partial<StepData>) => void; depts: Dept[] }) {
+function Step7({
+  data,
+  upd,
+  depts,
+  shifts,
+}: {
+  data: StepData;
+  upd: (p: Partial<StepData>) => void;
+  depts: Dept[];
+  shifts: Shift[];
+}) {
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
       <SectionTitle>Career Path — Target Role</SectionTitle>
@@ -496,10 +538,14 @@ function Step7({ data, upd, depts }: { data: StepData; upd: (p: Partial<StepData
         <FG label="Designation*"><input value={data.careerReportingDesignation} onChange={(e) => upd({ careerReportingDesignation: e.target.value })} placeholder="Designation" style={inp} /></FG>
       </div>
       <FG label="Work Shift*">
-        <div style={{ display: 'flex', gap: 8, maxWidth: 300 }}>
-          <input value={data.careerWorkShift} onChange={(e) => upd({ careerWorkShift: e.target.value })} placeholder="09 Hours" style={{ ...inp, flex: 1 }} />
-          <button style={{ width: 36, height: 38, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Plus size={16} /></button>
-        </div>
+        <select value={data.careerWorkShift} onChange={(e) => upd({ careerWorkShift: e.target.value })} style={{ ...inp, maxWidth: 300 }}>
+          <option value="">Select shift</option>
+          {shifts.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} ({s.start_time} - {s.end_time})
+            </option>
+          ))}
+        </select>
       </FG>
     </div>
   );

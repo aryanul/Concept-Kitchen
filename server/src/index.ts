@@ -539,8 +539,8 @@ app.get('/api/v1/job-profiles', authRequired, async (req, res, next) => {
     if (deptId) { where.push('jp.department_id = ?'); params.push(deptId); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const rows = await query(
-      `SELECT jp.id, jp.jp_no, jp.title, jp.division, jp.designation, jp.jp_status,
-              jp.description, jp.requirements, jp.status, jp.created_at,
+            `SELECT jp.id, jp.jp_no, jp.title, jp.division, jp.designation, jp.jp_status,
+              jp.description, jp.requirements, jp.status, jp.created_at, jp.form_data,
               d.id AS department_id, d.name AS department_name,
               (SELECT COUNT(*) FROM vacancies v WHERE v.job_profile_id = jp.id AND v.status='open') AS open_vacancies
        FROM job_profiles jp
@@ -552,6 +552,28 @@ app.get('/api/v1/job-profiles', authRequired, async (req, res, next) => {
       `SELECT COUNT(*) AS total FROM job_profiles jp JOIN departments d ON d.id = jp.department_id ${whereSql}`, params
     );
     res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
+  } catch (err) { next(err); }
+});
+
+app.get('/api/v1/job-profiles/:id', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query(
+      `SELECT jp.id, jp.jp_no, jp.title, jp.alternate_title, jp.department_id, jp.division,
+              jp.designation, jp.jp_status, jp.description, jp.requirements, jp.status,
+              jp.created_at, jp.location_applicable, jp.work_shift,
+              jp.reporting_dept_id, jp.reporting_division, jp.reporting_designation, jp.form_data,
+              d.name AS department_name,
+              rd.name AS reporting_department_name
+       FROM job_profiles jp
+       JOIN departments d ON d.id = jp.department_id
+       LEFT JOIN departments rd ON rd.id = jp.reporting_dept_id
+       WHERE jp.id = ?
+       LIMIT 1`,
+      [req.params.id]
+    );
+    const row = rows[0];
+    if (!row) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Job profile not found' } });
+    res.json({ data: row });
   } catch (err) { next(err); }
 });
 

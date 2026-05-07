@@ -4,7 +4,8 @@ import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
-import { JobProfileForm } from './JobProfileForm';
+import { JobProfileForm, type StepData } from './JobProfileForm';
+import { JobProfileDrawer } from '../../components/hiring/JobProfileDrawer';
 
 type JobProfile = {
   id: string; jp_no: string; title: string; alternate_title: string | null;
@@ -12,6 +13,15 @@ type JobProfile = {
   description: string | null; requirements: string | null; status: string;
   department_id: string; department_name: string;
   open_vacancies: number | string; created_at: string;
+  form_data?: StepData | string | null;
+};
+type JobProfileDetail = JobProfile & {
+  location_applicable?: string | null;
+  work_shift?: string | null;
+  reporting_dept_id?: string | null;
+  reporting_department_name?: string | null;
+  reporting_division?: string | null;
+  reporting_designation?: string | null;
 };
 type Dept = { id: string; name: string };
 type Meta = { page: number; pageSize: number; total: number };
@@ -28,6 +38,8 @@ type Mode = 'list' | 'create' | 'edit';
 export function JobProfilePage() {
   const [mode,      setMode]      = useState<Mode>('list');
   const [editTarget, setEditTarget] = useState<JobProfile | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
+  const [viewId, setViewId] = useState<string | null>(null);
   const [profiles,  setProfiles]  = useState<JobProfile[]>([]);
   const [depts,     setDepts]     = useState<Dept[]>([]);
   const [meta,      setMeta]      = useState<Meta>({ page: 1, pageSize: 5, total: 0 });
@@ -55,6 +67,18 @@ export function JobProfilePage() {
 
   const handleSaved = () => { setMode('list'); setEditTarget(null); fetchProfiles(); };
   const handleCancel = () => { setMode('list'); setEditTarget(null); };
+
+  const editInitialData = buildInitialData(editTarget);
+
+  const startEdit = (id: string) => {
+    setMode('edit');
+    setEditLoading(true);
+    api
+      .get<{ data: JobProfileDetail }>(`/job-profiles/${id}`)
+      .then((r) => setEditTarget(r.data.data))
+      .catch(() => setEditTarget(null))
+      .finally(() => setEditLoading(false));
+  };
 
   const totalPages = Math.max(1, Math.ceil(meta.total / meta.pageSize));
 
@@ -90,12 +114,17 @@ export function JobProfilePage() {
 
         {/* Form view */}
         {mode !== 'list' && (
-          <JobProfileForm
-            editId={editTarget?.id ?? null}
-            depts={depts}
-            onSaved={handleSaved}
-            onCancel={handleCancel}
-          />
+          editLoading ? (
+            <div style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading profile…</div>
+          ) : (
+            <JobProfileForm
+              editId={editTarget?.id ?? null}
+              initialData={editInitialData}
+              depts={depts}
+              onSaved={handleSaved}
+              onCancel={handleCancel}
+            />
+          )
         )}
 
         {/* Table view */}
@@ -131,8 +160,8 @@ export function JobProfilePage() {
                         </td>
                         <td style={{ padding: '14px 16px' }}>
                           <div style={{ display: 'flex', gap: 10 }}>
-                            <button aria-label="View" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Eye size={17} /></button>
-                            <button aria-label="Edit" onClick={() => { setEditTarget(p); setMode('edit'); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Pencil size={17} /></button>
+                            <button aria-label="View" onClick={() => setViewId(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Eye size={17} /></button>
+                            <button aria-label="Edit" onClick={() => startEdit(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Pencil size={17} /></button>
                           </div>
                         </td>
                       </tr>
@@ -164,7 +193,46 @@ export function JobProfilePage() {
           </>
         )}
       </Card>
+
+      <JobProfileDrawer
+        profileId={viewId}
+        onClose={() => setViewId(null)}
+        onEdit={(id) => {
+          setViewId(null);
+          startEdit(id);
+        }}
+      />
     </div>
   );
+}
+
+function parseFormData(raw: JobProfile['form_data']): Partial<StepData> | undefined {
+  if (!raw) return undefined;
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw) as Partial<StepData>;
+    } catch {
+      return undefined;
+    }
+  }
+  return raw as Partial<StepData>;
+}
+
+function buildInitialData(profile: JobProfile | null): Partial<StepData> | undefined {
+  if (!profile) return undefined;
+  const fromForm = parseFormData(profile.form_data);
+  if (fromForm) return fromForm;
+  return {
+    jobTitle: profile.title ?? '',
+    alternateTitle: profile.alternate_title ?? '',
+    departmentId: profile.department_id ?? '',
+    division: profile.division ?? '',
+    designation: profile.designation ?? '',
+    locationApplicable: (profile as JobProfileDetail).location_applicable ?? '',
+    reportingDept: (profile as JobProfileDetail).reporting_dept_id ?? '',
+    reportingDivision: (profile as JobProfileDetail).reporting_division ?? '',
+    reportingDesignation: (profile as JobProfileDetail).reporting_designation ?? '',
+    workShift: (profile as JobProfileDetail).work_shift ?? '',
+  };
 }
 
