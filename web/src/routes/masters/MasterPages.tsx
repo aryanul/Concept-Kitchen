@@ -1,14 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Building2, DoorOpen, LayoutGrid, LocateFixed, Shield, Sparkles, Tags, Users, Wallet, CalendarDays, ClipboardList } from 'lucide-react';
+import { Building2, LayoutGrid, LocateFixed, Shield, Sparkles, Wallet, CalendarDays, ClipboardList } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
-import { Button } from '../../components/ui/Button';
 import { StatusPill } from '../../components/ui/StatusPill';
-import { Avatar } from '../../components/ui/Avatar';
-import { inrPaiseToRupeesShort, formatDate } from '../../lib/format';
-import { MasterCrudPage, type MasterField } from '../../components/masters/MasterCrudPage';
+import { inrPaiseToRupeesShort } from '../../lib/format';
+import { MasterCrudPage } from '../../components/masters/MasterCrudPage';
 import { HolidaysPage } from '../holidays/HolidaysPage';
 
 type Branch = { id: string; code: string; name: string; city: string; kind: string };
