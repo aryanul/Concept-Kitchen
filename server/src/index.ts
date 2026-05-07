@@ -6,6 +6,7 @@ import bcrypt from 'bcryptjs';
 import { ulid } from 'ulid';
 import { query } from './db';
 import { signAccessToken, authRequired, type Role } from './auth';
+import { registerMasterRoutes } from './masters';
 
 const app = express();
 
@@ -26,6 +27,9 @@ app.use(
   })
 );
 app.use(express.json());
+
+// Master routes registered AFTER global middleware so req.body / CORS headers are available
+registerMasterRoutes(app);
 
 type AuditPayload = unknown | null;
 

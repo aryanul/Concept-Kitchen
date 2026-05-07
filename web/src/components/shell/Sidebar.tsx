@@ -5,6 +5,7 @@ import {
   ChevronDown, ChevronRight,
   Clock, CalendarDays, ClipboardCheck, Wallet, FileText, Banknote,
   TrendingUp, CalendarClock, Plane, Gift,
+  Building2, LocateFixed, LayoutGrid, Shield, ClipboardList, Sparkles,
   type LucideIcon,
 } from 'lucide-react';
 import { Avatar } from '../ui/Avatar';
@@ -22,6 +23,22 @@ type SidebarProps = {
 
 const NAV: Item[] = [
   { id: 'dashboard', path: '/', label: 'Dashboard', icon: Home },
+  {
+    id: 'masters', label: 'Masters', icon: LayoutGrid, children: [
+      { id: 'masters-home', path: '/masters', label: 'Masters Home', icon: LayoutGrid },
+      { id: 'masters-ddd', path: '/masters/ddd', label: 'DDD Master', icon: ClipboardList },
+      { id: 'masters-branches', path: '/masters/branches', label: 'Branch Master', icon: Building2 },
+      { id: 'masters-locations', path: '/masters/locations', label: 'Location Master', icon: LocateFixed },
+      { id: 'masters-shifts', path: '/masters/shifts', label: 'Shift Master', icon: Clock },
+      { id: 'masters-salary-grades', path: '/masters/salary-grades', label: 'Salary Grades', icon: Wallet },
+      { id: 'masters-skills', path: '/masters/skills', label: 'Skill Master', icon: Sparkles },
+      { id: 'masters-companies', path: '/masters/companies', label: 'Company Master', icon: Building2 },
+      { id: 'masters-interview-templates', path: '/masters/interview-templates', label: 'Interview Templates', icon: ClipboardList },
+      { id: 'masters-giveaways', path: '/masters/giveaways', label: 'Giveaways', icon: Gift },
+      { id: 'masters-users', path: '/masters/users', label: 'User Console', icon: Shield },
+      { id: 'masters-holidays', path: '/masters/holidays', label: 'Holiday Master', icon: CalendarDays },
+    ],
+  },
   {
     id: 'hiring', label: 'Hiring', icon: Briefcase, children: [
       { id: 'job-profile', path: '/job-profile', label: 'Job Profile' },

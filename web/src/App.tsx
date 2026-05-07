@@ -15,6 +15,20 @@ import { IncentivesPage } from './routes/incentives/IncentivesPage';
 import { JobProfilePage } from './routes/hiring/JobProfilePage';
 import { VacanciesPage } from './routes/hiring/VacanciesPage';
 import { OnboardingPage } from './routes/hiring/OnboardingPage';
+import {
+  MastersHomePage,
+  BranchMasterPage,
+  DddMasterPage,
+  LocationMasterPage,
+  ShiftMasterPage,
+  SalaryGradeMasterPage,
+  SkillsMasterPage,
+  CompanyMasterPage,
+  InterviewTemplateMasterPage,
+  GiveawayTemplateMasterPage,
+  UserConsolePage,
+  HolidayMasterPage,
+} from './routes/masters/MasterPages';
 import { StubPage } from './routes/StubPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AppLayout } from './components/shell/AppLayout';
@@ -27,6 +41,18 @@ export default function App() {
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
             <Route path="/" element={<DashboardPage />} />
+            <Route path="/masters" element={<MastersHomePage />} />
+            <Route path="/masters/branches" element={<BranchMasterPage />} />
+            <Route path="/masters/ddd" element={<DddMasterPage />} />
+            <Route path="/masters/locations" element={<LocationMasterPage />} />
+            <Route path="/masters/shifts" element={<ShiftMasterPage />} />
+            <Route path="/masters/salary-grades" element={<SalaryGradeMasterPage />} />
+            <Route path="/masters/skills" element={<SkillsMasterPage />} />
+            <Route path="/masters/companies" element={<CompanyMasterPage />} />
+            <Route path="/masters/interview-templates" element={<InterviewTemplateMasterPage />} />
+            <Route path="/masters/giveaways" element={<GiveawayTemplateMasterPage />} />
+            <Route path="/masters/users" element={<UserConsolePage />} />
+            <Route path="/masters/holidays" element={<HolidayMasterPage />} />
 
             {/* Phase 1 — placeholders until each module is built */}
             <Route path="/employees"     element={<EmployeesPage />} />
