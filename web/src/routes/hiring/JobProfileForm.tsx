@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import {
   FileText, ListChecks, Target, LayoutGrid, BookOpen,
   TrendingUp, CheckSquare, Users, UserSearch, ClipboardList,
@@ -559,14 +559,12 @@ function Step9() {
   const [page, setPage]           = useState(1);
   const pageSize = 5;
 
-  ue(() => {
+  useEffect(() => {
     setLoading(true);
-    import('../../lib/api').then(({ api }) => {
-      api.get<{ data: HiringCompany[]; meta: { total: number } }>('/hiring/companies', { params: { page, pageSize } })
-        .then((r) => { setCompanies(r.data.data); setTotal(r.data.meta.total); })
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    });
+    api.get<{ data: HiringCompany[]; meta: { total: number } }>('/hiring/companies', { params: { page, pageSize } })
+      .then((r) => { setCompanies(r.data.data); setTotal(r.data.meta.total); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [page]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -624,7 +622,6 @@ function Step9() {
 }
 
 // ─── Step 10 — Prospets (full combined table from DB) ─────────────────────────
-import { useEffect as ue } from 'react'; // shadowed locally — see usage below
 
 type Prospect = {
   id: string; name: string; email: string; platform: string;
@@ -642,16 +639,14 @@ function Step10({ data: _data, upd: _upd }: { data: StepData; upd: (p: Partial<S
   const [search, setSearch]       = useState('');
   const pageSize = 5;
 
-  ue(() => {
+  useEffect(() => {
     setLoading(true);
     const params: Record<string, unknown> = { page, pageSize };
     if (search) params.search = search;
-    import('../../lib/api').then(({ api }) => {
-      api.get<{ data: Prospect[]; meta: { total: number } }>('/prospects', { params })
-        .then((r) => { setRows(r.data.data); setTotal(r.data.meta.total); })
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    });
+    api.get<{ data: Prospect[]; meta: { total: number } }>('/prospects', { params })
+      .then((r) => { setRows(r.data.data); setTotal(r.data.meta.total); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [page, search]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -790,29 +785,25 @@ function Step11({ data: _data, upd: _upd }: { data: StepData; upd: (p: Partial<S
 
   const fetchTemplates = () => {
     setLoading(true);
-    import('../../lib/api').then(({ api }) => {
-      api.get<{ data: InterviewTemplate[] }>('/hiring/interview-templates')
-        .then((r) => setTemplates(r.data.data))
-        .catch(() => {})
-        .finally(() => setLoading(false));
-    });
+    api.get<{ data: InterviewTemplate[] }>('/hiring/interview-templates')
+      .then((r) => setTemplates(r.data.data))
+      .catch(() => {})
+      .finally(() => setLoading(false));
   };
 
-  ue(fetchTemplates, []);
+  useEffect(fetchTemplates, []);
 
   const saveTemplate = async () => {
     if (!newTitle.trim()) return;
     setSaving(true);
-    import('../../lib/api').then(async ({ api }) => {
-      try {
-        await api.post('/hiring/interview-templates', { title: newTitle.trim(), description: newDesc.trim() || undefined });
-        import('sonner').then(({ toast }) => toast.success('Template added'));
-        setNewTitle(''); setNewDesc(''); setAddOpen(false);
-        fetchTemplates();
-      } catch {
-        import('sonner').then(({ toast }) => toast.error('Failed to add template'));
-      } finally { setSaving(false); }
-    });
+    try {
+      await api.post('/hiring/interview-templates', { title: newTitle.trim(), description: newDesc.trim() || undefined });
+      toast.success('Template added');
+      setNewTitle(''); setNewDesc(''); setAddOpen(false);
+      fetchTemplates();
+    } catch {
+      toast.error('Failed to add template');
+    } finally { setSaving(false); }
   };
 
   return (
