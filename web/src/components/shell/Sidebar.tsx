@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
   Home, Briefcase, Users, LogOut, Settings,
   ChevronDown, ChevronRight,
@@ -25,12 +25,12 @@ const NAV: Item[] = [
   {
     id: 'hiring', label: 'Hiring', icon: Briefcase, children: [
       { id: 'job-profile', path: '/job-profile', label: 'Job Profile' },
-      { id: 'vacancy',     path: '/vacancy',     label: 'Vacancies' },
-      { id: 'onboarding',  path: '/onboarding',  label: 'Onboarding' },
+      { id: 'vacancy',     path: '/vacancy',     label: 'Vacancy & Job Listing' },
+      { id: 'onboarding',  path: '/onboarding',  label: 'Induction & Onboarding' },
     ],
   },
   {
-    id: 'employment', label: 'Employment', icon: Users, defaultOpen: true, children: [
+    id: 'employment', label: 'Employment', icon: Users, children: [
       { id: 'employees',     path: '/employees',     label: 'Employee Master',          icon: Users },
       { id: 'shifts',        path: '/shifts',        label: 'Duty Shifts & Rosters',    icon: Clock },
       { id: 'holidays',      path: '/holidays',      label: 'Holidays',                 icon: CalendarDays },
@@ -57,9 +57,18 @@ const isGroup = (i: Item): i is Group => 'children' in i;
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const user = useAuth((s) => s.user);
+  const location = useLocation();
+
+  // Auto-expand the group that owns the current route; collapse the rest
   const [open, setOpen] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {};
-    NAV.forEach((i) => { if (isGroup(i)) init[i.id] = !!i.defaultOpen; });
+    NAV.forEach((item) => {
+      if (isGroup(item)) {
+        init[item.id] = item.children.some(
+          (c) => location.pathname === c.path || location.pathname.startsWith(c.path + '/')
+        );
+      }
+    });
     return init;
   });
 

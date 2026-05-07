@@ -12,6 +12,9 @@ import { LoansPage } from './routes/loans/LoansPage';
 import { IncrementsPage } from './routes/increments/IncrementsPage';
 import { ToursPage } from './routes/tours/ToursPage';
 import { IncentivesPage } from './routes/incentives/IncentivesPage';
+import { JobProfilePage } from './routes/hiring/JobProfilePage';
+import { VacanciesPage } from './routes/hiring/VacanciesPage';
+import { OnboardingPage } from './routes/hiring/OnboardingPage';
 import { StubPage } from './routes/StubPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AppLayout } from './components/shell/AppLayout';
@@ -39,9 +42,9 @@ export default function App() {
             <Route path="/incentives"    element={<IncentivesPage />} />
 
             {/* Phase 2 stubs */}
-            <Route path="/job-profile"   element={<StubPage title="Job Profile"  phase="Phase 2" />} />
-            <Route path="/vacancy"       element={<StubPage title="Vacancies"    phase="Phase 2" />} />
-            <Route path="/onboarding"    element={<StubPage title="Onboarding"   phase="Phase 2" />} />
+            <Route path="/job-profile"   element={<JobProfilePage />} />
+            <Route path="/vacancy"       element={<VacanciesPage />} />
+            <Route path="/onboarding"    element={<OnboardingPage />} />
 
             {/* Phase 3 stubs */}
             <Route path="/exit-clearance" element={<StubPage title="Exit Clearance"          phase="Phase 3" />} />
