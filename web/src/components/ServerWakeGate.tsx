@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from '../lib/api';
+import { useAuth } from '../stores/auth';
 
 type Status = 'checking' | 'waking' | 'ready';
 
@@ -22,9 +23,7 @@ export function ServerWakeGate({ children }: { children: ReactNode }) {
     while (true) {
       try {
         await api.get('/healthz', { timeout: 70_000 });
-        setStatus('ready');
-        inFlight.current = false;
-        return;
+        break;
       } catch {
         attempt++;
         if (attempt === 1) setStatus('waking');
@@ -33,6 +32,23 @@ export function ServerWakeGate({ children }: { children: ReactNode }) {
         await new Promise((r) => setTimeout(r, delay));
       }
     }
+
+    // Server is up. If we have a stored token, confirm it's still valid before opening
+    // the app — otherwise the user sees a "logged in" shell where every call 401s.
+    // The api.ts response interceptor will clear auth + redirect on 401; we just need
+    // to wait for that round-trip.
+    const token = useAuth.getState().token;
+    if (token) {
+      try {
+        await api.get('/auth/me', { timeout: 15_000 });
+      } catch {
+        // 401 → interceptor already redirected to /login; any other error we ignore
+        // and let the app render so individual pages can surface their own errors.
+      }
+    }
+
+    setStatus('ready');
+    inFlight.current = false;
   };
 
   useEffect(() => {
