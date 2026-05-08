@@ -84,6 +84,41 @@ const STEPS = [
 
 const inp: React.CSSProperties = { width: '100%', height: 38, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' };
 
+// Sections 9–11 are read-only DB lists, so JP completeness only considers the user-editable steps 1–8.
+function computeJpStatus(d: StepData): 'Pending' | 'Partially Done' | 'Done' {
+  const filled = (s: string) => s.trim().length > 0;
+  const checks: boolean[] = [
+    // Step 1 — basic info
+    filled(d.jobTitle), filled(d.alternateTitle), filled(d.departmentId),
+    filled(d.division), filled(d.designation), filled(d.locationApplicable),
+    filled(d.reportingDept), filled(d.reportingDivision), filled(d.reportingDesignation),
+    filled(d.workShift),
+    // Step 2 — description
+    filled(d.shortDescRole), filled(d.shortDescTeam), filled(d.shortDescFocus),
+    filled(d.detailedResponsibilities), filled(d.detailedTools), filled(d.detailedCollaboration),
+    filled(d.jobPurposeObjective), filled(d.jobPurposeImpact),
+    // Step 3 — requirements
+    filled(d.minExperience), filled(d.preferredExperience), d.skills.length > 0,
+    // Step 4 — challenges
+    d.challenges.length > 0,
+    // Step 5 — every alignment row has notes
+    d.deptAlignments.every((r) => filled(r.notes)),
+    // Step 6 — at least one training module
+    d.trainingModules.length > 0,
+    // Step 7 — career path
+    filled(d.careerJobTitle), filled(d.careerAlternateTitle), filled(d.careerDepartmentId),
+    filled(d.careerDivision), filled(d.careerDesignation), filled(d.careerLocationApplicable),
+    filled(d.careerReportingDept), filled(d.careerReportingDivision), filled(d.careerReportingDesignation),
+    filled(d.careerWorkShift),
+    // Step 8 — at least one ATM task
+    d.atmTasks.length > 0,
+  ];
+  const filledCount = checks.filter(Boolean).length;
+  if (filledCount === 0) return 'Pending';
+  if (filledCount === checks.length) return 'Done';
+  return 'Partially Done';
+}
+
 // ─── Main form component ───────────────────────────────────────────────────────
 export function JobProfileForm({
   editId,
@@ -131,7 +166,7 @@ export function JobProfileForm({
         reportingDeptId: data.reportingDept || undefined,
         reportingDivision: data.reportingDivision || undefined,
         reportingDesignation: data.reportingDesignation || undefined,
-        jpStatus: 'Partially Done',
+        jpStatus: computeJpStatus(data),
         formData: data,
       };
       if (editId) {
