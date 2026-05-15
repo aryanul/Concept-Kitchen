@@ -8,9 +8,9 @@ import { StatusPill } from '../../components/ui/StatusPill';
 import { inrPaiseToRupeesShort } from '../../lib/format';
 import { MasterCrudPage } from '../../components/masters/MasterCrudPage';
 import { HolidaysPage } from '../holidays/HolidaysPage';
+import { ShiftsPage } from '../shifts/ShiftsPage';
 
 type Branch = { id: string; code: string; name: string; city: string; kind: string };
-type Shift = { id: string; code: string; name: string; start_time: string; end_time: string; kind: string; break_min: number };
 type SalaryGrade = { id: string; code: string; kind: string; min_gross: number | string; max_gross: number | string; employee_count?: number | string };
 type Division = { id: string; code: string | null; name: string; description: string | null; is_active: number | boolean };
 type Designation = {
@@ -99,38 +99,7 @@ export function BranchMasterPage() {
 }
 
 export function ShiftMasterPage() {
-  return (
-    <MasterCrudPage<Shift>
-      title="Shift Master"
-      subtitle="Define shift windows, kinds and break time."
-      endpoint="/shifts"
-      columns={[
-        { header: 'Code', render: (row) => <Mono>{row.code}</Mono> },
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
-        { header: 'Timing', render: (row) => `${row.start_time} - ${row.end_time}` },
-        { header: 'Kind', render: (row) => row.kind },
-        { header: 'Break', render: (row) => `${row.break_min} min` },
-      ]}
-      buildFields={() => [
-        { name: 'code', label: 'Code', type: 'text', placeholder: 'SH001' },
-        { name: 'name', label: 'Name', type: 'text', placeholder: 'General Shift', required: true },
-        { name: 'startTime', label: 'Start Time', type: 'text', placeholder: '09:00', required: true },
-        { name: 'endTime', label: 'End Time', type: 'text', placeholder: '18:00', required: true },
-        { name: 'kind', label: 'Kind', type: 'text', placeholder: 'General / Production / Office', required: true },
-        { name: 'breakMin', label: 'Break (min)', type: 'number', placeholder: '45', required: true },
-      ]}
-      rowToValues={(row) => row ? { code: row.code, name: row.name, startTime: row.start_time, endTime: row.end_time, kind: row.kind, breakMin: row.break_min } : { code: '', name: '', startTime: '', endTime: '', kind: '', breakMin: 45 }}
-      buildPayload={(values) => ({
-        code: values.code || undefined,
-        name: values.name,
-        startTime: values.startTime,
-        endTime: values.endTime,
-        kind: values.kind,
-        breakMin: Number(values.breakMin || 0),
-      })}
-      searchKeys={['code', 'name', 'kind']}
-    />
-  );
+  return <ShiftsPage />;
 }
 
 export function SalaryGradeMasterPage() {

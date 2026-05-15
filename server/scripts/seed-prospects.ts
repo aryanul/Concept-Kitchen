@@ -26,7 +26,7 @@ const PROSPECTS = [
     const p = PROSPECTS[i];
     await pool.execute(
       `INSERT INTO prospects
-        (id, name, email, platform, experience_years, current_role, company,
+        (id, name, email, platform, experience_years, \`current_role\`, company,
          location, salary_range, education, institution, match_ratio, engagement_signal, application_status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [ulid(), p.name, p.email, p.platform, p.exp, p.role, p.company,

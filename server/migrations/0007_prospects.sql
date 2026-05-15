@@ -7,7 +7,7 @@ CREATE TABLE prospects (
   avatar_url VARCHAR(500) NULL,
   platform VARCHAR(40) NOT NULL DEFAULT 'LinkedIn',
   experience_years DECIMAL(4,1) NULL,
-  current_role VARCHAR(120) NULL,
+  `current_role` VARCHAR(120) NULL,
   company VARCHAR(120) NULL,
   location VARCHAR(80) NULL,
   salary_range VARCHAR(30) NULL,

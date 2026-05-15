@@ -177,10 +177,46 @@ app.get('/api/v1/salary-grades', authRequired, async (_req, res, next) => {
 
 app.get('/api/v1/shifts', authRequired, async (_req, res, next) => {
   try {
-    const rows = await query(
-      'SELECT id, code, name, start_time, end_time, kind, break_min FROM shifts ORDER BY code'
+    const rows = await query<{
+      id: string; code: string; name: string; description: string | null;
+      company: string | null; branch_id: string | null; branch_name: string | null;
+      location: string | null; status: string;
+      start_time: string; end_time: string; total_hours: string | number;
+      kind: string; break_min: number;
+      grace_arrival_min: number; grace_exit_min: number;
+      ot_after_min: number; ot_multiplier: string | number;
+    }>(
+      `SELECT s.id, s.code, s.name, s.description,
+              s.company, s.branch_id, b.name AS branch_name,
+              s.location, s.status,
+              s.start_time, s.end_time, s.total_hours,
+              s.kind, s.break_min,
+              s.grace_arrival_min, s.grace_exit_min,
+              s.ot_after_min, s.ot_multiplier
+         FROM shifts s
+         LEFT JOIN branches b ON b.id = s.branch_id
+        ORDER BY s.code`
     );
-    res.json({ data: rows });
+    const ids = rows.map((r) => r.id);
+    let breaks: Array<{ id: string; shift_id: string; name: string; start_offset_min: number; duration_min: number; is_paid: number; is_mandatory: number; sort_order: number }> = [];
+    if (ids.length) {
+      const placeholders = ids.map(() => '?').join(',');
+      breaks = await query(
+        `SELECT id, shift_id, name, start_offset_min, duration_min, is_paid, is_mandatory, sort_order
+           FROM shift_breaks
+          WHERE shift_id IN (${placeholders})
+          ORDER BY sort_order, start_offset_min`,
+        ids
+      );
+    }
+    const breaksByShift = new Map<string, typeof breaks>();
+    for (const br of breaks) {
+      const list = breaksByShift.get(br.shift_id) ?? [];
+      list.push(br);
+      breaksByShift.set(br.shift_id, list);
+    }
+    const data = rows.map((r) => ({ ...r, breaks: breaksByShift.get(r.id) ?? [] }));
+    res.json({ data });
   } catch (err) {
     next(err);
   }
@@ -759,7 +795,7 @@ app.get('/api/v1/prospects', authRequired, async (req, res, next) => {
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
-    const where = search ? 'WHERE name LIKE ? OR email LIKE ? OR company LIKE ? OR current_role LIKE ?' : '';
+    const where = search ? 'WHERE name LIKE ? OR email LIKE ? OR company LIKE ? OR `current_role` LIKE ?' : '';
     const params: unknown[] = search ? [`%${search}%`,`%${search}%`,`%${search}%`,`%${search}%`] : [];
     const rows = await query(
       `SELECT * FROM prospects ${where} ORDER BY match_ratio DESC, created_at DESC LIMIT ? OFFSET ?`,
@@ -776,7 +812,7 @@ app.post('/api/v1/prospects', authRequired, async (req, res, next) => {
     if (!name || !email) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name and email required' } });
     const id = ulid();
     await query(
-      'INSERT INTO prospects (id, name, email, platform, experience_years, current_role, company, location, salary_range, education, institution, match_ratio, engagement_signal, application_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO prospects (id, name, email, platform, experience_years, `current_role`, company, location, salary_range, education, institution, match_ratio, engagement_signal, application_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [id, name, email, platform || 'LinkedIn', experienceYears || null, currentRole || null, company || null, location || null, salaryRange || null, education || null, institution || null, matchRatio || null, engagementSignal || 'Job Seeking', applicationStatus || 'Not Applied']
     );
     res.status(201).json({ data: { id } });
@@ -1325,27 +1361,6 @@ app.post('/api/v1/tours/:id/settle', authRequired, async (req, res, next) => {
     const after = await query('SELECT * FROM tours WHERE id = ? LIMIT 1', [req.params.id]);
     await writeAudit(req.user!.id, 'settle', 'tour', req.params.id, before[0] ?? null, after[0] ?? null);
     res.json({ data: { id: req.params.id, status: 'settled' } });
-  } catch (err) { next(err); }
-});
-
-// Update shift
-app.patch('/api/v1/shifts/:id', authRequired, async (req, res, next) => {
-  try {
-    const { name, startTime, endTime, kind, breakMin } = req.body ?? {};
-    const before = await query('SELECT * FROM shifts WHERE id = ? LIMIT 1', [req.params.id]);
-    const updates: string[] = [];
-    const vals: unknown[] = [];
-    if (name) { updates.push('name = ?'); vals.push(name); }
-    if (startTime) { updates.push('start_time = ?'); vals.push(startTime); }
-    if (endTime) { updates.push('end_time = ?'); vals.push(endTime); }
-    if (kind) { updates.push('kind = ?'); vals.push(kind); }
-    if (breakMin !== undefined) { updates.push('break_min = ?'); vals.push(breakMin); }
-    if (!updates.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields to update' } });
-    vals.push(req.params.id);
-    await query(`UPDATE shifts SET ${updates.join(', ')} WHERE id = ?`, vals);
-    const after = await query('SELECT * FROM shifts WHERE id = ? LIMIT 1', [req.params.id]);
-    await writeAudit(req.user!.id, 'update', 'shift', req.params.id, before[0] ?? null, after[0] ?? null);
-    res.json({ data: { id: req.params.id } });
   } catch (err) { next(err); }
 });
 

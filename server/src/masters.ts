@@ -107,18 +107,70 @@ export function registerMasterRoutes(app: Application) {
   });
 
   // Shifts
+  type BreakInput = {
+    name?: string;
+    startOffsetMin?: number | string;
+    durationMin?: number | string;
+    isPaid?: unknown;
+    isMandatory?: unknown;
+  };
+
+  async function replaceShiftBreaks(shiftId: string, breaks: BreakInput[]): Promise<void> {
+    await query('DELETE FROM shift_breaks WHERE shift_id = ?', [shiftId]);
+    let order = 0;
+    for (const br of breaks) {
+      const breakName = String(br?.name ?? '').trim();
+      if (!breakName) continue;
+      await query(
+        `INSERT INTO shift_breaks (id, shift_id, name, start_offset_min, duration_min, is_paid, is_mandatory, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          ulid(),
+          shiftId,
+          breakName,
+          Number(br?.startOffsetMin) || 0,
+          Number(br?.durationMin) || 0,
+          parseBool(br?.isPaid),
+          parseBool(br?.isMandatory),
+          order++,
+        ]
+      );
+    }
+  }
+
   app.post('/api/v1/shifts', authRequired, async (req, res, next) => {
     try {
-      const { code, name, startTime, endTime, kind, breakMin } = req.body ?? {};
+      const {
+        code, name, description,
+        company, branchId, location, status,
+        startTime, endTime, totalHours,
+        kind, breakMin,
+        graceArrivalMin, graceExitMin,
+        otAfterMin, otMultiplier,
+        breaks,
+      } = req.body ?? {};
       if (!name || !startTime || !endTime || !kind) {
         return res.status(400).json({ error: { code: 'VALIDATION', message: 'name, startTime, endTime and kind required' } });
       }
       const id = ulid();
       const shiftCode = typeof code === 'string' && code.trim() ? code.trim() : await nextCode('shifts', 'code', 'SH');
+      const normalizedStatus = status === 'INACTIVE' ? 'INACTIVE' : 'ACTIVE';
       await query(
-        'INSERT INTO shifts (id, code, name, start_time, end_time, kind, break_min) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [id, shiftCode, name, startTime, endTime, kind, Number(breakMin) || 0]
+        `INSERT INTO shifts (
+            id, code, name, description, company, branch_id, location, status,
+            start_time, end_time, total_hours, kind, break_min,
+            grace_arrival_min, grace_exit_min, ot_after_min, ot_multiplier
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id, shiftCode, name, description || null,
+          company || null, branchId || null, location || null, normalizedStatus,
+          startTime, endTime, Number(totalHours) || 8,
+          kind, Number(breakMin) || 0,
+          Number(graceArrivalMin) || 0, Number(graceExitMin) || 0,
+          Number(otAfterMin) || 0, Number(otMultiplier) || 1,
+        ]
       );
+      if (Array.isArray(breaks)) await replaceShiftBreaks(id, breaks as BreakInput[]);
       res.status(201).json({ data: { id, code: shiftCode } });
     } catch (err) {
       next(err);
@@ -127,17 +179,39 @@ export function registerMasterRoutes(app: Application) {
 
   app.patch('/api/v1/shifts/:id', authRequired, async (req, res, next) => {
     try {
-      const { sets, values } = updateSets(req.body ?? {}, [
+      const body = { ...(req.body ?? {}) } as Record<string, unknown>;
+      if (body.branchId === '') body.branchId = null;
+      if (body.company === '') body.company = null;
+      if (body.location === '') body.location = null;
+      if (body.description === '') body.description = null;
+      const { sets, values } = updateSets(body, [
         { key: 'code', column: 'code' },
         { key: 'name', column: 'name' },
+        { key: 'description', column: 'description' },
+        { key: 'company', column: 'company' },
+        { key: 'branchId', column: 'branch_id' },
+        { key: 'location', column: 'location' },
+        { key: 'status', column: 'status' },
         { key: 'startTime', column: 'start_time' },
         { key: 'endTime', column: 'end_time' },
+        { key: 'totalHours', column: 'total_hours' },
         { key: 'kind', column: 'kind' },
         { key: 'breakMin', column: 'break_min' },
+        { key: 'graceArrivalMin', column: 'grace_arrival_min' },
+        { key: 'graceExitMin', column: 'grace_exit_min' },
+        { key: 'otAfterMin', column: 'ot_after_min' },
+        { key: 'otMultiplier', column: 'ot_multiplier' },
       ]);
-      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
-      values.push(req.params.id);
-      await query(`UPDATE shifts SET ${sets.join(', ')} WHERE id = ?`, values);
+      if (sets.length) {
+        values.push(req.params.id);
+        await query(`UPDATE shifts SET ${sets.join(', ')} WHERE id = ?`, values);
+      }
+      if (Array.isArray(body.breaks)) {
+        await replaceShiftBreaks(req.params.id, body.breaks as BreakInput[]);
+      }
+      if (!sets.length && !Array.isArray(body.breaks)) {
+        return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      }
       res.json({ data: { id: req.params.id } });
     } catch (err) {
       next(err);
