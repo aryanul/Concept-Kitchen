@@ -6,7 +6,17 @@ import { Button } from '../ui/Button';
 import { api } from '../../lib/api';
 import type { StepData } from '../../routes/hiring/JobProfileForm';
 
-type Shift = { id: string; code: string; name: string; start_time: string; end_time: string };
+type JpLocationRow = {
+  id: string; branch_id: string; location_id: string | null; positions: number;
+  branch_name: string; location_name: string | null;
+};
+type JpShiftRow = {
+  id: string; shift_id: string; shift_code: string; shift_name: string;
+  start_time: string; end_time: string;
+};
+type JpInterviewTemplateRow = {
+  id: string; interview_template_id: string; title: string; description: string | null;
+};
 
 type JobProfileDetail = {
   id: string;
@@ -15,6 +25,7 @@ type JobProfileDetail = {
   alternate_title: string | null;
   department_id: string;
   department_name: string;
+  designation_id?: string | null;
   division: string | null;
   designation: string | null;
   jp_status: string;
@@ -29,6 +40,9 @@ type JobProfileDetail = {
   reporting_division?: string | null;
   reporting_designation?: string | null;
   form_data?: StepData | string | null;
+  locations?: JpLocationRow[];
+  shifts?: JpShiftRow[];
+  interview_templates?: JpInterviewTemplateRow[];
 };
 
 type Props = {
@@ -55,7 +69,6 @@ export function JobProfileDrawer({ profileId, onClose, onEdit }: Props) {
   const [profile, setProfile] = useState<JobProfileDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState<Record<number, boolean>>({ 1: true, 2: true });
-  const [shifts, setShifts] = useState<Shift[]>([]);
 
   useEffect(() => {
     if (!profileId) {
@@ -70,17 +83,20 @@ export function JobProfileDrawer({ profileId, onClose, onEdit }: Props) {
       .finally(() => setLoading(false));
   }, [profileId]);
 
+  const formData = useMemo(() => normalizeFormData(profile), [profile]);
+  const [designations, setDesignations] = useState<{ id: string; name: string }[]>([]);
   useEffect(() => {
     if (!profileId) return;
-    api
-      .get<{ data: Shift[] }>('/shifts')
-      .then((r) => setShifts(r.data.data))
-      .catch(() => {});
+    api.get<{ data: { id: string; name: string }[] }>('/designations')
+      .then((r) => setDesignations(r.data.data)).catch(() => {});
   }, [profileId]);
-
-  const formData = useMemo(() => normalizeFormData(profile), [profile]);
-  const workShiftLabel = formatShift(formData?.workShift, shifts) || formData?.workShift || '—';
-  const careerShiftLabel = formatShift(formData?.careerWorkShift, shifts) || formData?.careerWorkShift || '—';
+  const shiftsLabel = profile?.shifts && profile.shifts.length > 0
+    ? profile.shifts.map((s) => `${s.shift_name} (${s.start_time}–${s.end_time})`).join(', ')
+    : '—';
+  const locationsLabel = profile?.locations && profile.locations.length > 0
+    ? profile.locations.map((l) => `${l.branch_name}${l.location_name ? ` / ${l.location_name}` : ''} (${l.positions} pos)`).join(' · ')
+    : (profile?.location_applicable || '—');
+  const desigName = (id: string | undefined) => id ? (designations.find((d) => d.id === id)?.name ?? '—') : '—';
 
   return (
     <Drawer open={!!profileId} onClose={onClose} width={760}>
@@ -109,8 +125,8 @@ export function JobProfileDrawer({ profileId, onClose, onEdit }: Props) {
             </div>
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', color: 'var(--ck-muted)', fontSize: 12.5 }}>
               <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}><Building2 size={13} />{profile.division ?? '—'}</span>
-              <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}><MapPin size={13} />{profile.location_applicable ?? '—'}</span>
-              <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}><Clock size={13} />{workShiftLabel}</span>
+              <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}><MapPin size={13} />{locationsLabel}</span>
+              <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}><Clock size={13} />{shiftsLabel}</span>
             </div>
           </div>
 
@@ -122,11 +138,11 @@ export function JobProfileDrawer({ profileId, onClose, onEdit }: Props) {
                 <Field icon={Building2} label="Department" value={profile.department_name || '—'} />
                 <Field icon={Building2} label="Division" value={formData?.division || profile.division || '—'} />
                 <Field icon={Briefcase} label="Designation" value={formData?.designation || profile.designation || '—'} />
-                <Field icon={MapPin} label="Location" value={formData?.locationApplicable || profile.location_applicable || '—'} />
+                <Field icon={MapPin} label="Location" value={locationsLabel} />
                 <Field icon={Building2} label="Reporting Dept" value={profile.reporting_department_name || formData?.reportingDept || '—'} />
                 <Field icon={Building2} label="Reporting Division" value={formData?.reportingDivision || profile.reporting_division || '—'} />
                 <Field icon={Briefcase} label="Reporting Designation" value={formData?.reportingDesignation || profile.reporting_designation || '—'} />
-                <Field icon={Clock} label="Work Shift" value={workShiftLabel} />
+                <Field icon={Clock} label="Work Shifts" value={shiftsLabel} />
               </Grid>
             </AccordionSection>
 
@@ -153,6 +169,9 @@ export function JobProfileDrawer({ profileId, onClose, onEdit }: Props) {
                   formData?.jobPurposeImpact && `Impact: ${formData.jobPurposeImpact}`,
                 ]) || '—'}
               </SectionText>
+              <SectionText label="Contribution to Org">
+                {formData?.contributionToOrg || '—'}
+              </SectionText>
             </AccordionSection>
 
             <AccordionSection title={STEP_TITLES[2]} open={!!open[3]} onToggle={() => toggle(open, setOpen, 3)}>
@@ -177,7 +196,9 @@ export function JobProfileDrawer({ profileId, onClose, onEdit }: Props) {
                   {formData.deptAlignments.map((row, idx) => (
                     <div key={`${row.label}-${idx}`} style={{ padding: '10px 12px', border: '1px solid var(--ck-line)', borderRadius: 8 }}>
                       <div style={{ fontWeight: 600, color: 'var(--ck-ink)', marginBottom: 4 }}>{row.label}</div>
-                      <div style={{ color: 'var(--ck-muted)', fontSize: 12.5 }}>{row.notes || '—'}</div>
+                      <div style={{ color: 'var(--ck-muted)', fontSize: 12.5 }}>
+                        {row.selections && row.selections.length > 0 ? row.selections.join(', ') : '—'}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -190,8 +211,8 @@ export function JobProfileDrawer({ profileId, onClose, onEdit }: Props) {
               {formData?.trainingModules?.length ? (
                 <div style={{ display: 'grid', gap: 10 }}>
                   {formData.trainingModules.map((m, idx) => (
-                    <div key={`${m.title}-${idx}`} style={{ padding: '10px 12px', border: '1px solid var(--ck-line)', borderRadius: 8 }}>
-                      <div style={{ fontWeight: 600, color: 'var(--ck-ink)' }}>{m.title}</div>
+                    <div key={`${m.id ?? m.name}-${idx}`} style={{ padding: '10px 12px', border: '1px solid var(--ck-line)', borderRadius: 8 }}>
+                      <div style={{ fontWeight: 600, color: 'var(--ck-ink)' }}>{m.name}</div>
                       <div style={{ color: 'var(--ck-muted)', fontSize: 12.5, marginTop: 4 }}>{m.description || '—'}</div>
                       <div style={{ fontSize: 12, color: 'var(--ck-faint)', marginTop: 6 }}>Chapters: {m.chapters}</div>
                     </div>
@@ -204,17 +225,14 @@ export function JobProfileDrawer({ profileId, onClose, onEdit }: Props) {
 
             <AccordionSection title={STEP_TITLES[6]} open={!!open[7]} onToggle={() => toggle(open, setOpen, 7)}>
               <Grid>
-                <Field icon={FileText} label="Career Job Title" value={formData?.careerJobTitle || '—'} />
-                <Field icon={FileText} label="Career Alternate Title" value={formData?.careerAlternateTitle || '—'} />
-                <Field icon={Building2} label="Career Department" value={formData?.careerDepartmentId || '—'} />
-                <Field icon={Building2} label="Career Division" value={formData?.careerDivision || '—'} />
-                <Field icon={Briefcase} label="Career Designation" value={formData?.careerDesignation || '—'} />
-                <Field icon={MapPin} label="Career Location" value={formData?.careerLocationApplicable || '—'} />
-                <Field icon={Building2} label="Career Reporting Dept" value={formData?.careerReportingDept || '—'} />
-                <Field icon={Building2} label="Career Reporting Division" value={formData?.careerReportingDivision || '—'} />
-                <Field icon={Briefcase} label="Career Reporting Designation" value={formData?.careerReportingDesignation || '—'} />
-                <Field icon={Clock} label="Career Work Shift" value={careerShiftLabel} />
+                <Field icon={Briefcase} label="Parent Role" value={desigName(formData?.careerParentDesignationId)} />
+                <Field icon={Briefcase} label="Next Promotion Role" value={desigName(formData?.careerNextPromotionDesignationId)} />
               </Grid>
+              <SectionText label="Lateral Movement Options">
+                {formData?.careerLateralDesignationIds && formData.careerLateralDesignationIds.length > 0
+                  ? formData.careerLateralDesignationIds.map((id) => desigName(id)).join(', ')
+                  : '—'}
+              </SectionText>
             </AccordionSection>
 
             <AccordionSection title={STEP_TITLES[7]} open={!!open[8]} onToggle={() => toggle(open, setOpen, 8)}>
@@ -241,7 +259,18 @@ export function JobProfileDrawer({ profileId, onClose, onEdit }: Props) {
             </AccordionSection>
 
             <AccordionSection title={STEP_TITLES[10]} open={!!open[11]} onToggle={() => toggle(open, setOpen, 11)}>
-              <div style={{ color: 'var(--ck-muted)' }}>Managed in the Interview Templates section.</div>
+              {profile.interview_templates && profile.interview_templates.length > 0 ? (
+                <div style={{ display: 'grid', gap: 8 }}>
+                  {profile.interview_templates.map((t) => (
+                    <div key={t.id} style={{ padding: '10px 12px', border: '1px solid var(--ck-line)', borderRadius: 8 }}>
+                      <div style={{ fontWeight: 600, color: 'var(--ck-ink)' }}>{t.title}</div>
+                      <div style={{ color: 'var(--ck-muted)', fontSize: 12.5, marginTop: 4 }}>{t.description || '—'}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: 'var(--ck-muted)' }}>No templates mapped to this Job Profile.</div>
+              )}
             </AccordionSection>
           </div>
         </div>
@@ -265,23 +294,18 @@ function normalizeFormData(profile: JobProfileDetail | null): Partial<StepData> 
   return {
     jobTitle: profile.title ?? '',
     alternateTitle: profile.alternate_title ?? '',
+    designationId: profile.designation_id ?? '',
     departmentId: profile.department_id ?? '',
     division: profile.division ?? '',
     designation: profile.designation ?? '',
-    locationApplicable: profile.location_applicable ?? '',
+    locations: [],
     reportingDept: profile.reporting_dept_id ?? '',
     reportingDivision: profile.reporting_division ?? '',
     reportingDesignation: profile.reporting_designation ?? '',
-    workShift: profile.work_shift ?? '',
+    workShifts: [],
   };
 }
 
-function formatShift(value: string | undefined, shifts: Shift[]): string | undefined {
-  if (!value) return undefined;
-  const match = shifts.find((s) => s.id === value || s.code === value);
-  if (!match) return undefined;
-  return `${match.name} (${match.start_time} - ${match.end_time})`;
-}
 
 function toggle(state: Record<number, boolean>, setState: (s: Record<number, boolean>) => void, key: number) {
   setState({ ...state, [key]: !state[key] });

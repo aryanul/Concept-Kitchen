@@ -1,0 +1,14 @@
+-- Module 6: Training Module Master.
+
+CREATE TABLE training_modules (
+  id CHAR(26) NOT NULL PRIMARY KEY,
+  code VARCHAR(20) NOT NULL UNIQUE,
+  name VARCHAR(160) NOT NULL,
+  description TEXT NULL,
+  cover_image_url VARCHAR(500) NULL,
+  chapter_count INT NOT NULL DEFAULT 0,
+  duration_hours DECIMAL(5,1) NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB;

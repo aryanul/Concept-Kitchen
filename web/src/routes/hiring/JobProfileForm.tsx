@@ -2,70 +2,86 @@ import { useState, useEffect, type ReactNode } from 'react';
 import {
   FileText, ListChecks, Target, LayoutGrid, BookOpen,
   TrendingUp, CheckSquare, Users, UserSearch, ClipboardList,
-  Plus, X, ChevronLeft, Eye, Pencil,
+  Plus, X, ChevronLeft, Eye, Pencil, Lock,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
+import { Modal } from '../../components/ui/Modal';
+import { LocationApplicableEditor, type JpLocation } from '../../components/hiring/jp/LocationApplicableEditor';
+import { WorkShiftsEditor } from '../../components/hiring/jp/WorkShiftsEditor';
+import { SkillPickerModal } from '../../components/hiring/jp/SkillPickerModal';
+import { TrainingModulePickerModal } from '../../components/hiring/jp/TrainingModulePickerModal';
+import { AtmTaskPickerModal } from '../../components/hiring/jp/AtmTaskPickerModal';
+import { NestConnectImportModal } from '../../components/hiring/jp/NestConnectImportModal';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type Dept = { id: string; name: string };
 type Shift = { id: string; code: string; name: string; start_time: string; end_time: string };
+type Division = { id: string; code: string | null; name: string };
+type DesignationOpt = { id: string; code: string | null; name: string; department_id: string | null };
 
 export interface StepData {
   // Step 1
-  jobTitle: string; alternateTitle: string; departmentId: string;
-  division: string; designation: string; locationApplicable: string;
+  jobTitle: string; alternateTitle: string;
+  designationId: string;       // FK to designations master — source of truth for dept/div/desig
+  departmentId: string;        // Mirrored from designation (read-only in UI)
+  division: string;            // Mirrored from designation (read-only in UI)
+  designation: string;         // Mirrored from designation (read-only in UI)
+  locations: JpLocation[];     // Replaces single locationApplicable string
   reportingDept: string; reportingDivision: string; reportingDesignation: string;
-  workShift: string;
+  workShifts: string[];        // Replaces single workShift string
   // Step 2
   shortDescRole: string; shortDescTeam: string; shortDescFocus: string;
   detailedResponsibilities: string; detailedTools: string; detailedCollaboration: string;
   jobPurposeObjective: string; jobPurposeImpact: string;
+  contributionToOrg: string;
   // Step 3
   minExperience: string; preferredExperience: string; skills: string[];
   // Step 4
   challenges: string[];
-  // Step 5
-  deptAlignments: { label: string; notes: string }[];
-  // Step 6
-  trainingModules: { title: string; description: string; chapters: number }[];
-  // Step 7 (same as step 1 for career path)
-  careerJobTitle: string; careerAlternateTitle: string; careerDepartmentId: string;
-  careerDivision: string; careerDesignation: string; careerLocationApplicable: string;
-  careerReportingDept: string; careerReportingDivision: string; careerReportingDesignation: string;
-  careerWorkShift: string;
-  // Step 8
-  atmTasks: { task: string; description: string }[];
+  // Step 5 — each row pulls from a specific Skill Master category
+  deptAlignments: { label: string; category: string; selections: string[] }[];
+  // Step 6 — references to training_modules master rows
+  trainingModules: { id: string; name: string; description: string; chapters: number }[];
+  // Step 7 — Career Path: hierarchy references (IDs into designations master)
+  careerParentDesignationId: string;       // Where this role sits below
+  careerNextPromotionDesignationId: string; // Standard promotion path
+  careerLateralDesignationIds: string[];   // Possible lateral moves
+  // Step 8 — references to atm_task_catalogue rows
+  atmTasks: { id: string; task: string; description: string }[];
   // Step 9 — read-only from DB
   // Step 10
   prospects: { name: string; email: string; platform: string; experience: string; role: string; company: string }[];
-  // Step 11
-  interviewTemplates: { title: string; description: string }[];
+  // Step 11 — IDs into interview_templates master
+  interviewTemplateIds: string[];
 }
 
 const DEFAULT_STEP_DATA: StepData = {
-  jobTitle: '', alternateTitle: '', departmentId: '', division: '',
-  designation: '', locationApplicable: '', reportingDept: '', reportingDivision: '',
-  reportingDesignation: '', workShift: '',
+  jobTitle: '', alternateTitle: '',
+  designationId: '', departmentId: '', division: '', designation: '',
+  locations: [],
+  reportingDept: '', reportingDivision: '', reportingDesignation: '',
+  workShifts: [],
   shortDescRole: '', shortDescTeam: '', shortDescFocus: '',
   detailedResponsibilities: '', detailedTools: '', detailedCollaboration: '',
   jobPurposeObjective: '', jobPurposeImpact: '',
+  contributionToOrg: '',
   minExperience: '', preferredExperience: '', skills: [],
   challenges: [],
   deptAlignments: [
-    { label: 'Department Functions', notes: '' },
-    { label: 'Documents Used',       notes: '' },
-    { label: 'Tools & Software Used', notes: '' },
-    { label: 'Cross-Department Interaction', notes: '' },
+    { label: 'Department Functions',          category: 'Department Functions',          selections: [] },
+    { label: 'Documents Used',                category: 'Documents',                     selections: [] },
+    { label: 'Tools & Software Used',         category: 'Tools & Software',              selections: [] },
+    { label: 'Cross-Department Interaction',  category: 'Cross-Department Interaction',  selections: [] },
   ],
   trainingModules: [],
-  careerJobTitle: '', careerAlternateTitle: '', careerDepartmentId: '', careerDivision: '',
-  careerDesignation: '', careerLocationApplicable: '', careerReportingDept: '',
-  careerReportingDivision: '', careerReportingDesignation: '', careerWorkShift: '',
+  careerParentDesignationId: '',
+  careerNextPromotionDesignationId: '',
+  careerLateralDesignationIds: [],
   atmTasks: [],
   prospects: [],
-  interviewTemplates: [],
+  interviewTemplateIds: [],
 };
 
 const STEPS = [
@@ -90,26 +106,26 @@ function computeJpStatus(d: StepData): 'Pending' | 'Partially Done' | 'Done' {
   const checks: boolean[] = [
     // Step 1 — basic info
     filled(d.jobTitle), filled(d.alternateTitle), filled(d.departmentId),
-    filled(d.division), filled(d.designation), filled(d.locationApplicable),
+    filled(d.division), filled(d.designation), d.locations.length > 0,
     filled(d.reportingDept), filled(d.reportingDivision), filled(d.reportingDesignation),
-    filled(d.workShift),
+    d.workShifts.length > 0,
     // Step 2 — description
     filled(d.shortDescRole), filled(d.shortDescTeam), filled(d.shortDescFocus),
     filled(d.detailedResponsibilities), filled(d.detailedTools), filled(d.detailedCollaboration),
     filled(d.jobPurposeObjective), filled(d.jobPurposeImpact),
+    filled(d.contributionToOrg),
     // Step 3 — requirements
     filled(d.minExperience), filled(d.preferredExperience), d.skills.length > 0,
     // Step 4 — challenges
     d.challenges.length > 0,
-    // Step 5 — every alignment row has notes
-    d.deptAlignments.every((r) => filled(r.notes)),
+    // Step 5 — every alignment row has at least one selection
+    d.deptAlignments.every((r) => (r.selections ?? []).length > 0),
     // Step 6 — at least one training module
     d.trainingModules.length > 0,
-    // Step 7 — career path
-    filled(d.careerJobTitle), filled(d.careerAlternateTitle), filled(d.careerDepartmentId),
-    filled(d.careerDivision), filled(d.careerDesignation), filled(d.careerLocationApplicable),
-    filled(d.careerReportingDept), filled(d.careerReportingDivision), filled(d.careerReportingDesignation),
-    filled(d.careerWorkShift),
+    // Step 7 — career path: at least parent + next-promotion filled
+    filled(d.careerParentDesignationId),
+    filled(d.careerNextPromotionDesignationId),
+    d.careerLateralDesignationIds.length > 0,
     // Step 8 — at least one ATM task
     d.atmTasks.length > 0,
   ];
@@ -136,10 +152,9 @@ export function JobProfileForm({
   const [activeStep, setActiveStep] = useState(1);
   const [data, setData] = useState<StepData>({ ...DEFAULT_STEP_DATA, ...initialData });
   const [saving, setSaving] = useState(false);
-  const [tagInput, setTagInput] = useState('');
-  const [challengeInput, setChallengeInput] = useState('');
-  const [atmInput, setAtmInput] = useState({ task: '', description: '' });
   const [shifts, setShifts] = useState<Shift[]>([]);
+  const [divisions, setDivisions] = useState<Division[]>([]);
+  const [allDesignations, setAllDesignations] = useState<DesignationOpt[]>([]);
 
   const upd = (patch: Partial<StepData>) => setData((d) => ({ ...d, ...patch }));
 
@@ -149,8 +164,8 @@ export function JobProfileForm({
   }, [editId, initialData]);
 
   const saveProfile = async () => {
-    if (!data.departmentId && !data.jobTitle && !data.designation) {
-      toast.error('Fill in at least Job Title, Department and Designation in Step 1');
+    if (!data.designationId && !data.designation && !data.jobTitle) {
+      toast.error('Pick a designation from the master before saving');
       return;
     }
     setSaving(true);
@@ -158,16 +173,23 @@ export function JobProfileForm({
       const payload = {
         title: data.jobTitle || data.designation,
         alternateTitle: data.alternateTitle || undefined,
+        designationId: data.designationId || undefined,
+        // dept/div/desig are derived server-side from designationId; sent as fallback for legacy rows
         departmentId: data.departmentId || undefined,
         division: data.division || undefined,
         designation: data.designation || undefined,
-        locationApplicable: data.locationApplicable || undefined,
-        workShift: data.workShift || undefined,
         reportingDeptId: data.reportingDept || undefined,
         reportingDivision: data.reportingDivision || undefined,
         reportingDesignation: data.reportingDesignation || undefined,
         jpStatus: computeJpStatus(data),
         formData: data,
+        locations: data.locations.map((l) => ({
+          branchId: l.branchId,
+          locationId: l.locationId,
+          positions: l.positions,
+        })),
+        shifts: data.workShifts,
+        interviewTemplateIds: data.interviewTemplateIds,
       };
       if (editId) {
         await api.patch(`/job-profiles/${editId}`, payload);
@@ -182,10 +204,9 @@ export function JobProfileForm({
   };
 
   useEffect(() => {
-    api
-      .get<{ data: Shift[] }>('/shifts')
-      .then((r) => setShifts(r.data.data))
-      .catch(() => {});
+    api.get<{ data: Shift[] }>('/shifts').then((r) => setShifts(r.data.data)).catch(() => {});
+    api.get<{ data: Division[] }>('/divisions').then((r) => setDivisions(r.data.data)).catch(() => {});
+    api.get<{ data: DesignationOpt[] }>('/designations').then((r) => setAllDesignations(r.data.data)).catch(() => {});
   }, []);
 
   return (
@@ -236,15 +257,15 @@ export function JobProfileForm({
 
         {/* Step content */}
         <div style={{ padding: 24, flex: 1 }}>
-          {activeStep === 1 && <Step1 data={data} upd={upd} depts={depts} shifts={shifts} />}
+          {activeStep === 1 && <Step1 data={data} upd={upd} depts={depts} divisions={divisions} allDesignations={allDesignations} />}
           {activeStep === 2 && <Step2 data={data} upd={upd} />}
-          {activeStep === 3 && <Step3 data={data} upd={upd} tagInput={tagInput} setTagInput={setTagInput} />}
-          {activeStep === 4 && <Step4 data={data} upd={upd} input={challengeInput} setInput={setChallengeInput} />}
+          {activeStep === 3 && <Step3 data={data} upd={upd} />}
+          {activeStep === 4 && <Step4 data={data} upd={upd} />}
           {activeStep === 5 && <Step5 data={data} upd={upd} />}
           {activeStep === 6 && <Step6 data={data} upd={upd} />}
-          {activeStep === 7 && <Step7 data={data} upd={upd} depts={depts} shifts={shifts} />}
-          {activeStep === 8 && <Step8 data={data} upd={upd} atmInput={atmInput} setAtmInput={setAtmInput} />}
-          {activeStep === 9 && <Step9 />}
+          {activeStep === 7 && <Step7 data={data} upd={upd} allDesignations={allDesignations} />}
+          {activeStep === 8 && <Step8 data={data} upd={upd} />}
+          {activeStep === 9 && <Step9 editId={editId} />}
           {activeStep === 10 && <Step10 data={data} upd={upd} />}
           {activeStep === 11 && <Step11 data={data} upd={upd} />}
         </div>
@@ -293,38 +314,49 @@ function Step1({
   data,
   upd,
   depts,
-  shifts,
+  divisions,
+  allDesignations,
 }: {
   data: StepData;
   upd: (p: Partial<StepData>) => void;
   depts: Dept[];
-  shifts: Shift[];
+  divisions: Division[];
+  allDesignations: DesignationOpt[];
 }) {
+  const linkedDept = depts.find((d) => d.id === data.departmentId);
+  const reportingDesignations = data.reportingDept
+    ? allDesignations.filter((d) => d.department_id === data.reportingDept)
+    : allDesignations;
+
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
+      {!data.designationId && (
+        <div style={{ marginBottom: 16, padding: 12, background: 'var(--ck-warning-bg, #fff8e1)', border: '1px solid var(--ck-warning-border, #ffd54f)', borderRadius: 8, fontSize: 12.5, color: 'var(--ck-ink-soft)' }}>
+          This Job Profile isn't linked to a designation yet. Department / Division / Designation will be empty until linked. Return to the directory and click "+ Add Designation" to pick one.
+        </div>
+      )}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
         <FG label="Job Title*"><input value={data.jobTitle} onChange={(e) => upd({ jobTitle: e.target.value })} placeholder="Enter Job Title" style={inp} /></FG>
         <FG label="Alternate Title*"><input value={data.alternateTitle} onChange={(e) => upd({ alternateTitle: e.target.value })} placeholder="Enter Alternate Title" style={inp} /></FG>
-        <FG label="Department*">
-          <select value={data.departmentId} onChange={(e) => upd({ departmentId: e.target.value })} style={inp}>
-            <option value="">Select</option>
-            {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
+        <FG label="Department">
+          <ReadOnlyField value={linkedDept?.name ?? '—'} />
         </FG>
-        <FG label="Division*"><input value={data.division} onChange={(e) => upd({ division: e.target.value })} placeholder="e.g. Operation" style={inp} /></FG>
-        <FG label="Designation*"><input value={data.designation} onChange={(e) => upd({ designation: e.target.value })} placeholder="e.g. Team Leader" style={inp} /></FG>
+        <FG label="Division">
+          <ReadOnlyField value={data.division || '—'} />
+        </FG>
+        <FG label="Designation">
+          <ReadOnlyField value={data.designation || '—'} />
+        </FG>
         <FG label="Location Applicable*">
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input value={data.locationApplicable} onChange={(e) => upd({ locationApplicable: e.target.value })} placeholder="City" style={{ ...inp, flex: 1 }} />
-            <button style={{ width: 36, height: 38, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Plus size={16} /></button>
-          </div>
+          <LocationApplicableEditor value={data.locations} onChange={(locations) => upd({ locations })} />
         </FG>
       </div>
 
       <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ck-ink)', marginBottom: 14 }}>Reporting Hierarchy</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
         <FG label="Department*">
-          <select value={data.reportingDept} onChange={(e) => upd({ reportingDept: e.target.value })} style={inp}>
+          <select value={data.reportingDept} onChange={(e) => upd({ reportingDept: e.target.value, reportingDesignation: '' })} style={inp}>
             <option value="">Select</option>
             {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
@@ -332,33 +364,34 @@ function Step1({
         <FG label="Division*">
           <select value={data.reportingDivision} onChange={(e) => upd({ reportingDivision: e.target.value })} style={inp}>
             <option value="">Select</option>
-            <option value="Operations">Operations</option>
-            <option value="Technology">Technology</option>
-            <option value="Product">Product</option>
-            <option value="Lead">Lead</option>
+            {divisions.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
           </select>
         </FG>
         <FG label="Designation*">
           <select value={data.reportingDesignation} onChange={(e) => upd({ reportingDesignation: e.target.value })} style={inp}>
             <option value="">Select</option>
-            <option value="Senior Manager">Senior Manager</option>
-            <option value="Manager">Manager</option>
-            <option value="Team Leader">Team Leader</option>
-            <option value="HR Executive">HR Executive</option>
+            {reportingDesignations.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
           </select>
         </FG>
       </div>
 
-      <FG label="Work Shift*">
-        <select value={data.workShift} onChange={(e) => upd({ workShift: e.target.value })} style={{ ...inp, maxWidth: 300 }}>
-          <option value="">Select shift</option>
-          {shifts.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name} ({s.start_time} - {s.end_time})
-            </option>
-          ))}
-        </select>
+      <FG label="Work Shifts*">
+        <WorkShiftsEditor value={data.workShifts} onChange={(workShifts) => upd({ workShifts })} />
       </FG>
+    </div>
+  );
+}
+
+function ReadOnlyField({ value }: { value: string }) {
+  return (
+    <div style={{
+      width: '100%', height: 38, padding: '0 12px',
+      display: 'flex', alignItems: 'center', gap: 8,
+      border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13,
+      background: 'var(--ck-bg)', color: 'var(--ck-ink)',
+    }}>
+      <Lock size={12} style={{ color: 'var(--ck-muted)', flexShrink: 0 }} />
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
     </div>
   );
 }
@@ -386,17 +419,18 @@ function Step2({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => v
         ['Objective', <input key="obj" value={data.jobPurposeObjective} onChange={(e) => upd({ jobPurposeObjective: e.target.value })} style={{ ...inp, border: 'none', background: 'transparent' }} placeholder="Purpose / objective of the role" />],
         ['Impact',    <input key="imp" value={data.jobPurposeImpact} onChange={(e) => upd({ jobPurposeImpact: e.target.value })} style={{ ...inp, border: 'none', background: 'transparent' }} placeholder="Expected business impact" />],
       ]} />
+
+      <SectionTitle>Contribution to Org</SectionTitle>
+      <DescTable rows={[
+        ['Contribution', <textarea key="contrib" value={data.contributionToOrg} onChange={(e) => upd({ contributionToOrg: e.target.value })} rows={3} placeholder="How does this role contribute to the organization's goals?" style={{ width: '100%', border: 'none', background: 'transparent', fontSize: 13, resize: 'vertical', padding: '4px 0' }} />],
+      ]} />
     </div>
   );
 }
 
 // ─── Step 3 — Job Requirement ─────────────────────────────────────────────────
-function Step3({ data, upd, tagInput, setTagInput }: { data: StepData; upd: (p: Partial<StepData>) => void; tagInput: string; setTagInput: (v: string) => void }) {
-  const addSkill = () => {
-    const s = tagInput.trim();
-    if (s && !data.skills.includes(s)) upd({ skills: [...data.skills, s] });
-    setTagInput('');
-  };
+function Step3({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => void }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
@@ -408,11 +442,16 @@ function Step3({ data, upd, tagInput, setTagInput }: { data: StepData; upd: (p: 
         </FG>
       </div>
       <FG label="Add Skills*">
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input value={tagInput} onChange={(e) => setTagInput(e.target.value)} placeholder="e.g. Leadership, Designer etc"
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addSkill(); } }}
-            style={{ ...inp, flex: 1 }} />
-          <button onClick={addSkill} style={{ width: 36, height: 38, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Plus size={16} /></button>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <div style={{ flex: 1, padding: '8px 12px', minHeight: 38, border: '1px dashed var(--ck-line)', borderRadius: 7, background: 'var(--ck-bg)', fontSize: 12.5, color: 'var(--ck-muted)' }}>
+            {data.skills.length === 0
+              ? 'No skills selected. Click + to pick from Skill Master (Soft Skills, Hard Skills, Education, etc.)'
+              : `${data.skills.length} skill${data.skills.length === 1 ? '' : 's'} selected`}
+          </div>
+          <button type="button" onClick={() => setPickerOpen(true)}
+            style={{ width: 36, height: 38, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Plus size={16} />
+          </button>
         </div>
       </FG>
       {data.skills.length > 0 && (
@@ -425,25 +464,35 @@ function Step3({ data, upd, tagInput, setTagInput }: { data: StepData; upd: (p: 
           ))}
         </div>
       )}
+      <SkillPickerModal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        selected={data.skills}
+        onSave={(skills) => upd({ skills })}
+        allowCategories={['Soft Skills', 'Hard Skills', 'Education']}
+        title="Pick Skills"
+        subtitle="Choose required skills from Skill Master"
+      />
     </div>
   );
 }
 
 // ─── Step 4 — Job Challenges & Performance ─────────────────────────────────────
-function Step4({ data, upd, input, setInput }: { data: StepData; upd: (p: Partial<StepData>) => void; input: string; setInput: (v: string) => void }) {
-  const add = () => {
-    const s = input.trim();
-    if (s && !data.challenges.includes(s)) upd({ challenges: [...data.challenges, s] });
-    setInput('');
-  };
+function Step4({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => void }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
       <FG label="Challenges & Performances*">
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Add Skills & Performances"
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
-            style={{ ...inp, flex: 1 }} />
-          <button onClick={add} style={{ width: 36, height: 38, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Plus size={16} /></button>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <div style={{ flex: 1, padding: '8px 12px', minHeight: 38, border: '1px dashed var(--ck-line)', borderRadius: 7, background: 'var(--ck-bg)', fontSize: 12.5, color: 'var(--ck-muted)' }}>
+            {data.challenges.length === 0
+              ? 'No items selected. Click + to pick from Skill Master (any category).'
+              : `${data.challenges.length} item${data.challenges.length === 1 ? '' : 's'} selected`}
+          </div>
+          <button type="button" onClick={() => setPickerOpen(true)}
+            style={{ width: 36, height: 38, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Plus size={16} />
+          </button>
         </div>
       </FG>
       {data.challenges.length > 0 && (
@@ -456,256 +505,526 @@ function Step4({ data, upd, input, setInput }: { data: StepData; upd: (p: Partia
           ))}
         </div>
       )}
+      <SkillPickerModal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        selected={data.challenges}
+        onSave={(challenges) => upd({ challenges })}
+        title="Pick Challenges & Performance Areas"
+        subtitle="Choose from Skill Master (any category)"
+      />
     </div>
   );
 }
 
 // ─── Step 5 — Department Alignments ──────────────────────────────────────────
 function Step5({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => void }) {
-  const updateRow = (idx: number, notes: string) => {
-    const updated = data.deptAlignments.map((r, i) => i === idx ? { ...r, notes } : r);
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+
+  const EXAMPLES = [
+    'Drafting, Quote Checking',
+    'Blue Print, SPR Form',
+    'AutoCAD, ERP',
+    'Operations, QA, Engineering',
+  ];
+
+  const updateRow = (idx: number, selections: string[]) => {
+    const updated = data.deptAlignments.map((r, i) => i === idx ? { ...r, selections } : r);
     upd({ deptAlignments: updated });
   };
+
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
-      <SectionTitle>Department Functions</SectionTitle>
+      <SectionTitle>Departmental Alignment</SectionTitle>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-        <colgroup><col style={{ width: '28%' }} /><col style={{ width: '22%' }} /><col style={{ width: '22%' }} /><col /></colgroup>
-        {data.deptAlignments.map((row, idx) => (
-          <tr key={row.label} style={{ borderBottom: '1px solid var(--ck-line)' }}>
-            <td style={{ padding: '12px 14px', fontWeight: 600, color: 'var(--ck-ink)' }}>{row.label}</td>
-            <td style={{ padding: '12px 8px' }}>
-              <select style={inp}><option>Multi-Select</option></select>
-            </td>
-            <td style={{ padding: '12px 8px' }}>
-              <select style={inp}><option>Skill Master</option></select>
-            </td>
-            <td style={{ padding: '12px 8px' }}>
-              <input value={row.notes} onChange={(e) => updateRow(idx, e.target.value)} placeholder={`e.g. ${idx === 0 ? 'Drafting, Quote, Check…' : idx === 1 ? 'Blue Print, SPR Form…' : idx === 2 ? 'AutoCAD, ERP…' : 'Which teams this role…'}`} style={inp} />
-            </td>
+        <thead>
+          <tr style={{ background: 'var(--ck-bg)' }}>
+            <th style={alignTh}>Field</th>
+            <th style={alignTh}>Selections (from Skill Master)</th>
+            <th style={alignTh}>Examples</th>
           </tr>
-        ))}
+        </thead>
+        <tbody>
+          {data.deptAlignments.map((row, idx) => {
+            const selections = row.selections ?? [];
+            return (
+            <tr key={row.label} style={{ borderBottom: '1px solid var(--ck-line)' }}>
+              <td style={{ ...alignTd, fontWeight: 600, color: 'var(--ck-ink)', width: '24%' }}>{row.label}</td>
+              <td style={{ ...alignTd, width: '52%' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                  <div style={{ flex: 1, padding: '6px 10px', minHeight: 36, border: '1px dashed var(--ck-line)', borderRadius: 7, background: 'var(--ck-bg)', fontSize: 12.5 }}>
+                    {selections.length === 0 ? (
+                      <span style={{ color: 'var(--ck-muted)' }}>None selected — click + to pick from {row.category}</span>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {selections.map((s) => (
+                          <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 9px', borderRadius: 999, background: '#222', color: '#fff', fontSize: 12, fontWeight: 600 }}>
+                            {s}
+                            <button type="button" onClick={() => updateRow(idx, selections.filter((x) => x !== s))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#aaa', padding: 0, display: 'flex' }}>
+                              <X size={10} />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button type="button" onClick={() => setActiveIdx(idx)}
+                    style={{ width: 32, height: 36, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Plus size={14} />
+                  </button>
+                </div>
+              </td>
+              <td style={{ ...alignTd, fontSize: 12, color: 'var(--ck-muted)' }}>e.g. {EXAMPLES[idx]}</td>
+            </tr>
+            );
+          })}
+        </tbody>
       </table>
+
+      {activeIdx !== null && (
+        <SkillPickerModal
+          open={activeIdx !== null}
+          onClose={() => setActiveIdx(null)}
+          selected={data.deptAlignments[activeIdx].selections ?? []}
+          onSave={(selections) => updateRow(activeIdx, selections)}
+          allowCategories={[data.deptAlignments[activeIdx].category]}
+          title={`Pick ${data.deptAlignments[activeIdx].label}`}
+          subtitle={`From Skill Master · category "${data.deptAlignments[activeIdx].category}"`}
+        />
+      )}
     </div>
   );
 }
 
+const alignTh: React.CSSProperties = { padding: '9px 12px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', textAlign: 'left', letterSpacing: '0.04em', border: '1px solid var(--ck-line)' };
+const alignTd: React.CSSProperties = { padding: '10px 12px', border: '1px solid var(--ck-line)', verticalAlign: 'top' };
+
 // ─── Step 6 — Training ────────────────────────────────────────────────────────
 function Step6({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => void }) {
-  const addModule = () => upd({ trainingModules: [...data.trainingModules, { title: 'New Module', description: '', chapters: 0 }] });
+  const [pickerOpen, setPickerOpen] = useState(false);
+
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <SectionTitle>Training Module</SectionTitle>
-        <Button size="sm" variant="primary" icon={Plus} onClick={addModule}>Add Course Module</Button>
+        <SectionTitle>Training Modules</SectionTitle>
+        <Button size="sm" variant="primary" icon={Plus} onClick={() => setPickerOpen(true)}>Pick from Master</Button>
       </div>
       {data.trainingModules.length === 0 ? (
         <div style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)', border: '2px dashed var(--ck-line)', borderRadius: 10 }}>
-          No training modules yet. Click "Add Course Module" to add one.
+          No training modules selected. Click "Pick from Master" to choose course modules.
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 14 }}>
           {data.trainingModules.map((m, i) => (
-            <div key={i} style={{ border: '1px solid var(--ck-line)', borderRadius: 10, overflow: 'hidden' }}>
+            <div key={m.id || i} style={{ border: '1px solid var(--ck-line)', borderRadius: 10, overflow: 'hidden', position: 'relative' }}>
               <div style={{ height: 120, background: 'var(--ck-line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ck-faint)' }}>
-                <Eye size={32} strokeWidth={1} />
+                <BookOpen size={32} strokeWidth={1} />
               </div>
+              <button type="button" aria-label="Remove"
+                onClick={() => upd({ trainingModules: data.trainingModules.filter((_, j) => j !== i) })}
+                style={{ position: 'absolute', top: 8, right: 8, width: 26, height: 26, borderRadius: 8, background: 'rgba(0,0,0,0.55)', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <X size={13} />
+              </button>
               <div style={{ padding: 14 }}>
-                <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 8 }}>{m.title}</div>
+                <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 8 }}>{m.name}</div>
                 <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11, color: 'var(--ck-muted)', marginBottom: 6 }}>
                   <CheckSquare size={13} /> DESCRIPTION
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--ck-ink-soft)', marginBottom: 10 }}>{m.description || 'Add a description…'}</div>
+                <div style={{ fontSize: 12, color: 'var(--ck-ink-soft)', marginBottom: 10, minHeight: 32 }}>
+                  {m.description || '—'}
+                </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--ck-muted)' }}>
-                  <span>CHAPTER COUNTS</span><span style={{ fontWeight: 700 }}>{String(m.chapters).padStart(2, '0')}</span>
+                  <span>CHAPTER COUNTS</span>
+                  <span style={{ fontWeight: 700 }}>{String(m.chapters).padStart(2, '0')}</span>
                 </div>
               </div>
             </div>
           ))}
         </div>
       )}
+      <TrainingModulePickerModal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        selectedIds={data.trainingModules.map((m) => m.id).filter(Boolean) as string[]}
+        onSave={(modules) => upd({ trainingModules: modules })}
+      />
     </div>
   );
 }
 
-// ─── Step 7 — Career Path (reuses Step 1 layout) ─────────────────────────────
+// ─── Step 7 — Career Path (Hierarchy Master) ─────────────────────────────────
 function Step7({
   data,
   upd,
-  depts,
-  shifts,
+  allDesignations,
 }: {
   data: StepData;
   upd: (p: Partial<StepData>) => void;
-  depts: Dept[];
-  shifts: Shift[];
+  allDesignations: DesignationOpt[];
 }) {
+  const [lateralPickerOpen, setLateralPickerOpen] = useState(false);
+  const designationName = (id: string) => allDesignations.find((d) => d.id === id)?.name ?? '—';
+
+  // Filter out the current JP's own designation from the options (can't promote to yourself)
+  const optionsExcludingSelf = allDesignations.filter((d) => d.id !== data.designationId);
+
+  const lateralSelected = data.careerLateralDesignationIds
+    .map((id) => allDesignations.find((d) => d.id === id))
+    .filter(Boolean) as DesignationOpt[];
+
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
-      <SectionTitle>Career Path — Target Role</SectionTitle>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
-        <FG label="Job Title*"><input value={data.careerJobTitle} onChange={(e) => upd({ careerJobTitle: e.target.value })} placeholder="Enter Job Title" style={inp} /></FG>
-        <FG label="Alternate Title*"><input value={data.careerAlternateTitle} onChange={(e) => upd({ careerAlternateTitle: e.target.value })} placeholder="Alternate Title" style={inp} /></FG>
-        <FG label="Department*">
-          <select value={data.careerDepartmentId} onChange={(e) => upd({ careerDepartmentId: e.target.value })} style={inp}>
-            <option value="">Select</option>
-            {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+      <SectionTitle>Career Path — Hierarchy</SectionTitle>
+      <div style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginBottom: 18 }}>
+        Configure how this role fits into the organisational hierarchy. All three fields draw from the Designation Master.
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginBottom: 20 }}>
+        <FG label="Parent Role">
+          <select value={data.careerParentDesignationId} onChange={(e) => upd({ careerParentDesignationId: e.target.value })} style={inp}>
+            <option value="">— Select —</option>
+            {optionsExcludingSelf.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
+          <span style={{ fontSize: 11, color: 'var(--ck-muted)', marginTop: 4 }}>Who this role reports up to.</span>
         </FG>
-        <FG label="Division*"><input value={data.careerDivision} onChange={(e) => upd({ careerDivision: e.target.value })} placeholder="Division" style={inp} /></FG>
-        <FG label="Designation*"><input value={data.careerDesignation} onChange={(e) => upd({ careerDesignation: e.target.value })} placeholder="Designation" style={inp} /></FG>
-        <FG label="Location Applicable*">
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input value={data.careerLocationApplicable} onChange={(e) => upd({ careerLocationApplicable: e.target.value })} placeholder="City" style={{ ...inp, flex: 1 }} />
-            <button style={{ width: 36, height: 38, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Plus size={16} /></button>
+        <FG label="Next Promotion Role">
+          <select value={data.careerNextPromotionDesignationId} onChange={(e) => upd({ careerNextPromotionDesignationId: e.target.value })} style={inp}>
+            <option value="">— Select —</option>
+            {optionsExcludingSelf.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          <span style={{ fontSize: 11, color: 'var(--ck-muted)', marginTop: 4 }}>Standard upward career step.</span>
+        </FG>
+      </div>
+
+      <FG label="Lateral Movement Options">
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <div style={{ flex: 1, padding: '8px 12px', minHeight: 38, border: '1px dashed var(--ck-line)', borderRadius: 7, background: 'var(--ck-bg)', fontSize: 12.5, color: 'var(--ck-muted)' }}>
+            {lateralSelected.length === 0
+              ? 'No lateral moves selected. Click + to pick designations this role can move sideways into.'
+              : `${lateralSelected.length} lateral role${lateralSelected.length === 1 ? '' : 's'} configured`}
           </div>
-        </FG>
-      </div>
-      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ck-ink)', marginBottom: 14 }}>Reporting Hierarchy</div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
-        <FG label="Department*">
-          <select value={data.careerReportingDept} onChange={(e) => upd({ careerReportingDept: e.target.value })} style={inp}>
-            <option value="">Select</option>
-            {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </FG>
-        <FG label="Division*"><input value={data.careerReportingDivision} onChange={(e) => upd({ careerReportingDivision: e.target.value })} placeholder="Division" style={inp} /></FG>
-        <FG label="Designation*"><input value={data.careerReportingDesignation} onChange={(e) => upd({ careerReportingDesignation: e.target.value })} placeholder="Designation" style={inp} /></FG>
-      </div>
-      <FG label="Work Shift*">
-        <select value={data.careerWorkShift} onChange={(e) => upd({ careerWorkShift: e.target.value })} style={{ ...inp, maxWidth: 300 }}>
-          <option value="">Select shift</option>
-          {shifts.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name} ({s.start_time} - {s.end_time})
-            </option>
-          ))}
-        </select>
+          <button type="button" onClick={() => setLateralPickerOpen(true)}
+            style={{ width: 36, height: 38, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Plus size={16} />
+          </button>
+        </div>
       </FG>
+      {lateralSelected.length > 0 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+          {lateralSelected.map((d) => (
+            <span key={d.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 12px', borderRadius: 999, background: '#222', color: '#fff', fontSize: 12.5, fontWeight: 600 }}>
+              {d.name}
+              <button type="button" onClick={() => upd({ careerLateralDesignationIds: data.careerLateralDesignationIds.filter((x) => x !== d.id) })}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#aaa', padding: 0, display: 'flex', alignItems: 'center' }}>
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      <DesignationMultiPicker
+        open={lateralPickerOpen}
+        onClose={() => setLateralPickerOpen(false)}
+        designations={optionsExcludingSelf}
+        // Don't allow picking the parent / next-promotion as lateral too — that's confusing
+        excludeIds={[data.careerParentDesignationId, data.careerNextPromotionDesignationId].filter(Boolean)}
+        selectedIds={data.careerLateralDesignationIds}
+        onSave={(careerLateralDesignationIds) => upd({ careerLateralDesignationIds })}
+      />
+
+      {(data.careerParentDesignationId || data.careerNextPromotionDesignationId) && (
+        <div style={{ marginTop: 24, padding: 16, background: 'var(--ck-bg)', border: '1px solid var(--ck-line)', borderRadius: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+            Preview
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', fontSize: 13 }}>
+            {data.careerParentDesignationId && (
+              <span style={{ padding: '6px 12px', background: 'var(--ck-line-soft)', borderRadius: 8, color: 'var(--ck-ink-soft)' }}>
+                {designationName(data.careerParentDesignationId)}
+              </span>
+            )}
+            <span style={{ color: 'var(--ck-muted)' }}>↓</span>
+            <span style={{ padding: '6px 12px', background: '#222', color: '#fff', borderRadius: 8, fontWeight: 600 }}>
+              {data.designation || 'This role'}
+            </span>
+            {data.careerNextPromotionDesignationId && (
+              <>
+                <span style={{ color: 'var(--ck-muted)' }}>↓</span>
+                <span style={{ padding: '6px 12px', background: 'var(--ck-line-soft)', borderRadius: 8, color: 'var(--ck-ink-soft)' }}>
+                  {designationName(data.careerNextPromotionDesignationId)}
+                </span>
+              </>
+            )}
+          </div>
+          {lateralSelected.length > 0 && (
+            <div style={{ marginTop: 12, fontSize: 12, color: 'var(--ck-muted)' }}>
+              ↔ Lateral: {lateralSelected.map((d) => d.name).join(', ')}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── Step 8 — ATM ─────────────────────────────────────────────────────────────
-function Step8({ data, upd, atmInput, setAtmInput }: { data: StepData; upd: (p: Partial<StepData>) => void; atmInput: { task: string; description: string }; setAtmInput: (v: { task: string; description: string }) => void }) {
-  const addTask = () => {
-    if (!atmInput.task) return;
-    upd({ atmTasks: [...data.atmTasks, { ...atmInput }] });
-    setAtmInput({ task: '', description: '' });
+function DesignationMultiPicker({
+  open, onClose, designations, excludeIds, selectedIds, onSave,
+}: {
+  open: boolean;
+  onClose: () => void;
+  designations: DesignationOpt[];
+  excludeIds: string[];
+  selectedIds: string[];
+  onSave: (ids: string[]) => void;
+}) {
+  const [draft, setDraft] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    if (open) { setDraft(new Set(selectedIds)); setSearch(''); }
+  }, [open, selectedIds]);
+
+  const visible = designations
+    .filter((d) => !excludeIds.includes(d.id))
+    .filter((d) => !search.trim() || d.name.toLowerCase().includes(search.toLowerCase()));
+
+  const toggle = (id: string) => {
+    setDraft((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
+
+  return (
+    <Modal open={open} onClose={onClose}
+      title="Pick Lateral Movement Options"
+      subtitle="Select designations this role can move sideways into"
+      width={560}
+      footer={<>
+        <Button size="sm" onClick={onClose}>Cancel</Button>
+        <Button size="sm" variant="primary" onClick={() => { onSave(Array.from(draft)); onClose(); }}>
+          Save Selection ({draft.size})
+        </Button>
+      </>}>
+      <div style={{ marginBottom: 12 }}>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search designation…"
+          style={{ width: '100%', height: 38, padding: '0 12px', border: '1px solid var(--ck-line)', borderRadius: 8, fontSize: 13, background: 'var(--ck-surface)' }} />
+      </div>
+      <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid var(--ck-line)', borderRadius: 8 }}>
+        {visible.length === 0 && (
+          <div style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)', fontSize: 13 }}>No designations available.</div>
+        )}
+        {visible.map((d) => {
+          const checked = draft.has(d.id);
+          return (
+            <label key={d.id} style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '9px 12px', borderBottom: '1px solid var(--ck-line)',
+              background: checked ? 'var(--ck-surface-alt)' : 'transparent', cursor: 'pointer',
+            }}>
+              <input type="checkbox" checked={checked} onChange={() => toggle(d.id)} />
+              <span style={{ flex: 1, fontSize: 13, color: 'var(--ck-ink)', fontWeight: 500 }}>{d.name}</span>
+              {d.code && <span style={{ fontFamily: 'var(--ck-font-mono)', fontSize: 10.5, color: 'var(--ck-faint)' }}>{d.code}</span>}
+            </label>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Step 8 — ATM (Auto Task Mapping) ─────────────────────────────────────────
+function Step8({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => void }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const removeTask = (id: string) => upd({ atmTasks: data.atmTasks.filter((t) => t.id !== id) });
+
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <SectionTitle>ATM (Auto Task Mapping)</SectionTitle>
-        <Button size="sm" variant="primary" icon={Plus} onClick={addTask}>Add Auto Task</Button>
+        <Button size="sm" variant="primary" icon={Plus} onClick={() => setPickerOpen(true)}>Pick Auto Tasks</Button>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-        <input value={atmInput.task} onChange={(e) => setAtmInput({ ...atmInput, task: e.target.value })} placeholder="Task name" style={inp} />
-        <input value={atmInput.description} onChange={(e) => setAtmInput({ ...atmInput, description: e.target.value })} placeholder="Task description" style={inp} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTask(); } }} />
+      <div style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginBottom: 14 }}>
+        Auto-tasks are hard-coded in the ATM catalogue (sourcing, screening, interview, offer, onboarding stages). Pick the ones that apply to this Job Profile.
       </div>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
           <tr style={{ background: 'var(--ck-bg)' }}>
-            <th style={{ padding: '8px 14px', width: 40, border: '1px solid var(--ck-line)' }}></th>
             <th style={{ padding: '8px 14px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textAlign: 'left', border: '1px solid var(--ck-line)', width: 80 }}>SR No.</th>
             <th style={{ padding: '8px 14px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textAlign: 'left', border: '1px solid var(--ck-line)' }}>Task</th>
             <th style={{ padding: '8px 14px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textAlign: 'left', border: '1px solid var(--ck-line)' }}>Task Description</th>
+            <th style={{ padding: '8px 14px', width: 50, border: '1px solid var(--ck-line)' }}></th>
           </tr>
         </thead>
         <tbody>
           {data.atmTasks.length === 0 && (
-            <tr><td colSpan={4} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)', border: '1px solid var(--ck-line)' }}>No tasks yet.</td></tr>
+            <tr><td colSpan={4} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)', border: '1px solid var(--ck-line)' }}>
+              No tasks selected. Click "Pick Auto Tasks" to choose from the catalogue.
+            </td></tr>
           )}
           {data.atmTasks.map((t, i) => (
-            <tr key={i}>
-              <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)' }}><input type="checkbox" /></td>
+            <tr key={t.id || i}>
               <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', fontFamily: 'var(--ck-font-mono)', fontSize: 12, color: 'var(--ck-muted)' }}>SR{String(i + 1).padStart(3, '0')}</td>
               <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', fontWeight: 600 }}>{t.task}</td>
               <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', color: 'var(--ck-ink-soft)' }}>{t.description}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// ─── Step 9 — Employees & Alumni (from DB) ────────────────────────────────────
-type HiringCompany = { id: string; lc_no: string; name: string; branch: string | null; city: string | null; location: string | null };
-
-function Step9() {
-  const [companies, setCompanies] = useState<HiringCompany[]>([]);
-  const [total, setTotal]         = useState(0);
-  const [loading, setLoading]     = useState(true);
-  const [page, setPage]           = useState(1);
-  const pageSize = 5;
-
-  useEffect(() => {
-    setLoading(true);
-    api.get<{ data: HiringCompany[]; meta: { total: number } }>('/hiring/companies', { params: { page, pageSize } })
-      .then((r) => { setCompanies(r.data.data); setTotal(r.data.meta.total); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [page]);
-
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-
-  return (
-    <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <SectionTitle>List of Candidates</SectionTitle>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Button size="sm" variant="ghost" icon={LayoutGrid}> </Button>
-          <Button size="sm" variant="ghost" icon={ClipboardList}> </Button>
-        </div>
-      </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-        <thead>
-          <tr style={{ background: 'var(--ck-bg)' }}>
-            {['LC No.', 'COMPANY', 'BRANCH', 'LOCATION', 'ACTIONS'].map((h) => (
-              <th key={h} style={{ padding: '8px 14px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textAlign: 'left', border: '1px solid var(--ck-line)' }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {loading && <tr><td colSpan={5} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)', border: '1px solid var(--ck-line)' }}>Loading…</td></tr>}
-          {!loading && companies.length === 0 && <tr><td colSpan={5} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)', border: '1px solid var(--ck-line)' }}>No companies seeded yet.</td></tr>}
-          {companies.map((c) => (
-            <tr key={c.id}>
-              <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', fontFamily: 'var(--ck-font-mono)', fontSize: 12, color: 'var(--ck-muted)' }}>{c.lc_no}</td>
-              <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', fontWeight: 600 }}>{c.name}</td>
-              <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', color: 'var(--ck-ink-soft)' }}>{c.branch ?? '—'}</td>
-              <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', color: 'var(--ck-ink-soft)', fontSize: 12 }}>{c.location ?? '—'}</td>
-              <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)' }}>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Eye size={15} /></button>
-                  <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Pencil size={15} /></button>
-                </div>
+              <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', textAlign: 'center' }}>
+                <button type="button" onClick={() => removeTask(t.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-danger-fg, #b00)' }}>
+                  <X size={14} />
+                </button>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, fontSize: 12.5, color: 'var(--ck-muted)' }}>
-        <span>{loading ? 'Loading…' : `Showing ${Math.min((page-1)*pageSize+1,total)} to ${Math.min(page*pageSize,total)} of ${total} results`}</span>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <Button size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</Button>
-          {Array.from({ length: Math.min(3, totalPages) }, (_, i) => i + 1).map((n) => (
-            <button key={n} onClick={() => setPage(n)}
-              style={{ width: 28, height: 28, borderRadius: 6, border: `1px solid ${page === n ? '#222' : 'var(--ck-line)'}`, background: page === n ? '#222' : 'transparent', color: page === n ? '#fff' : 'var(--ck-ink)', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>{n}
-            </button>
-          ))}
-          <Button size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</Button>
-        </div>
-      </div>
+      <AtmTaskPickerModal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        selectedIds={data.atmTasks.map((t) => t.id).filter(Boolean) as string[]}
+        onSave={(tasks) => upd({ atmTasks: tasks })}
+      />
     </div>
   );
+}
+
+// ─── Step 9 — Employees & Alumni (filtered by this JP's designation) ─────────
+type JpEmployee = {
+  id: string; code: string; first_name: string; last_name: string;
+  designation: string; status: string; joining_date: string;
+  email: string | null; phone: string | null;
+  branch_id: string; branch_name: string; branch_city: string | null;
+  department_name: string;
+};
+
+function Step9({ editId }: { editId: string | null }) {
+  const [active, setActive] = useState<JpEmployee[]>([]);
+  const [alumni, setAlumni] = useState<JpEmployee[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [view, setView] = useState<'card' | 'list'>('list');
+  const [tab, setTab] = useState<'active' | 'alumni'>('active');
+
+  useEffect(() => {
+    if (!editId) return;
+    setLoading(true);
+    api.get<{ data: { active: JpEmployee[]; alumni: JpEmployee[] } }>(`/job-profiles/${editId}/employees`)
+      .then((r) => { setActive(r.data.data.active); setAlumni(r.data.data.alumni); })
+      .catch(() => { setActive([]); setAlumni([]); })
+      .finally(() => setLoading(false));
+  }, [editId]);
+
+  if (!editId) {
+    return (
+      <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 48, border: '1px solid var(--ck-line)', textAlign: 'center', color: 'var(--ck-muted)' }}>
+        Employees & Alumni list will appear here after you save this Job Profile.
+      </div>
+    );
+  }
+
+  const rows = tab === 'active' ? active : alumni;
+
+  return (
+    <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <SectionTitle>Employees & Alumni</SectionTitle>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button type="button" onClick={() => setView('list')} title="List view"
+            style={viewBtn(view === 'list')}><ClipboardList size={14} /></button>
+          <button type="button" onClick={() => setView('card')} title="Card view"
+            style={viewBtn(view === 'card')}><LayoutGrid size={14} /></button>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid var(--ck-line)' }}>
+        <button type="button" onClick={() => setTab('active')} style={tabBtn(tab === 'active')}>
+          Active <span style={{ color: 'var(--ck-faint)', marginLeft: 4 }}>({active.length})</span>
+        </button>
+        <button type="button" onClick={() => setTab('alumni')} style={tabBtn(tab === 'alumni')}>
+          Alumni <span style={{ color: 'var(--ck-faint)', marginLeft: 4 }}>({alumni.length})</span>
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</div>
+      ) : rows.length === 0 ? (
+        <div style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)', fontSize: 13 }}>
+          No {tab === 'active' ? 'active employees' : 'alumni'} with this designation.
+        </div>
+      ) : view === 'card' ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+          {rows.map((e) => (
+            <div key={e.id} style={{ padding: 14, border: '1px solid var(--ck-line)', borderRadius: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--ck-line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: 'var(--ck-ink-soft)' }}>
+                  {(e.first_name[0] ?? '') + (e.last_name[0] ?? '')}
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13.5, color: 'var(--ck-ink)' }}>{e.first_name} {e.last_name}</div>
+                  <div style={{ fontFamily: 'var(--ck-font-mono)', fontSize: 11, color: 'var(--ck-muted)' }}>{e.code}</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--ck-ink-soft)', lineHeight: 1.7 }}>
+                <div><strong style={{ color: 'var(--ck-muted)' }}>Dept:</strong> {e.department_name}</div>
+                <div><strong style={{ color: 'var(--ck-muted)' }}>Branch:</strong> {e.branch_name}{e.branch_city ? `, ${e.branch_city}` : ''}</div>
+                <div><strong style={{ color: 'var(--ck-muted)' }}>Status:</strong> {e.status}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ background: 'var(--ck-bg)' }}>
+              {['CODE', 'NAME', 'DEPARTMENT', 'BRANCH', 'STATUS', 'JOINED'].map((h) => (
+                <th key={h} style={{ padding: '8px 14px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textAlign: 'left', border: '1px solid var(--ck-line)' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((e) => (
+              <tr key={e.id}>
+                <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', fontFamily: 'var(--ck-font-mono)', fontSize: 12, color: 'var(--ck-muted)' }}>{e.code}</td>
+                <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', fontWeight: 600 }}>{e.first_name} {e.last_name}</td>
+                <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', color: 'var(--ck-ink-soft)' }}>{e.department_name}</td>
+                <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', color: 'var(--ck-ink-soft)' }}>{e.branch_name}{e.branch_city ? `, ${e.branch_city}` : ''}</td>
+                <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)' }}>
+                  <span style={{ padding: '3px 9px', borderRadius: 5, fontSize: 11.5, fontWeight: 600, background: e.status === 'EXITED' ? '#eee' : 'var(--ck-line-soft)', color: e.status === 'EXITED' ? '#666' : 'var(--ck-ink-soft)' }}>
+                    {e.status}
+                  </span>
+                </td>
+                <td style={{ padding: '10px 14px', border: '1px solid var(--ck-line)', color: 'var(--ck-ink-soft)', fontSize: 12 }}>{e.joining_date}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+function viewBtn(active: boolean): React.CSSProperties {
+  return {
+    width: 30, height: 30, borderRadius: 7, cursor: 'pointer',
+    border: `1px solid ${active ? 'var(--ck-ink)' : 'var(--ck-line)'}`,
+    background: active ? 'var(--ck-ink)' : 'transparent',
+    color: active ? '#fff' : 'var(--ck-muted)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  };
+}
+
+function tabBtn(active: boolean): React.CSSProperties {
+  return {
+    padding: '9px 16px', border: 'none', background: 'transparent',
+    borderBottom: active ? '2px solid var(--ck-ink)' : '2px solid transparent',
+    color: active ? 'var(--ck-ink)' : 'var(--ck-muted)',
+    cursor: 'pointer', fontSize: 13, fontWeight: active ? 600 : 500, marginBottom: -1,
+  };
 }
 
 // ─── Step 10 — Prospets (full combined table from DB) ─────────────────────────
 
 type Prospect = {
-  id: string; name: string; email: string; platform: string;
+  id: string; name: string; email: string; phone: string | null; platform: string;
   experience_years: number | string | null; current_role: string | null;
   company: string | null; location: string | null; salary_range: string | null;
   education: string | null; institution: string | null; match_ratio: number | null;
@@ -718,9 +1037,10 @@ function Step10({ data: _data, upd: _upd }: { data: StepData; upd: (p: Partial<S
   const [loading, setLoading]     = useState(true);
   const [page, setPage]           = useState(1);
   const [search, setSearch]       = useState('');
+  const [importOpen, setImportOpen] = useState(false);
   const pageSize = 5;
 
-  useEffect(() => {
+  const fetchRows = () => {
     setLoading(true);
     const params: Record<string, unknown> = { page, pageSize };
     if (search) params.search = search;
@@ -728,16 +1048,20 @@ function Step10({ data: _data, upd: _upd }: { data: StepData; upd: (p: Partial<S
       .then((r) => { setRows(r.data.data); setTotal(r.data.meta.total); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [page, search]);
+  };
+
+  useEffect(fetchRows, [page, search]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const HEADERS = ['IMAGE','SR No.','NAME','EMAIL','PLATFORM','WORK EXPERIENCE','CURRENT ROLE','COMPANY','LOCATION','SALARY RANGE','EDUCATION','INSTITUTION','MATCH RATIO','ENGAGEMENT SIGNALS','APPLICATION STATUS','ACTIONS'];
+  const HEADERS = ['IMAGE','SR No.','NAME','EMAIL','PHONE','PLATFORM','WORK EXPERIENCE','CURRENT ROLE','COMPANY','LOCATION','SALARY RANGE','EDUCATION','INSTITUTION','MATCH RATIO','ENGAGEMENT SIGNALS','APPLICATION STATUS','ACTIONS'];
 
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <SectionTitle>Prospets</SectionTitle>
-        <Button size="sm" variant="primary" icon={Plus}>+ Add Employee</Button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 10, flexWrap: 'wrap' }}>
+        <SectionTitle>Prospects</SectionTitle>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button size="sm" icon={UserSearch} onClick={() => setImportOpen(true)}>Nest Connect</Button>
+        </div>
       </div>
 
       {/* Search */}
@@ -785,6 +1109,8 @@ function Step10({ data: _data, upd: _upd }: { data: StepData; upd: (p: Partial<S
                 <td style={{ padding: '11px 12px', fontWeight: 700, color: 'var(--ck-ink)', whiteSpace: 'nowrap' }}>{p.name}</td>
                 {/* Email */}
                 <td style={{ padding: '11px 12px', fontSize: 12, color: 'var(--ck-ink-soft)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.email}</td>
+                {/* Phone */}
+                <td style={{ padding: '11px 12px', fontSize: 12, color: 'var(--ck-ink-soft)', whiteSpace: 'nowrap' }}>{p.phone ?? '—'}</td>
                 {/* Platform */}
                 <td style={{ padding: '11px 12px', color: 'oklch(0.55 0.14 250)', fontWeight: 600 }}>{p.platform}</td>
                 {/* Work Exp */}
@@ -849,20 +1175,23 @@ function Step10({ data: _data, upd: _upd }: { data: StepData; upd: (p: Partial<S
           <Button size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</Button>
         </div>
       </div>
+
+      <NestConnectImportModal open={importOpen} onClose={() => setImportOpen(false)} onImported={fetchRows} />
     </div>
   );
 }
 
-// ─── Step 11 — Interview Templates (from DB) ─────────────────────────────────
+// ─── Step 11 — Interview Templates (mapped to this JP) ───────────────────────
 type InterviewTemplate = { id: string; title: string; description: string | null };
 
-function Step11({ data: _data, upd: _upd }: { data: StepData; upd: (p: Partial<StepData>) => void }) {
+function Step11({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => void }) {
   const [templates, setTemplates] = useState<InterviewTemplate[]>([]);
   const [loading, setLoading]     = useState(true);
   const [addOpen, setAddOpen]     = useState(false);
   const [newTitle, setNewTitle]   = useState('');
   const [newDesc, setNewDesc]     = useState('');
   const [saving, setSaving]       = useState(false);
+  const [viewing, setViewing]     = useState<InterviewTemplate | null>(null);
 
   const fetchTemplates = () => {
     setLoading(true);
@@ -879,7 +1208,7 @@ function Step11({ data: _data, upd: _upd }: { data: StepData; upd: (p: Partial<S
     setSaving(true);
     try {
       await api.post('/hiring/interview-templates', { title: newTitle.trim(), description: newDesc.trim() || undefined });
-      toast.success('Template added');
+      toast.success('Template added to master');
       setNewTitle(''); setNewDesc(''); setAddOpen(false);
       fetchTemplates();
     } catch {
@@ -887,38 +1216,74 @@ function Step11({ data: _data, upd: _upd }: { data: StepData; upd: (p: Partial<S
     } finally { setSaving(false); }
   };
 
+  const toggleMap = (id: string) => {
+    const has = data.interviewTemplateIds.includes(id);
+    upd({ interviewTemplateIds: has
+      ? data.interviewTemplateIds.filter((x) => x !== id)
+      : [...data.interviewTemplateIds, id] });
+  };
+
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <SectionTitle>Interview Templates</SectionTitle>
-        <Button size="sm" variant="primary" icon={Plus} onClick={() => setAddOpen(true)}>+ Add Templates</Button>
+        <Button size="sm" variant="primary" icon={Plus} onClick={() => setAddOpen(true)}>+ Add Template</Button>
+      </div>
+
+      <div style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginBottom: 16 }}>
+        Tick the templates that should be used during interviews for this Job Profile. Multiple templates can be combined (e.g. one generic + one specialised).
       </div>
 
       {loading ? (
         <div style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading templates…</div>
+      ) : templates.length === 0 ? (
+        <div style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)', fontSize: 13 }}>
+          No templates in the master yet. Click "+ Add Template" to create one.
+        </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 14 }}>
-          {templates.map((t) => (
-            <div key={t.id} style={{ border: '1px solid var(--ck-line)', borderRadius: 10, overflow: 'hidden' }}>
-              <div style={{ position: 'relative' }}>
-                <div style={{ height: 120, background: 'var(--ck-line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ck-faint)' }}>
-                  <ClipboardList size={36} strokeWidth={1} />
+          {templates.map((t) => {
+            const checked = data.interviewTemplateIds.includes(t.id);
+            return (
+              <div key={t.id} style={{
+                border: `2px solid ${checked ? 'var(--ck-ink)' : 'var(--ck-line)'}`,
+                borderRadius: 10, overflow: 'hidden',
+                background: checked ? 'var(--ck-surface-alt)' : 'var(--ck-surface)',
+                transition: 'border-color 120ms',
+              }}>
+                <div style={{ position: 'relative' }}>
+                  <div style={{ height: 120, background: 'var(--ck-line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ck-faint)' }}>
+                    <ClipboardList size={36} strokeWidth={1} />
+                  </div>
+                  <label style={{ position: 'absolute', top: 10, left: 12, display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: 'rgba(255,255,255,0.9)', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleMap(t.id)} />
+                    {checked ? 'Mapped' : 'Map'}
+                  </label>
+                  <div style={{ position: 'absolute', top: 10, right: 12 }}>
+                    <button type="button" onClick={() => setViewing(t)} title="View"
+                      style={{ width: 28, height: 28, borderRadius: 6, background: 'rgba(0,0,0,0.55)', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Eye size={14} />
+                    </button>
+                  </div>
                 </div>
-                <div style={{ position: 'absolute', top: 10, left: 12 }}><input type="checkbox" /></div>
-                <div style={{ position: 'absolute', top: 10, right: 12, display: 'flex', gap: 8 }}>
-                  <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Eye size={15} /></button>
-                  <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Pencil size={15} /></button>
+                <div style={{ padding: '14px 16px' }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>{t.title}</div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11, color: 'var(--ck-muted)', marginBottom: 6 }}>
+                    <CheckSquare size={12} /> DESCRIPTION
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--ck-ink-soft)', lineHeight: 1.5, minHeight: 36 }}>
+                    {t.description ?? '—'}
+                  </div>
                 </div>
               </div>
-              <div style={{ padding: '14px 16px' }}>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>{t.title}</div>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11, color: 'var(--ck-muted)', marginBottom: 6 }}>
-                  <CheckSquare size={12} /> DESCRIPTION
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--ck-ink-soft)', lineHeight: 1.5 }}>{t.description ?? '—'}</div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
+        </div>
+      )}
+
+      {data.interviewTemplateIds.length > 0 && (
+        <div style={{ marginTop: 18, padding: 12, background: 'var(--ck-bg)', border: '1px solid var(--ck-line)', borderRadius: 8, fontSize: 12.5, color: 'var(--ck-ink-soft)' }}>
+          <strong style={{ color: 'var(--ck-ink)' }}>{data.interviewTemplateIds.length}</strong> template{data.interviewTemplateIds.length === 1 ? '' : 's'} mapped to this Job Profile. Save to persist.
         </div>
       )}
 
@@ -930,13 +1295,30 @@ function Step11({ data: _data, upd: _upd }: { data: StepData; upd: (p: Partial<S
             style={{ height: 36, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' }} />
           <textarea value={newDesc} onChange={(e) => setNewDesc(e.target.value)} rows={3} placeholder="Description (optional)"
             style={{ padding: 10, border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)', resize: 'vertical' }} />
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <Button size="sm" onClick={() => { setAddOpen(false); setNewTitle(''); setNewDesc(''); }}>Cancel</Button>
             <Button size="sm" variant="primary" disabled={saving || !newTitle.trim()} onClick={saveTemplate}>
-              {saving ? 'Saving…' : 'Add'}
+              {saving ? 'Saving…' : 'Add to Master'}
             </Button>
           </div>
         </div>
+      )}
+
+      {viewing && (
+        <Modal open={!!viewing} onClose={() => setViewing(null)} title={viewing.title} subtitle="Interview template details" width={560}
+          footer={<Button size="sm" onClick={() => setViewing(null)}>Close</Button>}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Description</div>
+              <div style={{ fontSize: 13.5, color: 'var(--ck-ink)', lineHeight: 1.6 }}>
+                {viewing.description ?? 'No description available.'}
+              </div>
+            </div>
+            <div style={{ padding: 12, background: 'var(--ck-bg)', border: '1px solid var(--ck-line)', borderRadius: 8, fontSize: 12.5, color: 'var(--ck-muted)' }}>
+              Sections, scoring rubric and AI-led interview behaviour for this template will appear here in a later phase.
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

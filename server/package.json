@@ -13,7 +13,10 @@
     "seed:all": "npm run seed:ref && npm run seed:employees && npm run seed:transactional",
     "seed:hiring": "tsx scripts/seed-hiring.ts",
     "seed:prospects": "tsx scripts/seed-prospects.ts",
-    "seed:hiring-masters": "tsx scripts/seed-hiring-masters.ts"
+    "seed:hiring-masters": "tsx scripts/seed-hiring-masters.ts",
+    "seed:skills": "tsx scripts/seed-skills.ts",
+    "seed:training-modules": "tsx scripts/seed-training-modules.ts",
+    "seed:atm-tasks": "tsx scripts/seed-atm-tasks.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

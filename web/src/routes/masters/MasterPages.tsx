@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Building2, LayoutGrid, LocateFixed, Shield, Sparkles, Wallet, CalendarDays, ClipboardList } from 'lucide-react';
+import { Building2, LayoutGrid, LocateFixed, Shield, Sparkles, Wallet, CalendarDays, ClipboardList, BookOpen } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
@@ -28,6 +28,7 @@ type Designation = {
 };
 type Location = { id: string; code: string | null; name: string; city: string | null; state: string | null; branch_id: string | null; branch_name?: string | null; is_active: number | boolean };
 type Skill = { id: string; code: string | null; name: string; category: string | null; description: string | null; is_active: number | boolean };
+type TrainingModule = { id: string; code: string; name: string; description: string | null; cover_image_url: string | null; chapter_count: number | string; duration_hours: number | string | null; is_active: number | boolean };
 type Company = { id: string; lc_no: string; name: string; branch: string | null; city: string | null; location: string | null };
 type InterviewTemplate = { id: string; title: string; description: string | null; image_url: string | null; is_default: number | boolean };
 type GiveawayTemplate = { id: string; name: string; is_default: number | boolean };
@@ -42,6 +43,7 @@ export function MastersHomePage() {
     { title: 'Shifts', desc: 'Duty shift definitions', to: '/masters/shifts', icon: CalendarDays },
     { title: 'Salary Grades', desc: 'Grade ladder and pay bands', to: '/masters/salary-grades', icon: Wallet },
     { title: 'Skills', desc: 'Skill master for designations', to: '/masters/skills', icon: Sparkles },
+    { title: 'Training Modules', desc: 'Course modules for job profiles', to: '/masters/training-modules', icon: BookOpen },
     { title: 'Companies', desc: 'Hiring company master', to: '/masters/companies', icon: Building2 },
     { title: 'Users', desc: 'User console and role access', to: '/masters/users', icon: Shield },
     { title: 'Interview Templates', desc: 'Hiring template library', to: '/masters/interview-templates', icon: ClipboardList },
@@ -181,6 +183,50 @@ export function SkillsMasterPage() {
       rowToValues={(row) => row ? { code: row.code ?? '', name: row.name, category: row.category ?? '', description: row.description ?? '', isActive: Boolean(row.is_active) } : { code: '', name: '', category: '', description: '', isActive: true }}
       buildPayload={(values) => ({ code: values.code || undefined, name: values.name, category: values.category || undefined, description: values.description || undefined, isActive: Boolean(values.isActive) })}
       searchKeys={['code', 'name', 'category', 'description']}
+    />
+  );
+}
+
+export function TrainingModuleMasterPage() {
+  return (
+    <MasterCrudPage<TrainingModule>
+      title="Training Module Master"
+      subtitle="Manage course modules referenced from Job Profiles (Step 6)."
+      endpoint="/training-modules"
+      columns={[
+        { header: 'Code',        render: (row) => <Mono>{row.code}</Mono> },
+        { header: 'Name',        render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Description', render: (row) => row.description ?? '—' },
+        { header: 'Chapters',    render: (row) => String(row.chapter_count ?? 0).padStart(2, '0') },
+        { header: 'Hours',       render: (row) => row.duration_hours != null ? `${row.duration_hours}h` : '—' },
+        { header: 'Status',      render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+      ]}
+      buildFields={() => [
+        { name: 'code',          label: 'Code',                 type: 'text', placeholder: 'TM001' },
+        { name: 'name',          label: 'Name',                 type: 'text', placeholder: 'Workplace Safety', required: true },
+        { name: 'description',   label: 'Description',          type: 'textarea', span: true },
+        { name: 'chapterCount',  label: 'Chapter Count',        type: 'number', placeholder: '5' },
+        { name: 'durationHours', label: 'Duration (hours)',     type: 'number', placeholder: '8' },
+        { name: 'coverImageUrl', label: 'Cover Image URL',      type: 'text', placeholder: 'https://…', span: true },
+        { name: 'isActive',      label: 'Active',               type: 'checkbox', span: true },
+      ]}
+      rowToValues={(row) => row ? {
+        code: row.code, name: row.name, description: row.description ?? '',
+        chapterCount: Number(row.chapter_count) || 0,
+        durationHours: row.duration_hours ?? '',
+        coverImageUrl: row.cover_image_url ?? '',
+        isActive: Boolean(row.is_active),
+      } : { code: '', name: '', description: '', chapterCount: 0, durationHours: '', coverImageUrl: '', isActive: true }}
+      buildPayload={(values) => ({
+        code: values.code || undefined,
+        name: values.name,
+        description: values.description || undefined,
+        chapterCount: Number(values.chapterCount) || 0,
+        durationHours: values.durationHours === '' || values.durationHours == null ? undefined : Number(values.durationHours),
+        coverImageUrl: values.coverImageUrl || undefined,
+        isActive: Boolean(values.isActive),
+      })}
+      searchKeys={['code', 'name', 'description']}
     />
   );
 }

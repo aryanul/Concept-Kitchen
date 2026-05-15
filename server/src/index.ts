@@ -598,60 +598,173 @@ app.get('/api/v1/job-profiles', authRequired, async (req, res, next) => {
 app.get('/api/v1/job-profiles/:id', authRequired, async (req, res, next) => {
   try {
     const rows = await query(
-      `SELECT jp.id, jp.jp_no, jp.title, jp.alternate_title, jp.department_id, jp.division,
-              jp.designation, jp.jp_status, jp.description, jp.requirements, jp.status,
+      `SELECT jp.id, jp.jp_no, jp.title, jp.alternate_title, jp.department_id, jp.designation_id,
+              jp.division, jp.designation, jp.jp_status, jp.description, jp.requirements, jp.status,
               jp.created_at, jp.location_applicable, jp.work_shift,
               jp.reporting_dept_id, jp.reporting_division, jp.reporting_designation, jp.form_data,
               d.name AS department_name,
+              dg.name AS designation_name, dg.code AS designation_code,
+              divs.name AS division_name,
               rd.name AS reporting_department_name
        FROM job_profiles jp
        JOIN departments d ON d.id = jp.department_id
+       LEFT JOIN designations dg ON dg.id = jp.designation_id
+       LEFT JOIN divisions divs ON divs.id = dg.division_id
        LEFT JOIN departments rd ON rd.id = jp.reporting_dept_id
        WHERE jp.id = ?
        LIMIT 1`,
       [req.params.id]
     );
-    const row = rows[0];
+    const row = rows[0] as Record<string, unknown> | undefined;
     if (!row) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Job profile not found' } });
-    res.json({ data: row });
+    const locations = await query(
+      `SELECT jpl.id, jpl.branch_id, jpl.location_id, jpl.positions,
+              b.name AS branch_name, b.city AS branch_city,
+              l.name AS location_name
+       FROM job_profile_locations jpl
+       JOIN branches b ON b.id = jpl.branch_id
+       LEFT JOIN locations l ON l.id = jpl.location_id
+       WHERE jpl.job_profile_id = ?
+       ORDER BY jpl.sort_order, jpl.created_at`,
+      [req.params.id]
+    );
+    const shifts = await query(
+      `SELECT jps.id, jps.shift_id, s.code AS shift_code, s.name AS shift_name,
+              s.start_time, s.end_time
+       FROM job_profile_shifts jps
+       JOIN shifts s ON s.id = jps.shift_id
+       WHERE jps.job_profile_id = ?
+       ORDER BY jps.sort_order, jps.created_at`,
+      [req.params.id]
+    );
+    const interview_templates = await query(
+      `SELECT jpit.id, jpit.interview_template_id, t.title, t.description, t.image_url
+       FROM job_profile_interview_templates jpit
+       JOIN interview_templates t ON t.id = jpit.interview_template_id
+       WHERE jpit.job_profile_id = ?
+       ORDER BY jpit.sort_order, jpit.created_at`,
+      [req.params.id]
+    );
+    res.json({ data: { ...row, locations, shifts, interview_templates } });
   } catch (err) { next(err); }
 });
 
+type JpLocationInput = { branchId?: unknown; locationId?: unknown; positions?: unknown };
+
+async function resolveDesignation(designationId: unknown): Promise<{ name: string; departmentId: string | null; divisionName: string | null } | null> {
+  if (typeof designationId !== 'string' || !designationId) return null;
+  const rows = await query<{ name: string; department_id: string | null; division_name: string | null }>(
+    `SELECT dg.name, dg.department_id, divs.name AS division_name
+     FROM designations dg
+     LEFT JOIN divisions divs ON divs.id = dg.division_id
+     WHERE dg.id = ?
+     LIMIT 1`,
+    [designationId]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return { name: row.name, departmentId: row.department_id, divisionName: row.division_name };
+}
+
+async function replaceJpLocations(jobProfileId: string, locations: JpLocationInput[]): Promise<void> {
+  await query('DELETE FROM job_profile_locations WHERE job_profile_id = ?', [jobProfileId]);
+  for (let i = 0; i < locations.length; i++) {
+    const loc = locations[i];
+    if (typeof loc?.branchId !== 'string' || !loc.branchId) continue;
+    await query(
+      'INSERT INTO job_profile_locations (id, job_profile_id, branch_id, location_id, positions, sort_order) VALUES (?, ?, ?, ?, ?, ?)',
+      [ulid(), jobProfileId, loc.branchId,
+       typeof loc.locationId === 'string' && loc.locationId ? loc.locationId : null,
+       Math.max(1, Number(loc.positions) || 1), i]
+    );
+  }
+}
+
+async function replaceJpShifts(jobProfileId: string, shiftIds: unknown[]): Promise<void> {
+  await query('DELETE FROM job_profile_shifts WHERE job_profile_id = ?', [jobProfileId]);
+  for (let i = 0; i < shiftIds.length; i++) {
+    const sid = shiftIds[i];
+    if (typeof sid !== 'string' || !sid) continue;
+    await query(
+      'INSERT INTO job_profile_shifts (id, job_profile_id, shift_id, sort_order) VALUES (?, ?, ?, ?)',
+      [ulid(), jobProfileId, sid, i]
+    );
+  }
+}
+
+async function replaceJpInterviewTemplates(jobProfileId: string, templateIds: unknown[]): Promise<void> {
+  await query('DELETE FROM job_profile_interview_templates WHERE job_profile_id = ?', [jobProfileId]);
+  for (let i = 0; i < templateIds.length; i++) {
+    const tid = templateIds[i];
+    if (typeof tid !== 'string' || !tid) continue;
+    await query(
+      'INSERT INTO job_profile_interview_templates (id, job_profile_id, interview_template_id, sort_order) VALUES (?, ?, ?, ?)',
+      [ulid(), jobProfileId, tid, i]
+    );
+  }
+}
+
 app.post('/api/v1/job-profiles', authRequired, async (req, res, next) => {
   try {
-    const { title, alternateTitle, departmentId, division, designation, description, requirements,
-      jpStatus = 'Pending', locationApplicable, workShift, reportingDeptId, reportingDivision,
-      reportingDesignation, formData } = req.body ?? {};
-    if (!departmentId || (!designation && !title)) return res.status(400).json({ error: { code: 'VALIDATION', message: 'departmentId and designation required' } });
-    const [maxRow] = await query<{ n: number }>("SELECT COALESCE(MAX(CAST(SUBSTRING(jp_no, 3) AS UNSIGNED)), 0) AS n FROM job_profiles WHERE jp_no IS NOT NULL");
-    const jpNo = `JP${String((maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
+    const { title, alternateTitle, departmentId, division, designation, designationId,
+      description, requirements, jpStatus = 'Pending',
+      locationApplicable, workShift, reportingDeptId, reportingDivision, reportingDesignation,
+      formData, locations, shifts } = req.body ?? {};
+
+    // Resolve from designation row if linked — that's the source of truth for dept/div/desig.
+    const resolved = await resolveDesignation(designationId);
+    const finalDepartmentId = resolved?.departmentId ?? departmentId;
+    const finalDivision = resolved?.divisionName ?? division;
+    const finalDesignation = resolved?.name ?? designation;
+    const finalTitle = title || finalDesignation || '';
+
+    if (!finalDepartmentId || (!finalDesignation && !finalTitle)) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'departmentId and designation required' } });
+    }
+    const [maxRow] = await query<{ n: number | string | null }>("SELECT COALESCE(MAX(CAST(SUBSTRING(jp_no, 3) AS UNSIGNED)), 0) AS n FROM job_profiles WHERE jp_no IS NOT NULL");
+    const jpNo = `JP${String(Number(maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
     const id = ulid();
     await query(
       `INSERT INTO job_profiles
-        (id, jp_no, title, alternate_title, department_id, division, designation, jp_status,
+        (id, jp_no, title, alternate_title, department_id, designation_id, division, designation, jp_status,
          description, requirements, location_applicable, work_shift,
          reporting_dept_id, reporting_division, reporting_designation, form_data)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, jpNo, designation || title || '', alternateTitle || null, departmentId,
-       division || null, designation || title || '', jpStatus,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, jpNo, finalTitle, alternateTitle || null, finalDepartmentId,
+       resolved ? designationId : null,
+       finalDivision || null, finalDesignation || '', jpStatus,
        description || null, requirements || null, locationApplicable || null,
        workShift || null, reportingDeptId || null, reportingDivision || null,
        reportingDesignation || null, formData ? JSON.stringify(formData) : null]
     );
+    if (Array.isArray(locations)) await replaceJpLocations(id, locations);
+    if (Array.isArray(shifts))    await replaceJpShifts(id, shifts);
+    if (Array.isArray(req.body?.interviewTemplateIds)) await replaceJpInterviewTemplates(id, req.body.interviewTemplateIds);
     res.status(201).json({ data: { id, jp_no: jpNo } });
   } catch (err) { next(err); }
 });
 
 app.patch('/api/v1/job-profiles/:id', authRequired, async (req, res, next) => {
   try {
-    const { title, alternateTitle, designation, division, description, requirements,
+    const { title, alternateTitle, designation, division, designationId, description, requirements,
       status, jpStatus, locationApplicable, workShift,
-      reportingDeptId, reportingDivision, reportingDesignation, formData } = req.body ?? {};
+      reportingDeptId, reportingDivision, reportingDesignation, formData,
+      locations, shifts } = req.body ?? {};
+
+    const resolved = await resolveDesignation(designationId);
+
     const sets: string[] = []; const vals: unknown[] = [];
+    if (resolved) {
+      sets.push('designation_id = ?', 'department_id = ?', 'division = ?', 'designation = ?');
+      vals.push(designationId, resolved.departmentId, resolved.divisionName, resolved.name);
+    } else if (designationId === null) {
+      sets.push('designation_id = ?');
+      vals.push(null);
+    }
     if (title                !== undefined) { sets.push('title = ?');                  vals.push(title); }
     if (alternateTitle       !== undefined) { sets.push('alternate_title = ?');        vals.push(alternateTitle); }
-    if (designation          !== undefined) { sets.push('designation = ?');            vals.push(designation); }
-    if (division             !== undefined) { sets.push('division = ?');               vals.push(division); }
+    if (!resolved && designation !== undefined) { sets.push('designation = ?');        vals.push(designation); }
+    if (!resolved && division    !== undefined) { sets.push('division = ?');           vals.push(division); }
     if (description          !== undefined) { sets.push('description = ?');            vals.push(description); }
     if (requirements         !== undefined) { sets.push('requirements = ?');           vals.push(requirements); }
     if (status               !== undefined) { sets.push('status = ?');                 vals.push(status); }
@@ -662,10 +775,54 @@ app.patch('/api/v1/job-profiles/:id', authRequired, async (req, res, next) => {
     if (reportingDivision    !== undefined) { sets.push('reporting_division = ?');     vals.push(reportingDivision); }
     if (reportingDesignation !== undefined) { sets.push('reporting_designation = ?'); vals.push(reportingDesignation); }
     if (formData             !== undefined) { sets.push('form_data = ?');              vals.push(JSON.stringify(formData)); }
-    if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No fields to update' } });
-    vals.push(req.params.id);
-    await query(`UPDATE job_profiles SET ${sets.join(', ')} WHERE id = ?`, vals);
+    if (sets.length) {
+      vals.push(req.params.id);
+      await query(`UPDATE job_profiles SET ${sets.join(', ')} WHERE id = ?`, vals);
+    }
+    if (Array.isArray(locations)) await replaceJpLocations(req.params.id, locations);
+    if (Array.isArray(shifts))    await replaceJpShifts(req.params.id, shifts);
+    if (Array.isArray(req.body?.interviewTemplateIds)) await replaceJpInterviewTemplates(req.params.id, req.body.interviewTemplateIds);
+    if (!sets.length && !Array.isArray(locations) && !Array.isArray(shifts) && !Array.isArray(req.body?.interviewTemplateIds)) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'No fields to update' } });
+    }
     res.json({ data: { id: req.params.id } });
+  } catch (err) { next(err); }
+});
+
+// Step 9 — Employees & Alumni for a given Job Profile
+// Matches employees whose `designation` string equals the JP's designation.
+// Returns both active and exited (alumni) employees with branch/location/dept.
+app.get('/api/v1/job-profiles/:id/employees', authRequired, async (req, res, next) => {
+  try {
+    const jpRows = await query<{ designation: string | null }>(
+      'SELECT designation FROM job_profiles WHERE id = ? LIMIT 1', [req.params.id]
+    );
+    const jp = jpRows[0];
+    if (!jp) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Job profile not found' } });
+    if (!jp.designation) {
+      return res.json({ data: { active: [], alumni: [] } });
+    }
+    const rows = await query<{
+      id: string; code: string; first_name: string; last_name: string;
+      designation: string; status: string; joining_date: string;
+      email: string | null; phone: string | null;
+      branch_id: string; branch_name: string; branch_city: string | null;
+      department_name: string;
+    }>(
+      `SELECT e.id, e.code, e.first_name, e.last_name, e.designation, e.status,
+              e.joining_date, e.email, e.phone,
+              b.id AS branch_id, b.name AS branch_name, b.city AS branch_city,
+              d.name AS department_name
+       FROM employees e
+       JOIN branches b ON b.id = e.branch_id
+       JOIN departments d ON d.id = e.department_id
+       WHERE e.designation = ?
+       ORDER BY e.status, e.code`,
+      [jp.designation]
+    );
+    const active = rows.filter((r) => r.status !== 'EXITED');
+    const alumni = rows.filter((r) => r.status === 'EXITED');
+    res.json({ data: { active, alumni } });
   } catch (err) { next(err); }
 });
 
@@ -702,8 +859,8 @@ app.post('/api/v1/vacancies', authRequired, async (req, res, next) => {
   try {
     const { jobProfileId, branchId, positions, companyName = 'Concept Kitchen', location, division, notes, listingStatus = 'Draft' } = req.body ?? {};
     if (!jobProfileId || !branchId || !positions) return res.status(400).json({ error: { code: 'VALIDATION', message: 'jobProfileId, branchId, positions required' } });
-    const [maxRow] = await query<{ n: number }>("SELECT COALESCE(MAX(CAST(SUBSTRING(job_id, 3) AS UNSIGNED)), 0) AS n FROM vacancies WHERE job_id IS NOT NULL");
-    const jobId = `JI${String((maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
+    const [maxRow] = await query<{ n: number | string | null }>("SELECT COALESCE(MAX(CAST(SUBSTRING(job_id, 3) AS UNSIGNED)), 0) AS n FROM vacancies WHERE job_id IS NOT NULL");
+    const jobId = `JI${String(Number(maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
     const id = ulid();
     await query(
       'INSERT INTO vacancies (id, company_name, job_id, location, division, job_profile_id, branch_id, positions, notes, listing_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -808,14 +965,55 @@ app.get('/api/v1/prospects', authRequired, async (req, res, next) => {
 
 app.post('/api/v1/prospects', authRequired, async (req, res, next) => {
   try {
-    const { name, email, platform, experienceYears, currentRole, company, location, salaryRange, education, institution, matchRatio, engagementSignal, applicationStatus } = req.body ?? {};
+    const { name, email, phone, platform, experienceYears, currentRole, company, location, salaryRange, education, institution, matchRatio, engagementSignal, applicationStatus } = req.body ?? {};
     if (!name || !email) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name and email required' } });
     const id = ulid();
     await query(
-      'INSERT INTO prospects (id, name, email, platform, experience_years, `current_role`, company, location, salary_range, education, institution, match_ratio, engagement_signal, application_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, name, email, platform || 'LinkedIn', experienceYears || null, currentRole || null, company || null, location || null, salaryRange || null, education || null, institution || null, matchRatio || null, engagementSignal || 'Job Seeking', applicationStatus || 'Not Applied']
+      'INSERT INTO prospects (id, name, email, phone, platform, experience_years, `current_role`, company, location, salary_range, education, institution, match_ratio, engagement_signal, application_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, name, email, phone || null, platform || 'LinkedIn', experienceYears || null, currentRole || null, company || null, location || null, salaryRange || null, education || null, institution || null, matchRatio || null, engagementSignal || 'Job Seeking', applicationStatus || 'Not Applied']
     );
     res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+// Bulk import for "Nest Connect" — accepts an array of prospect rows.
+// Skips rows whose email already exists (case-insensitive).
+app.post('/api/v1/prospects/import', authRequired, async (req, res, next) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows as Array<Record<string, unknown>> : null;
+    if (!rows || rows.length === 0) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'rows[] required' } });
+    }
+    const existing = await query<{ email: string }>('SELECT email FROM prospects');
+    const seen = new Set(existing.map((r) => r.email.toLowerCase()));
+    let inserted = 0, skipped = 0;
+    for (const r of rows) {
+      const name  = typeof r.name === 'string' ? r.name.trim() : '';
+      const email = typeof r.email === 'string' ? r.email.trim() : '';
+      if (!name || !email) { skipped++; continue; }
+      if (seen.has(email.toLowerCase())) { skipped++; continue; }
+      seen.add(email.toLowerCase());
+      await query(
+        'INSERT INTO prospects (id, name, email, phone, platform, experience_years, `current_role`, company, location, salary_range, education, institution, match_ratio, engagement_signal, application_status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [
+          ulid(), name, email,
+          typeof r.phone === 'string' ? r.phone : null,
+          typeof r.platform === 'string' && r.platform ? r.platform : 'LinkedIn',
+          r.experienceYears != null && r.experienceYears !== '' ? Number(r.experienceYears) : null,
+          typeof r.currentRole === 'string' ? r.currentRole : null,
+          typeof r.company === 'string' ? r.company : null,
+          typeof r.location === 'string' ? r.location : null,
+          typeof r.salaryRange === 'string' ? r.salaryRange : null,
+          typeof r.education === 'string' ? r.education : null,
+          typeof r.institution === 'string' ? r.institution : null,
+          r.matchRatio != null && r.matchRatio !== '' ? Number(r.matchRatio) : null,
+          typeof r.engagementSignal === 'string' && r.engagementSignal ? r.engagementSignal : 'Job Seeking',
+          typeof r.applicationStatus === 'string' && r.applicationStatus ? r.applicationStatus : 'Not Applied',
+        ]
+      );
+      inserted++;
+    }
+    res.status(201).json({ data: { inserted, skipped, total: rows.length } });
   } catch (err) { next(err); }
 });
 
@@ -834,8 +1032,8 @@ app.post('/api/v1/hiring/companies', authRequired, async (req, res, next) => {
   try {
     const { name, branch, city, location } = req.body ?? {};
     if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
-    const [maxRow] = await query<{ n: number }>("SELECT COALESCE(MAX(CAST(SUBSTRING(lc_no, 3) AS UNSIGNED)), 0) AS n FROM hiring_companies");
-    const lcNo = `LC${String((maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
+    const [maxRow] = await query<{ n: number | string | null }>("SELECT COALESCE(MAX(CAST(SUBSTRING(lc_no, 3) AS UNSIGNED)), 0) AS n FROM hiring_companies");
+    const lcNo = `LC${String(Number(maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
     const id = ulid();
     await query('INSERT INTO hiring_companies (id, lc_no, name, branch, city, location) VALUES (?, ?, ?, ?, ?, ?)',
       [id, lcNo, name, branch || null, city || null, location || null]);
@@ -1030,10 +1228,10 @@ app.post('/api/v1/employees', authRequired, async (req, res, next) => {
     if (!firstName || !lastName || !email || !phone || !designation || !branchId || !departmentId || !gradeId || !ctcRupees || !joiningDate) {
       return res.status(400).json({ error: { code: 'VALIDATION', message: 'Required fields missing' } });
     }
-    const [maxRow] = await query<{ n: number }>(
+    const [maxRow] = await query<{ n: number | string | null }>(
       'SELECT COALESCE(MAX(CAST(SUBSTRING(code, 8) AS UNSIGNED)), 0) AS n FROM employees'
     );
-    const code = `CK-EMP-${String((maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
+    const code = `CK-EMP-${String(Number(maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
     const id = ulid();
     await query(
       `INSERT INTO employees (id, code, first_name, last_name, designation, status, joining_date, email, phone,
@@ -1333,10 +1531,10 @@ app.post('/api/v1/tours', authRequired, async (req, res, next) => {
     if (!employeeId || !fromCity || !toCity || !fromDate || !toDate || !advanceRupees) {
       return res.status(400).json({ error: { code: 'VALIDATION', message: 'Required fields missing' } });
     }
-    const [maxRow] = await query<{ n: number }>(
+    const [maxRow] = await query<{ n: number | string | null }>(
       'SELECT COALESCE(MAX(CAST(SUBSTRING(code, 8) AS UNSIGNED)), 0) AS n FROM tours'
     );
-    const code = `CK-TOUR-${String((maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
+    const code = `CK-TOUR-${String(Number(maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
     const id = ulid();
     await query(
       `INSERT INTO tours (id, code, employee_id, from_city, to_city, from_date, to_date, advance, expense, status, itinerary)

@@ -23,6 +23,7 @@ import {
   ShiftMasterPage,
   SalaryGradeMasterPage,
   SkillsMasterPage,
+  TrainingModuleMasterPage,
   CompanyMasterPage,
   InterviewTemplateMasterPage,
   GiveawayTemplateMasterPage,
@@ -48,6 +49,7 @@ export default function App() {
             <Route path="/masters/shifts" element={<ShiftMasterPage />} />
             <Route path="/masters/salary-grades" element={<SalaryGradeMasterPage />} />
             <Route path="/masters/skills" element={<SkillsMasterPage />} />
+            <Route path="/masters/training-modules" element={<TrainingModuleMasterPage />} />
             <Route path="/masters/companies" element={<CompanyMasterPage />} />
             <Route path="/masters/interview-templates" element={<InterviewTemplateMasterPage />} />
             <Route path="/masters/giveaways" element={<GiveawayTemplateMasterPage />} />

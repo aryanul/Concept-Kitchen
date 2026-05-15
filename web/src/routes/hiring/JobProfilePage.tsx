@@ -6,6 +6,8 @@ import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { JobProfileForm, type StepData } from './JobProfileForm';
 import { JobProfileDrawer } from '../../components/hiring/JobProfileDrawer';
+import { DesignationPickerModal, type Designation } from '../../components/hiring/jp/DesignationPickerModal';
+import type { JpLocation } from '../../components/hiring/jp/LocationApplicableEditor';
 
 type JobProfile = {
   id: string; jp_no: string; title: string; alternate_title: string | null;
@@ -15,13 +17,30 @@ type JobProfile = {
   open_vacancies: number | string; created_at: string;
   form_data?: StepData | string | null;
 };
+type JpLocationRow = {
+  id: string; branch_id: string; location_id: string | null; positions: number;
+  branch_name: string; location_name: string | null;
+};
+type JpShiftRow = {
+  id: string; shift_id: string; shift_code: string; shift_name: string;
+  start_time: string; end_time: string;
+};
+type JpInterviewTemplateRow = {
+  id: string; interview_template_id: string; title: string; description: string | null;
+};
 type JobProfileDetail = JobProfile & {
+  designation_id?: string | null;
+  designation_name?: string | null;
+  division_name?: string | null;
   location_applicable?: string | null;
   work_shift?: string | null;
   reporting_dept_id?: string | null;
   reporting_department_name?: string | null;
   reporting_division?: string | null;
   reporting_designation?: string | null;
+  locations?: JpLocationRow[];
+  shifts?: JpShiftRow[];
+  interview_templates?: JpInterviewTemplateRow[];
 };
 type Dept = { id: string; name: string };
 type Meta = { page: number; pageSize: number; total: number };
@@ -40,6 +59,8 @@ export function JobProfilePage() {
   const [editTarget, setEditTarget] = useState<JobProfile | null>(null);
   const [editLoading, setEditLoading] = useState(false);
   const [viewId, setViewId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickedDesignation, setPickedDesignation] = useState<Designation | null>(null);
   const [profiles,  setProfiles]  = useState<JobProfile[]>([]);
   const [depts,     setDepts]     = useState<Dept[]>([]);
   const [meta,      setMeta]      = useState<Meta>({ page: 1, pageSize: 5, total: 0 });
@@ -65,9 +86,18 @@ export function JobProfilePage() {
     api.get<{ data: Dept[] }>('/departments').then((r) => setDepts(r.data.data)).catch(() => {});
   }, []);
 
-  const handleSaved = () => { setMode('list'); setEditTarget(null); fetchProfiles(); };
-  const handleCancel = () => { setMode('list'); setEditTarget(null); };
+  const handleSaved = () => { setMode('list'); setEditTarget(null); setPickedDesignation(null); fetchProfiles(); };
+  const handleCancel = () => { setMode('list'); setEditTarget(null); setPickedDesignation(null); };
 
+  const createInitialData: Partial<StepData> | undefined = pickedDesignation
+    ? {
+        designationId: pickedDesignation.id,
+        departmentId: pickedDesignation.department_id ?? '',
+        division: pickedDesignation.division_name ?? '',
+        designation: pickedDesignation.name,
+        jobTitle: pickedDesignation.name,
+      }
+    : undefined;
   const editInitialData = buildInitialData(editTarget);
 
   const startEdit = (id: string) => {
@@ -87,7 +117,7 @@ export function JobProfilePage() {
       <PageHeader title="Hiring Management" subtitle="Manage Hiring and Designation Requisition"
         actions={
           mode === 'list'
-            ? <Button icon={Plus} variant="primary" onClick={() => setMode('create')}>+ Add Designation</Button>
+            ? <Button icon={Plus} variant="primary" onClick={() => setPickerOpen(true)}>+ Add Designation</Button>
             : null
         } />
 
@@ -119,7 +149,7 @@ export function JobProfilePage() {
           ) : (
             <JobProfileForm
               editId={editTarget?.id ?? null}
-              initialData={editInitialData}
+              initialData={mode === 'create' ? createInitialData : editInitialData}
               depts={depts}
               onSaved={handleSaved}
               onCancel={handleCancel}
@@ -202,37 +232,104 @@ export function JobProfilePage() {
           startEdit(id);
         }}
       />
+
+      <DesignationPickerModal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onPicked={(d) => {
+          setPickedDesignation(d);
+          setPickerOpen(false);
+          setMode('create');
+        }}
+      />
     </div>
   );
 }
 
+// Default categories that align with the Skill Master seed; used to migrate
+// pre-Module-5 form_data rows that only had { label, notes }.
+const DEPT_ALIGNMENT_DEFAULTS: { label: string; category: string }[] = [
+  { label: 'Department Functions',          category: 'Department Functions' },
+  { label: 'Documents Used',                category: 'Documents' },
+  { label: 'Tools & Software Used',         category: 'Tools & Software' },
+  { label: 'Cross-Department Interaction',  category: 'Cross-Department Interaction' },
+];
+
+function normalizeDeptAlignments(raw: unknown): { label: string; category: string; selections: string[] }[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return DEPT_ALIGNMENT_DEFAULTS.map((d) => ({ ...d, selections: [] }));
+  }
+  return raw.map((row: Record<string, unknown>, i) => {
+    const fallback = DEPT_ALIGNMENT_DEFAULTS[i] ?? { label: `Section ${i + 1}`, category: 'Department Functions' };
+    return {
+      label: typeof row?.label === 'string' ? row.label : fallback.label,
+      category: typeof row?.category === 'string' ? row.category : fallback.category,
+      selections: Array.isArray(row?.selections)
+        ? row.selections.filter((s) => typeof s === 'string') as string[]
+        : [],
+    };
+  });
+}
+
 function parseFormData(raw: JobProfile['form_data']): Partial<StepData> | undefined {
+  let parsed: Record<string, unknown> | null = null;
   if (!raw) return undefined;
   if (typeof raw === 'string') {
-    try {
-      return JSON.parse(raw) as Partial<StepData>;
-    } catch {
-      return undefined;
-    }
+    try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch { return undefined; }
+  } else {
+    parsed = raw as Record<string, unknown>;
   }
-  return raw as Partial<StepData>;
+  if (!parsed) return undefined;
+  // Migrate pre-Module-5 deptAlignments shape ({label, notes}) to {label, category, selections}.
+  if ('deptAlignments' in parsed) {
+    parsed.deptAlignments = normalizeDeptAlignments(parsed.deptAlignments);
+  }
+  return parsed as Partial<StepData>;
 }
 
 function buildInitialData(profile: JobProfile | null): Partial<StepData> | undefined {
   if (!profile) return undefined;
+  const detail = profile as JobProfileDetail;
+
+  // Hydrate child-row data (always from server, authoritative)
+  const locations: JpLocation[] = (detail.locations ?? []).map((l) => ({
+    branchId: l.branch_id,
+    locationId: l.location_id,
+    positions: Number(l.positions) || 1,
+    branchName: l.branch_name,
+    locationName: l.location_name ?? undefined,
+  }));
+  const workShifts: string[] = (detail.shifts ?? []).map((s) => s.shift_id);
+  const interviewTemplateIds: string[] = (detail.interview_templates ?? []).map((t) => t.interview_template_id);
+
   const fromForm = parseFormData(profile.form_data);
-  if (fromForm) return fromForm;
+  if (fromForm) {
+    return {
+      ...fromForm,
+      // Always trust server-side child rows over stale form_data snapshot
+      locations,
+      workShifts,
+      interviewTemplateIds,
+      // Server may have updated dept/div/desig if the designation was re-linked
+      designationId: detail.designation_id ?? fromForm.designationId ?? '',
+      departmentId: profile.department_id ?? fromForm.departmentId ?? '',
+      division: profile.division ?? fromForm.division ?? '',
+      designation: profile.designation ?? fromForm.designation ?? '',
+    };
+  }
   return {
     jobTitle: profile.title ?? '',
     alternateTitle: profile.alternate_title ?? '',
+    designationId: detail.designation_id ?? '',
     departmentId: profile.department_id ?? '',
     division: profile.division ?? '',
     designation: profile.designation ?? '',
-    locationApplicable: (profile as JobProfileDetail).location_applicable ?? '',
-    reportingDept: (profile as JobProfileDetail).reporting_dept_id ?? '',
-    reportingDivision: (profile as JobProfileDetail).reporting_division ?? '',
-    reportingDesignation: (profile as JobProfileDetail).reporting_designation ?? '',
-    workShift: (profile as JobProfileDetail).work_shift ?? '',
+    locations,
+    workShifts,
+    interviewTemplateIds,
+    reportingDept: detail.reporting_dept_id ?? '',
+    reportingDivision: detail.reporting_division ?? '',
+    reportingDesignation: detail.reporting_designation ?? '',
   };
 }
 

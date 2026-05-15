@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronRight,
   Clock, CalendarDays, ClipboardCheck, Wallet, FileText, Banknote,
   TrendingUp, CalendarClock, Plane, Gift,
-  Building2, LocateFixed, LayoutGrid, Shield, ClipboardList, Sparkles,
+  Building2, LocateFixed, LayoutGrid, Shield, ClipboardList, Sparkles, BookOpen,
   type LucideIcon,
 } from 'lucide-react';
 import { Avatar } from '../ui/Avatar';
@@ -32,6 +32,7 @@ const NAV: Item[] = [
       { id: 'masters-shifts', path: '/masters/shifts', label: 'Shift Master', icon: Clock },
       { id: 'masters-salary-grades', path: '/masters/salary-grades', label: 'Salary Grades', icon: Wallet },
       { id: 'masters-skills', path: '/masters/skills', label: 'Skill Master', icon: Sparkles },
+      { id: 'masters-training-modules', path: '/masters/training-modules', label: 'Training Modules', icon: BookOpen },
       { id: 'masters-companies', path: '/masters/companies', label: 'Company Master', icon: Building2 },
       { id: 'masters-interview-templates', path: '/masters/interview-templates', label: 'Interview Templates', icon: ClipboardList },
       { id: 'masters-giveaways', path: '/masters/giveaways', label: 'Giveaways', icon: Gift },

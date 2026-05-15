@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
 type Props = {
@@ -20,7 +21,9 @@ export function Modal({ open, onClose, title, subtitle, width = 520, children, f
 
   if (!open) return null;
 
-  return (
+  // Render via portal so the modal escapes any <label>/form ancestors that would
+  // otherwise intercept clicks on form controls inside it.
+  return createPortal(
     <div
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
       style={{
@@ -60,6 +63,7 @@ export function Modal({ open, onClose, title, subtitle, width = 520, children, f
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

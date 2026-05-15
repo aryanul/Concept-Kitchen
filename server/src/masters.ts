@@ -9,13 +9,15 @@ function parseBool(value: unknown): number {
 }
 
 async function nextCode(table: string, column: string, prefix: string, digits = 3): Promise<string> {
-  const rows = await query<{ n: number }>(
+  // CAST AS UNSIGNED returns a string from the mysql2 driver — explicit Number()
+  // coerce, or `(string) + 1` becomes string concatenation (e.g. "73"+1 = "731").
+  const rows = await query<{ n: number | string | null }>(
     `SELECT COALESCE(MAX(CAST(SUBSTRING(${column}, ?) AS UNSIGNED)), 0) AS n
      FROM ${table}
      WHERE ${column} LIKE ?`,
     [prefix.length + 1, `${prefix}%`]
   );
-  return `${prefix}${String((rows[0]?.n ?? 0) + 1).padStart(digits, '0')}`;
+  return `${prefix}${String(Number(rows[0]?.n ?? 0) + 1).padStart(digits, '0')}`;
 }
 
 function updateSets(body: Record<string, unknown>, allowed: Array<{ key: string; column: string }>) {
@@ -519,6 +521,129 @@ export function registerMasterRoutes(app: Application) {
   app.delete('/api/v1/skills/:id', authRequired, async (req, res, next) => {
     try {
       await query('DELETE FROM skills WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Training Modules
+  app.get('/api/v1/training-modules', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query('SELECT * FROM training_modules ORDER BY name');
+      res.json({ data: rows });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post('/api/v1/training-modules', authRequired, async (req, res, next) => {
+    try {
+      const { code, name, description, coverImageUrl, chapterCount, durationHours, isActive } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
+      const id = ulid();
+      const tmCode = typeof code === 'string' && code.trim() ? code.trim() : await nextCode('training_modules', 'code', 'TM');
+      await query(
+        `INSERT INTO training_modules (id, code, name, description, cover_image_url, chapter_count, duration_hours, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, tmCode, name, description || null, coverImageUrl || null,
+         Math.max(0, Number(chapterCount) || 0),
+         durationHours != null && durationHours !== '' ? Number(durationHours) : null,
+         parseBool(isActive ?? true)]
+      );
+      res.status(201).json({ data: { id, code: tmCode } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.patch('/api/v1/training-modules/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'code', column: 'code' },
+        { key: 'name', column: 'name' },
+        { key: 'description', column: 'description' },
+        { key: 'coverImageUrl', column: 'cover_image_url' },
+        { key: 'chapterCount', column: 'chapter_count' },
+        { key: 'durationHours', column: 'duration_hours' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE training_modules SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.delete('/api/v1/training-modules/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM training_modules WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ATM Task Catalogue (Auto Task Mapping)
+  app.get('/api/v1/atm-tasks', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query('SELECT * FROM atm_task_catalogue ORDER BY category, sort_order, task');
+      res.json({ data: rows });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post('/api/v1/atm-tasks', authRequired, async (req, res, next) => {
+    try {
+      const { code, task, description, category, sortOrder, isActive } = req.body ?? {};
+      if (!task) return res.status(400).json({ error: { code: 'VALIDATION', message: 'task required' } });
+      const id = ulid();
+      const taskCode = typeof code === 'string' && code.trim() ? code.trim() : await nextCode('atm_task_catalogue', 'code', 'ATM');
+      await query(
+        `INSERT INTO atm_task_catalogue (id, code, task, description, category, sort_order, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [id, taskCode, task, description || null, category || null,
+         Number(sortOrder) || 0, parseBool(isActive ?? true)]
+      );
+      res.status(201).json({ data: { id, code: taskCode } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.patch('/api/v1/atm-tasks/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'code', column: 'code' },
+        { key: 'task', column: 'task' },
+        { key: 'description', column: 'description' },
+        { key: 'category', column: 'category' },
+        { key: 'sortOrder', column: 'sort_order' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE atm_task_catalogue SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.delete('/api/v1/atm-tasks/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM atm_task_catalogue WHERE id = ?', [req.params.id]);
       res.json({ data: { id: req.params.id } });
     } catch (err) {
       next(err);
