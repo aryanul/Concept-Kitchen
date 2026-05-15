@@ -277,7 +277,7 @@ function parseFormData(raw: JobProfile['form_data']): Partial<StepData> | undefi
   if (typeof raw === 'string') {
     try { parsed = JSON.parse(raw) as Record<string, unknown>; } catch { return undefined; }
   } else {
-    parsed = raw as Record<string, unknown>;
+    parsed = raw as unknown as Record<string, unknown>;
   }
   if (!parsed) return undefined;
   // Migrate pre-Module-5 deptAlignments shape ({label, notes}) to {label, category, selections}.

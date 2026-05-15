@@ -17,7 +17,6 @@ import { NestConnectImportModal } from '../../components/hiring/jp/NestConnectIm
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type Dept = { id: string; name: string };
-type Shift = { id: string; code: string; name: string; start_time: string; end_time: string };
 type Division = { id: string; code: string | null; name: string };
 type DesignationOpt = { id: string; code: string | null; name: string; department_id: string | null };
 
@@ -152,7 +151,6 @@ export function JobProfileForm({
   const [activeStep, setActiveStep] = useState(1);
   const [data, setData] = useState<StepData>({ ...DEFAULT_STEP_DATA, ...initialData });
   const [saving, setSaving] = useState(false);
-  const [shifts, setShifts] = useState<Shift[]>([]);
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [allDesignations, setAllDesignations] = useState<DesignationOpt[]>([]);
 
@@ -204,7 +202,6 @@ export function JobProfileForm({
   };
 
   useEffect(() => {
-    api.get<{ data: Shift[] }>('/shifts').then((r) => setShifts(r.data.data)).catch(() => {});
     api.get<{ data: Division[] }>('/divisions').then((r) => setDivisions(r.data.data)).catch(() => {});
     api.get<{ data: DesignationOpt[] }>('/designations').then((r) => setAllDesignations(r.data.data)).catch(() => {});
   }, []);
