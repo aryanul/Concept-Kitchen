@@ -3,7 +3,7 @@
 // Add (manual upload), Fetch (stub — would pull from LinkedIn/Naukri/etc.),
 // View, plus per-row actions Screen / Reject / Hold / Tag.
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Plus, RefreshCcw, Search, MoreHorizontal, Tag as TagIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
