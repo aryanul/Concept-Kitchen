@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Building2, LayoutGrid, LocateFixed, Shield, Sparkles, Wallet, CalendarDays, ClipboardList, BookOpen } from 'lucide-react';
+import { Building2, LayoutGrid, LocateFixed, Shield, Sparkles, Wallet, CalendarDays, ClipboardList, BookOpen, ListChecks, Tag, Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { StatusPill } from '../../components/ui/StatusPill';
+import { Button } from '../../components/ui/Button';
+import { Modal } from '../../components/ui/Modal';
 import { inrPaiseToRupeesShort } from '../../lib/format';
 import { MasterCrudPage } from '../../components/masters/MasterCrudPage';
 import { HolidaysPage } from '../holidays/HolidaysPage';
@@ -49,6 +51,8 @@ export function MastersHomePage() {
     { title: 'Interview Templates', desc: 'Hiring template library', to: '/masters/interview-templates', icon: ClipboardList },
     { title: 'Giveaways', desc: 'Onboarding giveaway templates', to: '/masters/giveaways', icon: GiftIcon },
     { title: 'Holidays', desc: 'Holiday master', to: '/holidays', icon: CalendarDays },
+    { title: 'Lookups', desc: 'Hiring statuses, sources, modes etc.', to: '/masters/lookups', icon: ListChecks },
+    { title: 'Tags', desc: 'Applicant tag library', to: '/masters/tags', icon: Tag },
   ];
 
   return (
@@ -503,6 +507,216 @@ export function DddMasterPage() {
 
 export function HolidayMasterPage() {
   return <HolidaysPage />;
+}
+
+// ─── Lookup Master (generic enum sets used by Vacancy/Listing) ─────────────
+type LookupCategory = { id: string; code: string; name: string; description: string | null; is_system: number | boolean };
+type LookupValue = {
+  id: string; category_id: string; category_code?: string; code: string; label: string;
+  color: string | null; sort_order: number | string; is_default: number | boolean; is_active: number | boolean;
+};
+type LookupTag = { id: string; name: string; color: string | null; description: string | null; is_active: number | boolean };
+
+export function LookupMasterPage() {
+  const [cats, setCats] = useState<LookupCategory[]>([]);
+  const [activeCat, setActiveCat] = useState<string>('');
+  const [values, setValues] = useState<LookupValue[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editing, setEditing] = useState<LookupValue | null>(null);
+  const [form, setForm] = useState({ code: '', label: '', color: '', sortOrder: 0, isDefault: false, isActive: true });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.get<{ data: LookupCategory[] }>('/lookup-categories')
+      .then((r) => {
+        setCats(r.data.data);
+        if (r.data.data.length) setActiveCat((cur) => cur || r.data.data[0].code);
+      })
+      .catch(() => {});
+  }, []);
+
+  const fetchValues = (catCode: string) => {
+    if (!catCode) return;
+    setLoading(true);
+    api.get<{ data: LookupValue[] }>('/lookups', { params: { category: catCode } })
+      .then((r) => setValues(r.data.data))
+      .catch(() => setValues([]))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { if (activeCat) fetchValues(activeCat); }, [activeCat]);
+
+  const openCreate = () => {
+    setEditing(null);
+    setForm({ code: '', label: '', color: '', sortOrder: (values[values.length - 1]?.sort_order ? Number(values[values.length - 1].sort_order) + 10 : 10), isDefault: false, isActive: true });
+    setEditOpen(true);
+  };
+  const openEdit = (row: LookupValue) => {
+    setEditing(row);
+    setForm({
+      code: row.code, label: row.label, color: row.color ?? '',
+      sortOrder: Number(row.sort_order), isDefault: Boolean(Number(row.is_default)), isActive: Boolean(Number(row.is_active)),
+    });
+    setEditOpen(true);
+  };
+  const save = async () => {
+    if (!form.code.trim() || !form.label.trim()) { window.alert('Code and label are required'); return; }
+    setSaving(true);
+    try {
+      if (editing) {
+        await api.patch(`/lookups/${editing.id}`, form);
+      } else {
+        await api.post('/lookups', { ...form, categoryCode: activeCat });
+      }
+      setEditOpen(false);
+      fetchValues(activeCat);
+    } catch { window.alert('Save failed'); }
+    finally { setSaving(false); }
+  };
+  const remove = async (row: LookupValue) => {
+    if (!window.confirm(`Delete "${row.label}"?`)) return;
+    try { await api.delete(`/lookups/${row.id}`); fetchValues(activeCat); }
+    catch { window.alert('Delete failed'); }
+  };
+
+  const cat = cats.find((c) => c.code === activeCat);
+
+  return (
+    <div>
+      <PageHeader title="Lookup Master" subtitle="Centrally edit enumerated values: listing statuses, applicant sources, interview modes etc." />
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+        {cats.map((c) => (
+          <button key={c.id} onClick={() => setActiveCat(c.code)}
+            style={{
+              padding: '7px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+              background: activeCat === c.code ? 'var(--ck-ink)' : 'transparent',
+              color: activeCat === c.code ? '#fff' : 'var(--ck-ink)',
+              border: `1px solid ${activeCat === c.code ? 'var(--ck-ink)' : 'var(--ck-line)'}`,
+            }}>
+            {c.name}
+          </button>
+        ))}
+      </div>
+
+      <Card padding={0}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--ck-line)' }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>{cat?.name ?? '—'}</div>
+            <div style={{ fontSize: 12.5, color: 'var(--ck-muted)' }}>{cat?.description ?? ''}</div>
+          </div>
+          <Button icon={Plus} variant="primary" onClick={openCreate} disabled={!cat}>Add</Button>
+        </div>
+        <div className="ck-table-wrap">
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: 'var(--ck-bg)', textAlign: 'left' }}>
+                {['CODE','LABEL','COLOR','SORT','DEFAULT','ACTIVE','ACTIONS'].map((h) => (
+                  <th key={h} style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {loading && <tr><td colSpan={7} style={{ padding: 24, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</td></tr>}
+              {!loading && values.length === 0 && <tr><td colSpan={7} style={{ padding: 24, textAlign: 'center', color: 'var(--ck-muted)' }}>No values yet.</td></tr>}
+              {values.map((row) => (
+                <tr key={row.id} style={{ borderTop: '1px solid var(--ck-line)' }}>
+                  <td style={{ padding: '10px 16px' }}><Mono>{row.code}</Mono></td>
+                  <td style={{ padding: '10px 16px' }}><Strong>{row.label}</Strong></td>
+                  <td style={{ padding: '10px 16px' }}>
+                    {row.color ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ width: 14, height: 14, borderRadius: 4, background: row.color, border: '1px solid var(--ck-line)' }} />
+                        <Mono>{row.color}</Mono>
+                      </span>
+                    ) : '—'}
+                  </td>
+                  <td style={{ padding: '10px 16px' }}>{Number(row.sort_order)}</td>
+                  <td style={{ padding: '10px 16px' }}>{Number(row.is_default) ? '✓' : ''}</td>
+                  <td style={{ padding: '10px 16px' }}><StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /></td>
+                  <td style={{ padding: '10px 16px' }}>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <Button size="sm" variant="ghost" onClick={() => openEdit(row)}>Edit</Button>
+                      <Button size="sm" variant="ghost" onClick={() => remove(row)}>Delete</Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={editing ? 'Edit lookup value' : 'Add lookup value'} width={460}
+        footer={<>
+          <Button onClick={() => setEditOpen(false)}>Cancel</Button>
+          <Button variant="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+        </>}>
+        <div className="ck-form-grid-2">
+          <LF label="Code *"><input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="In Progress" style={lfInp} /></LF>
+          <LF label="Label *"><input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="Display label" style={lfInp} /></LF>
+          <LF label="Color (hex)"><input value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} placeholder="#888888" style={lfInp} /></LF>
+          <LF label="Sort order"><input type="number" value={form.sortOrder} onChange={(e) => setForm({ ...form, sortOrder: Number(e.target.value) || 0 })} style={lfInp} /></LF>
+          <LF label="Default" full>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>
+              <input type="checkbox" checked={form.isDefault} onChange={(e) => setForm({ ...form, isDefault: e.target.checked })} /> Default for new records
+            </label>
+          </LF>
+          <LF label="Active" full>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>
+              <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} /> Visible in pickers
+            </label>
+          </LF>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+const lfInp: React.CSSProperties = { width: '100%', height: 38, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' };
+function LF({ label, full, children }: { label: string; full?: boolean; children: React.ReactNode }) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 5, gridColumn: full ? '1 / -1' : 'auto' }}>
+      <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--ck-ink-soft)' }}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+export function TagMasterPage() {
+  return (
+    <MasterCrudPage<LookupTag>
+      title="Tag Master"
+      subtitle="Define tags for marking applicants (Hot Lead, Cultural Fit, etc.)."
+      endpoint="/tags"
+      columns={[
+        { header: 'Name', render: (row) => (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {row.color && <span style={{ width: 12, height: 12, borderRadius: 4, background: row.color, border: '1px solid var(--ck-line)' }} />}
+            <Strong>{row.name}</Strong>
+          </span>
+        )},
+        { header: 'Color',       render: (row) => row.color ? <Mono>{row.color}</Mono> : '—' },
+        { header: 'Description', render: (row) => row.description ?? '—' },
+        { header: 'Status',      render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+      ]}
+      buildFields={() => [
+        { name: 'name',        label: 'Name',        type: 'text', required: true, placeholder: 'Hot Lead' },
+        { name: 'color',       label: 'Color (hex)', type: 'text', placeholder: '#dc2626' },
+        { name: 'description', label: 'Description', type: 'textarea', span: true },
+        { name: 'isActive',    label: 'Active',      type: 'checkbox', span: true },
+      ]}
+      rowToValues={(row) => row
+        ? { name: row.name, color: row.color ?? '', description: row.description ?? '', isActive: Boolean(Number(row.is_active)) }
+        : { name: '', color: '', description: '', isActive: true }}
+      buildPayload={(values) => ({
+        name: values.name,
+        color: values.color || undefined,
+        description: values.description || undefined,
+        isActive: Boolean(values.isActive),
+      })}
+      searchKeys={['name', 'description']}
+    />
+  );
 }
 
 function Strong({ children }: { children: React.ReactNode }) {

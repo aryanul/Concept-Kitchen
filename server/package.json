@@ -17,7 +17,8 @@
     "seed:skills": "tsx scripts/seed-skills.ts",
     "seed:training-modules": "tsx scripts/seed-training-modules.ts",
     "seed:atm-tasks": "tsx scripts/seed-atm-tasks.ts",
-    "seed:jp-masters": "tsx scripts/seed-jp-masters.ts"
+    "seed:jp-masters": "tsx scripts/seed-jp-masters.ts",
+    "seed:lookups": "tsx scripts/seed-lookups.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

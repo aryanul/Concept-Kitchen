@@ -1,6 +1,17 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { Plus, Search, SlidersHorizontal, Briefcase, Eye,
-  CheckCircle2, XCircle, ArrowRight, UserPlus } from 'lucide-react';
+// Vacancy & Job Listing management.
+//
+// • Tab "Vacancy"      → read-only derived view of (job_profile × branch × location)
+//   slots, one row per JP location. Row action "Create Job Listing" opens a modal
+//   that writes a `job_listings` row (positions defaulting to the JP slot's
+//   positions). "Prospects" is a stub for now.
+//
+// • Tab "Job Listing"  → list of created job_listings with Sr No, JL ID,
+//   hiring_status, status, deadline, recruiter. Designation cell is hyperlinked
+//   to /hiring/listings/:id (detail page).
+
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
+import { Search, SlidersHorizontal, Briefcase, Users, UserSearch } from 'lucide-react';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -10,102 +21,98 @@ import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
-import { Drawer } from '../../components/ui/Drawer';
-import { Avatar } from '../../components/ui/Avatar';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Vacancy = {
-  id: string; company_name: string; job_id: string | null; location: string | null;
-  division: string | null; positions: number; filled: number; status: string;
-  listing_status: string; notes: string | null; created_at: string;
-  job_title: string; designation: string | null; job_profile_id: string;
-  branch_name: string; branch_city: string; branch_id: string;
-  department_name: string; hiring_status: string; applicant_count: number | string;
-};
-type Applicant = {
-  id: string; full_name: string; email: string; phone: string | null;
-  current_company: string | null; experience_years: number | string | null;
-  notes: string | null; stage: string; applied_at: string;
-};
-type JobProfile = { id: string; designation: string | null; title: string };
-type Branch = { id: string; name: string };
-
-const STAGES = [
-  { key: 'applied',   label: 'Applied',   color: 'oklch(0.55 0.14 250)', bg: 'oklch(0.95 0.04 250)' },
-  { key: 'screening', label: 'Screening', color: 'oklch(0.55 0.15 75)',  bg: 'oklch(0.96 0.06 75)'  },
-  { key: 'interview', label: 'Interview', color: 'oklch(0.55 0.14 280)', bg: 'oklch(0.95 0.04 280)' },
-  { key: 'offer',     label: 'Offer',     color: 'oklch(0.45 0.16 340)', bg: 'oklch(0.95 0.06 340)' },
-  { key: 'hired',     label: 'Hired',     color: 'oklch(0.42 0.12 145)', bg: 'oklch(0.95 0.05 145)' },
-  { key: 'rejected',  label: 'Rejected',  color: 'oklch(0.45 0.16 25)',  bg: 'oklch(0.95 0.05 25)'  },
-];
-const STAGE_MAP = new Map(STAGES.map((s) => [s.key, s]));
-const PIPELINE_ORDER = ['applied', 'screening', 'interview', 'offer'];
-
-const LISTING_STATUS_STYLE: Record<string, { background: string; color: string; border: string }> = {
-  Published: { background: '#222', color: '#fff', border: '1px solid #222' },
-  Open:       { background: 'transparent', color: '#444', border: '1px solid #888' },
-  Draft:      { background: '#f3f3f3', color: '#888', border: '1px solid #ddd' },
+  id: string;
+  job_profile_id: string; branch_id: string; location_id: string | null;
+  positions: number | string;
+  job_title: string; designation: string | null; designation_id: string | null;
+  division: string | null; department_id: string; department_name: string;
+  branch_name: string; branch_city: string | null;
+  location_name: string | null; location_city: string | null;
+  company_name: string;
+  listing_count: number | string;
 };
 
-const postSchema = z.object({
-  jobProfileId: z.string().min(1, 'Select a job profile'),
-  branchId:     z.string().min(1, 'Select a branch'),
-  positions:    z.coerce.number().int().positive(),
-  companyName:  z.string().default('Concept Kitchen'),
-  location:     z.string().optional(),
-  division:     z.string().optional(),
-  listingStatus: z.string().default('Draft'),
-  notes:        z.string().optional(),
-});
-const applicantSchema = z.object({
-  fullName:        z.string().min(1, 'Required'),
-  email:           z.string().email('Valid email required'),
-  phone:           z.string().optional(),
-  currentCompany:  z.string().optional(),
-  experienceYears: z.coerce.number().optional(),
-  notes:           z.string().optional(),
-});
-type PostForm = z.infer<typeof postSchema>;
-type AppForm  = z.infer<typeof applicantSchema>;
+type JobListing = {
+  id: string; listing_no: string; sr_no: number | string;
+  positions: number | string; filled: number | string;
+  company_name: string; status: string; hiring_status: string;
+  published_at: string | null; deadline_at: string | null;
+  created_at: string;
+  job_profile_id: string; branch_id: string; location_id: string | null;
+  recruiter_user_id: string | null;
+  job_title: string; designation: string | null; division: string | null;
+  department_name: string;
+  branch_name: string; branch_city: string | null;
+  location_name: string | null; location_city: string | null;
+  recruiter_email: string | null;
+  recruiter_first_name: string | null; recruiter_last_name: string | null;
+  applicant_count: number | string;
+};
+
+type Lookup = { id: string; code: string; label: string; color: string | null; sort_order: number | string; is_default: number | boolean; is_active: number | boolean };
+type Department = { id: string; name: string };
+type UserRow = { id: string; email: string; first_name: string | null; last_name: string | null };
+
 const inp: React.CSSProperties = { width: '100%', height: 38, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' };
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 export function VacanciesPage() {
-  const [vacancies,   setVacancies]   = useState<Vacancy[]>([]);
-  const [jobProfiles, setJobProfiles] = useState<JobProfile[]>([]);
-  const [branches,    setBranches]    = useState<Branch[]>([]);
-  const [loading,     setLoading]     = useState(true);
-  const [tab,         setTab]         = useState<'vacancy' | 'listing'>('vacancy');
-  const [deptFilter,  setDeptFilter]  = useState('');
-  const [search,      setSearch]      = useState('');
-  const [addOpen,     setAddOpen]     = useState(false);
-  const [selected,    setSelected]    = useState<Vacancy | null>(null);
+  const [tab, setTab] = useState<'vacancy' | 'listing'>('vacancy');
+  const [vacancies, setVacancies] = useState<Vacancy[]>([]);
+  const [listings, setListings]   = useState<JobListing[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [search, setSearch]       = useState('');
+  const [deptFilter, setDeptFilter] = useState('');
+  const [departments, setDepartments] = useState<Department[]>([]);
+
+  // Lookups (so picklists are always master-driven)
+  const [listingStatuses, setListingStatuses] = useState<Lookup[]>([]);
+  const [hiringStatuses, setHiringStatuses]   = useState<Lookup[]>([]);
+  const [users, setUsers] = useState<UserRow[]>([]);
+
+  // Modals
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createTarget, setCreateTarget] = useState<Vacancy | null>(null);
+  const [prospectsTarget, setProspectsTarget] = useState<Vacancy | null>(null);
 
   const fetchVacancies = () => {
-    api.get<{ data: Vacancy[] }>('/vacancies')
-      .then((r) => setVacancies(r.data.data)).catch(() => {}).finally(() => setLoading(false));
+    setLoading(true);
+    api.get<{ data: Vacancy[] }>('/vacancies', { params: { search, departmentId: deptFilter || undefined } })
+      .then((r) => setVacancies(r.data.data))
+      .catch(() => setVacancies([]))
+      .finally(() => setLoading(false));
   };
+  const fetchListings = () => {
+    api.get<{ data: JobListing[] }>('/job-listings', { params: { search, departmentId: deptFilter || undefined } })
+      .then((r) => setListings(r.data.data))
+      .catch(() => setListings([]));
+  };
+
   useEffect(() => {
-    fetchVacancies();
-    Promise.all([api.get<{ data: JobProfile[] }>('/job-profiles'), api.get<{ data: Branch[] }>('/branches')])
-      .then(([jp, br]) => { setJobProfiles(jp.data.data); setBranches(br.data.data); }).catch(() => {});
+    api.get<{ data: Department[] }>('/departments').then((r) => setDepartments(r.data.data)).catch(() => {});
+    api.get<{ data: Lookup[] }>('/lookups', { params: { category: 'listing_status' } }).then((r) => setListingStatuses(r.data.data)).catch(() => {});
+    api.get<{ data: Lookup[] }>('/lookups', { params: { category: 'hiring_status' } }).then((r) => setHiringStatuses(r.data.data)).catch(() => {});
+    api.get<{ data: UserRow[] }>('/users').then((r) => setUsers(r.data.data)).catch(() => {});
   }, []);
 
-  const vForm = useForm<PostForm>({ resolver: zodResolver(postSchema), defaultValues: { companyName: 'Concept Kitchen', listingStatus: 'Draft' } });
-  const onPost = async (data: PostForm) => {
-    try { await api.post('/vacancies', data); toast.success('Vacancy posted'); vForm.reset({ companyName: 'Concept Kitchen', listingStatus: 'Draft' }); setAddOpen(false); fetchVacancies(); }
-    catch { toast.error('Failed'); }
-  };
+  useEffect(() => {
+    if (tab === 'vacancy') fetchVacancies();
+    else fetchListings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, search, deptFilter]);
 
-  const displayedV = vacancies.filter((v) => !deptFilter || v.department_name.toLowerCase().includes(deptFilter.toLowerCase()))
-    .filter((v) => !search || v.job_title?.toLowerCase().includes(search.toLowerCase()) || v.designation?.toLowerCase().includes(search.toLowerCase()));
-  const listed = displayedV.filter((v) => v.listing_status === 'Published' || v.listing_status === 'Open');
-  const totalPositions = displayedV.filter((v) => v.status === 'open').reduce((s, v) => s + v.positions, 0);
+  const onCreateClicked = (v: Vacancy) => { setCreateTarget(v); setCreateOpen(true); };
+
+  const totalPositions = useMemo(() => vacancies.reduce((s, v) => s + (Number(v.positions) || 0), 0), [vacancies]);
+  const publishedCount = useMemo(() => listings.filter((l) => l.status === 'Published').length, [listings]);
+  const openCount      = useMemo(() => listings.filter((l) => l.status === 'Open').length, [listings]);
 
   return (
     <div>
-      <PageHeader title="Hiring Management" subtitle="Manage Hiring and Designation Requisition"
-        actions={<Button icon={Plus} variant="primary" onClick={() => { vForm.reset({ companyName: 'Concept Kitchen', listingStatus: 'Draft' }); setAddOpen(true); }}>Post Vacancy</Button>} />
+      <PageHeader title="Hiring Management" subtitle="Manage hiring and designation requisition" />
 
       <Card padding={0}>
         {/* Tabs */}
@@ -114,147 +121,114 @@ export function VacanciesPage() {
           <TabBtn active={tab === 'listing'} onClick={() => setTab('listing')}>Job Listing</TabBtn>
         </div>
 
-        {/* Filters */}
+        {/* Header + filters */}
         <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--ck-line)' }}>
           <div style={{ marginBottom: 6 }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--ck-ink)' }}>
               {tab === 'vacancy' ? 'Vacancy Management' : 'Job Listings'}
             </div>
             <div style={{ fontSize: 12.5, color: 'var(--ck-muted)' }}>
-              {tab === 'vacancy' ? 'Auto-generated vacancies based on job profiles and requirements' : 'Active job postings and their hiring progress'}
+              {tab === 'vacancy'
+                ? 'Auto-derived from Job Profiles (one row per branch + location).'
+                : 'Open and published listings with hiring progress.'}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
             <div style={{ position: 'relative', flex: '1 1 280px', maxWidth: 420 }}>
               <Search size={14} style={{ position: 'absolute', left: 11, top: 12, color: 'var(--ck-muted)', pointerEvents: 'none' }} />
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={tab === 'vacancy' ? 'Search Vacancies....' : 'Search Job listings....'}
+              <input value={search} onChange={(e) => setSearch(e.target.value)}
+                placeholder={tab === 'vacancy' ? 'Search by designation, branch...' : 'Search by JL ID, designation, branch...'}
                 style={{ width: '100%', height: 36, padding: '0 12px 0 32px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 12.5, background: 'var(--ck-surface)' }} />
             </div>
             <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}
-              style={{ height: 36, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, background: 'var(--ck-surface)', fontSize: 12.5, minWidth: 160 }}>
-              <option value="">All Department</option>
+              style={{ height: 36, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, background: 'var(--ck-surface)', fontSize: 12.5, minWidth: 180 }}>
+              <option value="">All Departments</option>
+              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
             <Button variant="ghost" size="sm" icon={SlidersHorizontal}>Filters</Button>
             <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>
               {tab === 'vacancy'
-                ? `Total Vacancies: ${displayedV.length}  Positions: ${String(totalPositions).padStart(2, '0')}`
-                : `Active: ${listed.filter((v) => v.listing_status === 'Published').length}  Draft: ${vacancies.filter((v) => v.listing_status === 'Draft').length}  Positions: ${String(totalPositions).padStart(2, '0')}`}
+                ? `${vacancies.length} vacancies · ${totalPositions} positions`
+                : `${listings.length} listings · ${publishedCount} published · ${openCount} open`}
             </div>
           </div>
         </div>
 
-        {/* Tables */}
-        {tab === 'vacancy' ? (
-          <VacancyTable vacancies={displayedV} loading={loading} onSelect={setSelected} onVacancyChanged={fetchVacancies} />
-        ) : (
-          <ListingTable vacancies={listed.length > 0 ? listed : displayedV} loading={loading} onSelect={setSelected} />
-        )}
-
-        <div style={{ padding: '12px 16px', borderTop: '1px solid var(--ck-line)', fontSize: 12.5, color: 'var(--ck-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>Showing 1 to {Math.min(5, displayedV.length)} of {displayedV.length} results</span>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <Button size="sm" disabled>Previous</Button>
-            <button style={{ width: 32, height: 32, borderRadius: 6, border: '1px solid var(--ck-ink)', background: 'var(--ck-ink)', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>1</button>
-            <button style={{ width: 32, height: 32, borderRadius: 6, border: '1px solid var(--ck-line)', background: 'transparent', cursor: 'pointer', fontSize: 13 }}>2</button>
-            <Button size="sm">Next</Button>
-          </div>
-        </div>
+        {tab === 'vacancy'
+          ? <VacancyTable rows={vacancies} loading={loading} onCreate={onCreateClicked} onProspects={(v) => setProspectsTarget(v)} />
+          : <ListingTable rows={listings} loading={loading} listingStatuses={listingStatuses} hiringStatuses={hiringStatuses} />}
       </Card>
 
-      {/* Post vacancy modal */}
-      <Modal open={addOpen} onClose={() => { vForm.reset(); setAddOpen(false); }} title="Post Vacancy" width={520}
-        footer={<>
-          <Button onClick={() => { vForm.reset(); setAddOpen(false); }}>Cancel</Button>
-          <Button variant="primary" type="submit" form="vac-form" disabled={vForm.formState.isSubmitting}>
-            {vForm.formState.isSubmitting ? 'Posting…' : 'Post Vacancy'}
-          </Button>
-        </>}>
-        <form id="vac-form" onSubmit={vForm.handleSubmit(onPost)}>
-          <div className="ck-form-grid-2">
-            <F label="Job profile *" error={vForm.formState.errors.jobProfileId?.message} full>
-              <select {...vForm.register('jobProfileId')} style={inp}>
-                <option value="">Select job profile</option>
-                {jobProfiles.map((j) => <option key={j.id} value={j.id}>{j.designation ?? j.title}</option>)}
-              </select>
-            </F>
-            <F label="Branch *" error={vForm.formState.errors.branchId?.message}>
-              <select {...vForm.register('branchId')} style={inp}>
-                <option value="">Select branch</option>
-                {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
-            </F>
-            <F label="Positions *" error={vForm.formState.errors.positions?.message}>
-              <input type="number" min={1} {...vForm.register('positions')} style={inp} />
-            </F>
-            <F label="Company name">
-              <input {...vForm.register('companyName')} style={inp} />
-            </F>
-            <F label="Location">
-              <input {...vForm.register('location')} placeholder="City" style={inp} />
-            </F>
-            <F label="Division">
-              <input {...vForm.register('division')} placeholder="Software Development, etc." style={inp} />
-            </F>
-            <F label="Listing status" full>
-              <select {...vForm.register('listingStatus')} style={inp}>
-                <option value="Draft">Draft</option>
-                <option value="Open">Open</option>
-                <option value="Published">Published</option>
-              </select>
-            </F>
+      {createTarget && (
+        <CreateListingModal
+          open={createOpen}
+          target={createTarget}
+          users={users}
+          listingStatuses={listingStatuses}
+          hiringStatuses={hiringStatuses}
+          onClose={() => { setCreateOpen(false); setCreateTarget(null); }}
+          onCreated={() => { setCreateOpen(false); setCreateTarget(null); fetchVacancies(); if (tab === 'listing') fetchListings(); toast.success('Job Listing created'); }}
+        />
+      )}
+      {prospectsTarget && (
+        <Modal open onClose={() => setProspectsTarget(null)} title="Prospects" subtitle={prospectsTarget.designation ?? prospectsTarget.job_title} width={480}>
+          <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--ck-muted)' }}>
+            <UserSearch size={48} strokeWidth={1.4} style={{ display: 'block', margin: '0 auto 12px' }} />
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--ck-ink)', marginBottom: 4 }}>Prospects flow coming soon</div>
+            <div style={{ fontSize: 12.5 }}>This will surface talent-pool candidates matching this vacancy.</div>
           </div>
-        </form>
-      </Modal>
-
-      {selected && <ApplicantDrawer vacancy={selected} onClose={() => setSelected(null)} onChanged={fetchVacancies} />}
+        </Modal>
+      )}
     </div>
   );
 }
 
-// ─── Vacancy tab table ────────────────────────────────────────────────────────
-function VacancyTable({ vacancies, loading, onSelect, onVacancyChanged }: { vacancies: Vacancy[]; loading: boolean; onSelect: (v: Vacancy) => void; onVacancyChanged: () => void }) {
-  const close = async (id: string) => {
-    try { await api.patch(`/vacancies/${id}`, { status: 'closed' }); toast.success('Closed'); onVacancyChanged(); }
-    catch { toast.error('Failed'); }
-  };
+// ─── Vacancy table (derived view) ─────────────────────────────────────────────
+function VacancyTable({ rows, loading, onCreate, onProspects }: {
+  rows: Vacancy[]; loading: boolean; onCreate: (v: Vacancy) => void; onProspects: (v: Vacancy) => void;
+}) {
   return (
     <div className="ck-table-wrap">
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
         <thead>
           <tr style={{ background: 'var(--ck-bg)', textAlign: 'left' }}>
-            <th style={{ width: 40, padding: '10px 10px 10px 16px' }}><input type="checkbox" /></th>
-            {['COMPANY', 'BRANCH', 'LOCATION', 'DEPARTMENT', 'DIVISION', 'DESIGNATION', 'VACANCY', 'ACTION'].map((h) => (
+            {['COMPANY', 'BRANCH', 'LOCATION', 'DEPARTMENT', 'DIVISION', 'DESIGNATION', 'VACANCY', 'ACTIONS'].map((h) => (
               <th key={h} style={{ padding: '10px 12px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em' }}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {!loading && vacancies.length === 0 && (
-            <tr><td colSpan={9} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
-              No vacancies posted yet.
+          {!loading && rows.length === 0 && (
+            <tr><td colSpan={8} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
+              No vacancies yet. Add a Location Applicable row in a Job Profile to generate one.
             </td></tr>
           )}
-          {vacancies.map((v) => (
-            <tr key={v.id} style={{ borderTop: '1px solid var(--ck-line)' }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--ck-surface-alt)')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = '')}>
-              <td style={{ padding: '12px 10px 12px 16px' }}><input type="checkbox" /></td>
+          {rows.map((v) => (
+            <tr key={v.id} style={{ borderTop: '1px solid var(--ck-line)' }}>
               <td style={{ padding: '12px', fontWeight: 600, color: 'var(--ck-ink)' }}>{v.company_name}</td>
               <td style={{ padding: '12px', color: 'var(--ck-ink-soft)' }}>{v.branch_name}</td>
-              <td style={{ padding: '12px', color: 'var(--ck-ink-soft)' }}>{v.location ?? v.branch_city ?? '—'}</td>
+              <td style={{ padding: '12px', color: 'var(--ck-ink-soft)' }}>{v.location_name ?? v.branch_city ?? '—'}</td>
               <td style={{ padding: '12px', color: 'var(--ck-ink-soft)' }}>{v.department_name}</td>
               <td style={{ padding: '12px', color: 'var(--ck-muted)', fontSize: 12 }}>{v.division ?? '—'}</td>
               <td style={{ padding: '12px', fontWeight: 700, color: 'var(--ck-ink)' }}>{v.designation ?? v.job_title}</td>
               <td style={{ padding: '12px' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: '50%', background: 'var(--ck-line-soft)', fontSize: 12, fontWeight: 700, color: 'var(--ck-ink)' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 30, height: 30, padding: '0 8px', borderRadius: '50%', background: 'var(--ck-line-soft)', fontSize: 12, fontWeight: 700, color: 'var(--ck-ink)' }}>
                   {String(v.positions).padStart(2, '0')}
                 </span>
+                {Number(v.listing_count) > 0 && (
+                  <span style={{ marginLeft: 8, padding: '2px 8px', borderRadius: 999, background: 'var(--ck-line-soft)', fontSize: 11, color: 'var(--ck-muted)' }}>
+                    {Number(v.listing_count)} listing{Number(v.listing_count) === 1 ? '' : 's'}
+                  </span>
+                )}
               </td>
               <td style={{ padding: '12px' }}>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button aria-label="Applicants" onClick={() => onSelect(v)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Briefcase size={16} /></button>
-                  <button aria-label="View" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Eye size={16} /></button>
-                  {v.status === 'open' && <Button size="sm" variant="ghost" onClick={() => close(v.id)}>Close</Button>}
+                  <IconBtn title="Create Job Listing" onClick={() => onCreate(v)}>
+                    <Briefcase size={17} />
+                  </IconBtn>
+                  <IconBtn title="Prospects" onClick={() => onProspects(v)}>
+                    <Users size={17} />
+                  </IconBtn>
                 </div>
               </td>
             </tr>
@@ -265,60 +239,68 @@ function VacancyTable({ vacancies, loading, onSelect, onVacancyChanged }: { vaca
   );
 }
 
-// ─── Job Listing tab table ─────────────────────────────────────────────────────
-function ListingTable({ vacancies, loading, onSelect }: { vacancies: Vacancy[]; loading: boolean; onSelect: (v: Vacancy) => void }) {
+function IconBtn({ title, onClick, children }: { title: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button aria-label={title} title={title} onClick={onClick}
+      style={{
+        background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)',
+        padding: 6, borderRadius: 6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--ck-surface-alt)'; e.currentTarget.style.color = 'var(--ck-ink)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'var(--ck-muted)'; }}>
+      {children}
+    </button>
+  );
+}
+
+// ─── Job Listing table ────────────────────────────────────────────────────────
+function ListingTable({ rows, loading, listingStatuses, hiringStatuses }: {
+  rows: JobListing[]; loading: boolean; listingStatuses: Lookup[]; hiringStatuses: Lookup[];
+}) {
+  const lstyleByCode = useMemo(() => Object.fromEntries(listingStatuses.map((s) => [s.code, s])), [listingStatuses]);
+  const hstyleByCode = useMemo(() => Object.fromEntries(hiringStatuses.map((s) => [s.code, s])), [hiringStatuses]);
+
   return (
     <div className="ck-table-wrap">
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
         <thead>
           <tr style={{ background: 'var(--ck-bg)', textAlign: 'left' }}>
-            <th style={{ width: 40, padding: '10px 10px 10px 16px' }}><input type="checkbox" /></th>
-            {['SR No.', 'JOB ID', 'COMPANY', 'LOCATION', 'DEPARTMENT', 'DESIGNATION', 'VACANCY', 'STATUS', 'HIRING STATUS'].map((h) => (
+            {['SR NO', 'JOB LISTING ID', 'COMPANY', 'BRANCH', 'LOCATION', 'DEPARTMENT', 'DIVISION', 'DESIGNATION', 'VACANCY', 'STATUS', 'HIRING STATUS'].map((h) => (
               <th key={h} style={{ padding: '10px 10px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em' }}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {!loading && vacancies.length === 0 && (
-            <tr><td colSpan={10} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
-              No published listings. Post a vacancy and set status to Published or Open.
+          {!loading && rows.length === 0 && (
+            <tr><td colSpan={11} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
+              No job listings yet. Use the Vacancy tab to create one.
             </td></tr>
           )}
-          {vacancies.map((v, idx) => {
-            const lstyle = LISTING_STATUS_STYLE[v.listing_status] ?? LISTING_STATUS_STYLE['Draft'];
+          {rows.map((l) => {
+            const ls = lstyleByCode[l.status];
+            const hs = hstyleByCode[l.hiring_status];
             return (
-              <tr key={v.id} style={{ borderTop: '1px solid var(--ck-line)', cursor: 'pointer' }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--ck-surface-alt)')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = '')}
-                onClick={() => onSelect(v)}>
-                <td style={{ padding: '12px 10px 12px 16px' }} onClick={(e) => e.stopPropagation()}><input type="checkbox" /></td>
-                <td style={{ padding: '10px', color: 'var(--ck-muted)', fontFamily: 'var(--ck-font-mono)', fontSize: 12 }}>{String(idx + 1).padStart(3, '0')}</td>
-                <td style={{ padding: '10px', fontFamily: 'var(--ck-font-mono)', fontSize: 12, fontWeight: 600 }}>{v.job_id ?? '—'}</td>
+              <tr key={l.id} style={{ borderTop: '1px solid var(--ck-line)' }}>
+                <td style={{ padding: '10px', color: 'var(--ck-muted)', fontFamily: 'var(--ck-font-mono)', fontSize: 12 }}>{String(l.sr_no).padStart(3, '0')}</td>
+                <td style={{ padding: '10px', fontFamily: 'var(--ck-font-mono)', fontSize: 12, fontWeight: 600 }}>{l.listing_no}</td>
+                <td style={{ padding: '10px', fontWeight: 600, color: 'var(--ck-ink)' }}>{l.company_name}</td>
+                <td style={{ padding: '10px', color: 'var(--ck-ink-soft)' }}>{l.branch_name}</td>
+                <td style={{ padding: '10px', color: 'var(--ck-ink-soft)' }}>{l.location_name ?? l.branch_city ?? '—'}</td>
+                <td style={{ padding: '10px', color: 'var(--ck-ink-soft)' }}>{l.department_name}</td>
+                <td style={{ padding: '10px', color: 'var(--ck-muted)' }}>{l.division ?? '—'}</td>
                 <td style={{ padding: '10px' }}>
-                  <div style={{ fontWeight: 600, color: 'var(--ck-ink)' }}>{v.company_name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--ck-muted)' }}>{v.branch_name}</div>
+                  <Link to={`/hiring/listings/${l.id}`}
+                    style={{ fontWeight: 700, color: 'var(--ck-accent)', textDecoration: 'none' }}>
+                    {l.designation ?? l.job_title}
+                  </Link>
                 </td>
-                <td style={{ padding: '10px', color: 'var(--ck-ink-soft)' }}>{v.location ?? v.branch_city ?? '—'}</td>
-                <td style={{ padding: '10px' }}>
-                  <div style={{ fontWeight: 600, color: 'var(--ck-ink)' }}>{v.department_name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--ck-muted)' }}>{v.division ?? '—'}</div>
-                </td>
-                <td style={{ padding: '10px', fontWeight: 700, color: 'var(--ck-ink)' }}>{v.designation ?? v.job_title}</td>
                 <td style={{ padding: '10px' }}>
                   <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: '50%', background: 'var(--ck-line-soft)', fontSize: 12, fontWeight: 700, color: 'var(--ck-ink)' }}>
-                    {String(v.positions).padStart(2, '0')}
+                    {String(l.positions).padStart(2, '0')}
                   </span>
                 </td>
-                <td style={{ padding: '10px' }}>
-                  <span style={{ ...lstyle, padding: '4px 12px', borderRadius: 6, fontSize: 12, display: 'inline-block' }}>
-                    {v.listing_status}
-                  </span>
-                </td>
-                <td style={{ padding: '10px' }}>
-                  <span style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11.5, fontWeight: 600, background: 'var(--ck-line-soft)', color: 'var(--ck-ink-soft)' }}>
-                    {v.hiring_status}
-                  </span>
-                </td>
+                <td style={{ padding: '10px' }}><StatusBadge label={ls?.label ?? l.status} color={ls?.color ?? '#888'} /></td>
+                <td style={{ padding: '10px' }}><StatusBadge label={hs?.label ?? l.hiring_status} color={hs?.color ?? null} muted /></td>
               </tr>
             );
           })}
@@ -328,147 +310,122 @@ function ListingTable({ vacancies, loading, onSelect }: { vacancies: Vacancy[]; 
   );
 }
 
-// ─── Applicant Pipeline Drawer (reused from previous) ─────────────────────────
-function ApplicantDrawer({ vacancy, onClose, onChanged }: { vacancy: Vacancy; onClose: () => void; onChanged: () => void }) {
-  const [applicants, setApplicants] = useState<Applicant[]>([]);
-  const [loading, setLoading]       = useState(true);
-  const [stageTab, setStageTab]     = useState('all');
-  const [addOpen, setAddOpen]       = useState(false);
-  const [acting, setActing]         = useState<string | null>(null);
+function StatusBadge({ label, color, muted }: { label: string; color: string | null; muted?: boolean }) {
+  if (muted) {
+    return <span style={{ padding: '4px 12px', borderRadius: 6, fontSize: 11.5, fontWeight: 600, background: 'var(--ck-line-soft)', color: 'var(--ck-ink-soft)' }}>{label}</span>;
+  }
+  const bg = color ?? '#222';
+  return <span style={{ padding: '4px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600, background: bg, color: '#fff' }}>{label}</span>;
+}
 
-  const fetchApplicants = () => {
-    setLoading(true);
-    api.get<{ data: Applicant[] }>(`/vacancies/${vacancy.id}/applicants`)
-      .then((r) => setApplicants(r.data.data)).catch(() => {}).finally(() => setLoading(false));
-  };
-  useEffect(() => { fetchApplicants(); }, [vacancy.id]);
+// ─── Create Listing Modal ─────────────────────────────────────────────────────
+const createSchema = z.object({
+  positions:     z.coerce.number().int().positive(),
+  companyName:   z.string().min(1, 'Required'),
+  status:        z.string().min(1, 'Required'),
+  hiringStatus:  z.string().min(1, 'Required'),
+  recruiterUserId: z.string().optional(),
+  publishedAt:   z.string().optional(),
+  deadlineAt:    z.string().optional(),
+  notes:         z.string().optional(),
+});
+type CreateForm = z.infer<typeof createSchema>;
 
-  const aForm = useForm<AppForm>({ resolver: zodResolver(applicantSchema) });
-  const onAdd = async (data: AppForm) => {
-    try { await api.post(`/vacancies/${vacancy.id}/applicants`, data); toast.success('Added'); aForm.reset(); setAddOpen(false); fetchApplicants(); }
-    catch { toast.error('Failed'); }
-  };
+function CreateListingModal({ open, target, users, listingStatuses, hiringStatuses, onClose, onCreated }: {
+  open: boolean; target: Vacancy; users: UserRow[];
+  listingStatuses: Lookup[]; hiringStatuses: Lookup[];
+  onClose: () => void; onCreated: () => void;
+}) {
+  const defaultListing = listingStatuses.find((s) => Number(s.is_default))?.code ?? listingStatuses[0]?.code ?? 'Open';
+  const defaultHiring  = hiringStatuses.find((s) => Number(s.is_default))?.code  ?? hiringStatuses[0]?.code  ?? 'Applications Invited';
+  const form = useForm<CreateForm>({
+    resolver: zodResolver(createSchema),
+    defaultValues: {
+      positions:    Number(target.positions) || 1,
+      companyName:  target.company_name,
+      status:       defaultListing,
+      hiringStatus: defaultHiring,
+      recruiterUserId: '',
+      publishedAt: '',
+      deadlineAt: '',
+      notes: '',
+    },
+  });
 
-  const advance = async (a: Applicant) => {
-    const idx = PIPELINE_ORDER.indexOf(a.stage);
-    if (idx < 0 || idx >= PIPELINE_ORDER.length - 1) return;
-    setActing(a.id);
-    try { await api.patch(`/applicants/${a.id}`, { stage: PIPELINE_ORDER[idx + 1] }); fetchApplicants(); }
-    catch { toast.error('Failed'); } finally { setActing(null); }
+  const onSubmit = async (data: CreateForm) => {
+    try {
+      await api.post('/job-listings', {
+        jobProfileId: target.job_profile_id,
+        branchId:     target.branch_id,
+        locationId:   target.location_id,
+        positions:    data.positions,
+        companyName:  data.companyName,
+        status:       data.status,
+        hiringStatus: data.hiringStatus,
+        recruiterUserId: data.recruiterUserId || undefined,
+        publishedAt:  data.publishedAt || undefined,
+        deadlineAt:   data.deadlineAt  || undefined,
+        notes:        data.notes       || undefined,
+      });
+      onCreated();
+    } catch { toast.error('Failed to create listing'); }
   };
-  const hire = async (a: Applicant) => {
-    setActing(a.id);
-    try { await api.post(`/applicants/${a.id}/hire`); toast.success(`${a.full_name} hired`); fetchApplicants(); onChanged(); }
-    catch { toast.error('Failed'); } finally { setActing(null); }
-  };
-  const reject = async (a: Applicant) => {
-    setActing(a.id);
-    try { await api.post(`/applicants/${a.id}/reject`); fetchApplicants(); }
-    catch { toast.error('Failed'); } finally { setActing(null); }
-  };
-
-  const counts = STAGES.reduce<Record<string, number>>((acc, s) => { acc[s.key] = applicants.filter((a) => a.stage === s.key).length; return acc; }, {});
-  const displayed = stageTab === 'all' ? applicants : applicants.filter((a) => a.stage === stageTab);
 
   return (
-    <Drawer open onClose={onClose} width={760}>
-      <div style={{ padding: '28px 28px 0', background: 'var(--ck-bg)', borderBottom: '1px solid var(--ck-line)', paddingRight: 60 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>Applicant Pipeline</div>
-        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ck-ink)', marginBottom: 2 }}>{vacancy.designation ?? vacancy.job_title}</div>
-        <div style={{ fontSize: 13, color: 'var(--ck-muted)', marginBottom: 14 }}>{vacancy.company_name} · {vacancy.branch_name} · {vacancy.filled}/{vacancy.positions} filled</div>
-        <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
-          {STAGES.map((s, i) => (
-            <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-              <div onClick={() => setStageTab(stageTab === s.key ? 'all' : s.key)}
-                style={{ padding: '4px 10px', borderRadius: 999, fontSize: 12, fontWeight: 600, background: s.bg, color: s.color, cursor: 'pointer', border: stageTab === s.key ? `2px solid ${s.color}` : '2px solid transparent' }}>
-                {s.label} {counts[s.key] ?? 0}
-              </div>
-              {i < STAGES.length - 2 && <ArrowRight size={11} style={{ color: 'var(--ck-faint)' }} />}
-            </div>
-          ))}
+    <Modal open={open} onClose={onClose} title="Create Job Listing"
+      subtitle={`${target.designation ?? target.job_title} · ${target.branch_name}${target.location_name ? ' · ' + target.location_name : ''}`}
+      width={560}
+      footer={<>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="primary" type="submit" form="jl-form" disabled={form.formState.isSubmitting}>
+          {form.formState.isSubmitting ? 'Creating…' : 'Create Listing'}
+        </Button>
+      </>}>
+      <form id="jl-form" onSubmit={form.handleSubmit(onSubmit)}>
+        <div className="ck-form-grid-2">
+          <F label="Positions *" error={form.formState.errors.positions?.message}>
+            <input type="number" min={1} {...form.register('positions')} style={inp} />
+          </F>
+          <F label="Company name *" error={form.formState.errors.companyName?.message}>
+            <input {...form.register('companyName')} style={inp} />
+          </F>
+          <F label="Status *" error={form.formState.errors.status?.message}>
+            <select {...form.register('status')} style={inp}>
+              {listingStatuses.map((s) => <option key={s.id} value={s.code}>{s.label}</option>)}
+            </select>
+          </F>
+          <F label="Hiring status *" error={form.formState.errors.hiringStatus?.message}>
+            <select {...form.register('hiringStatus')} style={inp}>
+              {hiringStatuses.map((s) => <option key={s.id} value={s.code}>{s.label}</option>)}
+            </select>
+          </F>
+          <F label="Recruiter">
+            <select {...form.register('recruiterUserId')} style={inp}>
+              <option value="">— None —</option>
+              {users.map((u) => <option key={u.id} value={u.id}>
+                {[u.first_name, u.last_name].filter(Boolean).join(' ') || u.email}
+              </option>)}
+            </select>
+          </F>
+          <F label="Published at"><input type="date" {...form.register('publishedAt')} style={inp} /></F>
+          <F label="Deadline"><input type="date" {...form.register('deadlineAt')} style={inp} /></F>
+          <F label="Notes" full><textarea {...form.register('notes')} rows={3} style={{ ...inp, height: 'auto', padding: 10 }} /></F>
         </div>
-        <div style={{ display: 'flex', gap: 4 }}>
-          <TabBtn active={stageTab === 'all'} onClick={() => setStageTab('all')}>All ({applicants.length})</TabBtn>
-        </div>
-      </div>
-      <div style={{ padding: 24 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div style={{ fontSize: 13, color: 'var(--ck-muted)' }}>{loading ? 'Loading…' : `${displayed.length} applicants`}</div>
-          <Button icon={UserPlus} variant="primary" size="sm" onClick={() => { aForm.reset(); setAddOpen(true); }}>Add Applicant</Button>
-        </div>
-        {!loading && displayed.length === 0 ? (
-          <div style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
-            <UserPlus size={40} strokeWidth={1.4} style={{ display: 'block', margin: '0 auto 12px' }} />
-            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ck-ink)', marginBottom: 6 }}>No applicants</div>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {displayed.map((a, i) => {
-              const stage = STAGE_MAP.get(a.stage);
-              const pIdx = PIPELINE_ORDER.indexOf(a.stage);
-              const isTerminal = a.stage === 'hired' || a.stage === 'rejected';
-              return (
-                <Card key={a.id} padding={16}>
-                  <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
-                    <Avatar name={a.full_name} hue={(i * 53) % 360} size={40} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 2 }}>
-                        <span style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--ck-ink)' }}>{a.full_name}</span>
-                        <span style={{ padding: '2px 8px', borderRadius: 999, fontSize: 11.5, fontWeight: 600, background: stage?.bg ?? 'var(--ck-line-soft)', color: stage?.color ?? 'var(--ck-muted)' }}>{stage?.label ?? a.stage}</span>
-                      </div>
-                      <div style={{ fontSize: 12.5, color: 'var(--ck-muted)' }}>
-                        {a.email}{a.phone && ` · ${a.phone}`}{a.current_company && ` · ${a.current_company}`}{a.experience_years != null && ` · ${a.experience_years}y exp`}
-                      </div>
-                    </div>
-                    {!isTerminal && (
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        {pIdx >= 0 && pIdx < PIPELINE_ORDER.length - 1 && (
-                          <Button size="sm" variant="accent" disabled={acting === a.id} onClick={() => advance(a)}>
-                            → {STAGE_MAP.get(PIPELINE_ORDER[pIdx + 1])?.label}
-                          </Button>
-                        )}
-                        {a.stage === 'offer' && (
-                          <Button size="sm" variant="primary" icon={CheckCircle2} disabled={acting === a.id} onClick={() => hire(a)}>Hire</Button>
-                        )}
-                        <Button size="sm" variant="ghost" icon={XCircle} disabled={acting === a.id} onClick={() => reject(a)}>Reject</Button>
-                      </div>
-                    )}
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
-        )}
-      </div>
-      <Modal open={addOpen} onClose={() => { aForm.reset(); setAddOpen(false); }} title="Add Applicant"
-        subtitle={`${vacancy.designation ?? vacancy.job_title} — ${vacancy.branch_name}`} width={480}
-        footer={<>
-          <Button onClick={() => { aForm.reset(); setAddOpen(false); }}>Cancel</Button>
-          <Button variant="primary" type="submit" form="app-form" disabled={aForm.formState.isSubmitting}>Add</Button>
-        </>}>
-        <form id="app-form" onSubmit={aForm.handleSubmit(onAdd)}>
-          <div className="ck-form-grid-2">
-            <F label="Full name *" error={aForm.formState.errors.fullName?.message}><input {...aForm.register('fullName')} style={inp} /></F>
-            <F label="Email *" error={aForm.formState.errors.email?.message}><input type="email" {...aForm.register('email')} style={inp} /></F>
-            <F label="Phone"><input {...aForm.register('phone')} style={inp} /></F>
-            <F label="Experience (years)"><input type="number" step="0.5" {...aForm.register('experienceYears')} style={inp} /></F>
-            <F label="Current company" full><input {...aForm.register('currentCompany')} style={inp} /></F>
-            <F label="Notes" full><textarea {...aForm.register('notes')} rows={3} style={{ ...inp, height: 'auto', padding: 10 }} /></F>
-          </div>
-        </form>
-      </Modal>
-    </Drawer>
+      </form>
+    </Modal>
   );
 }
 
+// ─── Shared helpers ───────────────────────────────────────────────────────────
 function TabBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
   return (
-    <button onClick={onClick} style={{ padding: '8px 16px', borderRadius: '8px 8px 0 0', border: 'none', cursor: 'pointer', fontSize: 13.5, fontWeight: 600,
+    <button onClick={onClick} style={{
+      padding: '8px 16px', borderRadius: '8px 8px 0 0', border: 'none', cursor: 'pointer',
+      fontSize: 13.5, fontWeight: 600,
       background: active ? 'var(--ck-surface)' : 'transparent',
       color: active ? 'var(--ck-ink)' : 'var(--ck-muted)',
-      borderBottom: active ? '2px solid var(--ck-accent)' : '2px solid transparent' }}>
-      {children}
-    </button>
+      borderBottom: active ? '2px solid var(--ck-accent)' : '2px solid transparent',
+    }}>{children}</button>
   );
 }
 

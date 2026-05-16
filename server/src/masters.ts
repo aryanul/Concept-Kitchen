@@ -813,4 +813,162 @@ export function registerMasterRoutes(app: Application) {
       next(err);
     }
   });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Lookup categories + lookups (generic enum master used by Vacancy/Listing
+  // module — listing_status, hiring_status, applicant_source, etc.)
+  // ────────────────────────────────────────────────────────────────────────
+
+  // List categories (with their values inlined for one-shot client fetches).
+  app.get('/api/v1/lookup-categories', authRequired, async (req, res, next) => {
+    try {
+      const cats = await query(
+        'SELECT id, code, name, description, is_system FROM lookup_categories ORDER BY name'
+      );
+      const includeValues = String(req.query.includeValues ?? '') === '1';
+      if (!includeValues) return res.json({ data: cats });
+      const values = await query<{
+        id: string; category_id: string; code: string; label: string;
+        color: string | null; sort_order: number | string; is_default: number | string; is_active: number | string;
+      }>(
+        'SELECT id, category_id, code, label, color, sort_order, is_default, is_active FROM lookups ORDER BY category_id, sort_order, label'
+      );
+      const byCat = new Map<string, typeof values>();
+      for (const v of values) {
+        const list = byCat.get(v.category_id) ?? [];
+        list.push(v);
+        byCat.set(v.category_id, list);
+      }
+      const data = (cats as Array<Record<string, unknown>>).map((c) => ({
+        ...c, values: byCat.get(c.id as string) ?? [],
+      }));
+      res.json({ data });
+    } catch (err) { next(err); }
+  });
+
+  // Look up values for a single category (by code OR id).
+  // GET /lookups?category=listing_status  -> values for listing_status
+  app.get('/api/v1/lookups', authRequired, async (req, res, next) => {
+    try {
+      const cat = typeof req.query.category === 'string' ? req.query.category : '';
+      const categoryId = typeof req.query.categoryId === 'string' ? req.query.categoryId : '';
+      const params: unknown[] = [];
+      let where = '';
+      if (categoryId) { where = 'WHERE c.id = ?'; params.push(categoryId); }
+      else if (cat)   { where = 'WHERE c.code = ?'; params.push(cat); }
+      const rows = await query(
+        `SELECT l.id, l.category_id, c.code AS category_code, l.code, l.label, l.color,
+                l.sort_order, l.is_default, l.is_active
+         FROM lookups l
+         JOIN lookup_categories c ON c.id = l.category_id
+         ${where}
+         ORDER BY c.code, l.sort_order, l.label`,
+        params
+      );
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/lookups', authRequired, async (req, res, next) => {
+    try {
+      const { categoryId, categoryCode, code, label, color, sortOrder, isDefault, isActive } = req.body ?? {};
+      if (!code || !label) {
+        return res.status(400).json({ error: { code: 'VALIDATION', message: 'code and label required' } });
+      }
+      let resolvedCatId = typeof categoryId === 'string' ? categoryId : '';
+      if (!resolvedCatId && typeof categoryCode === 'string' && categoryCode) {
+        const r = await query<{ id: string }>('SELECT id FROM lookup_categories WHERE code = ? LIMIT 1', [categoryCode]);
+        if (!r.length) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'category not found' } });
+        resolvedCatId = r[0].id;
+      }
+      if (!resolvedCatId) return res.status(400).json({ error: { code: 'VALIDATION', message: 'categoryId or categoryCode required' } });
+      const id = ulid();
+      await query(
+        'INSERT INTO lookups (id, category_id, code, label, color, sort_order, is_default, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, resolvedCatId, code, label, color || null, Number(sortOrder) || 0, parseBool(isDefault), parseBool(isActive ?? true)]
+      );
+      res.status(201).json({ data: { id } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/lookups/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'code', column: 'code' },
+        { key: 'label', column: 'label' },
+        { key: 'color', column: 'color' },
+        { key: 'sortOrder', column: 'sort_order' },
+        { key: 'isDefault', column: 'is_default' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isDefault !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_default'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isDefault);
+      }
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE lookups SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/lookups/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM lookups WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Tags master (applicant tagging)
+  // ────────────────────────────────────────────────────────────────────────
+  app.get('/api/v1/tags', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query('SELECT * FROM tags ORDER BY name');
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/tags', authRequired, async (req, res, next) => {
+    try {
+      const { name, color, description, isActive } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
+      const id = ulid();
+      await query(
+        'INSERT INTO tags (id, name, color, description, is_active) VALUES (?, ?, ?, ?, ?)',
+        [id, name, color || null, description || null, parseBool(isActive ?? true)]
+      );
+      res.status(201).json({ data: { id } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/tags/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'name', column: 'name' },
+        { key: 'color', column: 'color' },
+        { key: 'description', column: 'description' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE tags SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/tags/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM tags WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
 }

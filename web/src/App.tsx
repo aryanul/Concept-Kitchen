@@ -14,6 +14,7 @@ import { ToursPage } from './routes/tours/ToursPage';
 import { IncentivesPage } from './routes/incentives/IncentivesPage';
 import { JobProfilePage } from './routes/hiring/JobProfilePage';
 import { VacanciesPage } from './routes/hiring/VacanciesPage';
+import { ListingDetailPage } from './routes/hiring/ListingDetailPage';
 import { OnboardingPage } from './routes/hiring/OnboardingPage';
 import {
   MastersHomePage,
@@ -29,6 +30,8 @@ import {
   GiveawayTemplateMasterPage,
   UserConsolePage,
   HolidayMasterPage,
+  LookupMasterPage,
+  TagMasterPage,
 } from './routes/masters/MasterPages';
 import { StubPage } from './routes/StubPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -55,6 +58,8 @@ export default function App() {
             <Route path="/masters/giveaways" element={<GiveawayTemplateMasterPage />} />
             <Route path="/masters/users" element={<UserConsolePage />} />
             <Route path="/masters/holidays" element={<HolidayMasterPage />} />
+            <Route path="/masters/lookups" element={<LookupMasterPage />} />
+            <Route path="/masters/tags" element={<TagMasterPage />} />
 
             {/* Phase 1 — placeholders until each module is built */}
             <Route path="/employees"     element={<EmployeesPage />} />
@@ -72,6 +77,7 @@ export default function App() {
             {/* Phase 2 stubs */}
             <Route path="/job-profile"   element={<JobProfilePage />} />
             <Route path="/vacancy"       element={<VacanciesPage />} />
+            <Route path="/hiring/listings/:id" element={<ListingDetailPage />} />
             <Route path="/onboarding"    element={<OnboardingPage />} />
 
             {/* Phase 3 stubs */}
