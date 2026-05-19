@@ -17,6 +17,7 @@ import { VacanciesPage } from './routes/hiring/VacanciesPage';
 import { ListingDetailPage } from './routes/hiring/ListingDetailPage';
 import { OnboardingPage } from './routes/hiring/OnboardingPage';
 import { OnboardingDetailPage } from './routes/hiring/OnboardingDetailPage';
+import { IdCardPage } from './routes/hiring/IdCardPage';
 import {
   MastersHomePage,
   BranchMasterPage,
@@ -99,6 +100,7 @@ export default function App() {
             <Route path="/hiring/listings/:id" element={<ListingDetailPage />} />
             <Route path="/onboarding"    element={<OnboardingPage />} />
             <Route path="/onboarding/:applicantId" element={<OnboardingDetailPage />} />
+            <Route path="/onboarding/:applicantId/id-card" element={<IdCardPage />} />
 
             {/* Phase 3 stubs */}
             <Route path="/exit-clearance" element={<StubPage title="Exit Clearance"          phase="Phase 3" />} />

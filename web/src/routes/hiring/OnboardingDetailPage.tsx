@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Plus, Printer, Trash2, Mail, Phone as PhoneIcon, Activity as ActivityIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '../../lib/api';
@@ -80,7 +80,6 @@ type OnboardingActivity = {
 export function OnboardingDetailPage() {
   const { applicantId = '' } = useParams<{ applicantId: string }>();
   const navigate = useNavigate();
-  const [params, setParams] = useSearchParams();
   const [tab, setTab] = useState<TabKey>('pre');
   const [applicant, setApplicant] = useState<Applicant | null>(null);
   const [data, setData] = useState<FullData>({ parent: null });
@@ -107,19 +106,6 @@ export function OnboardingDetailPage() {
       .then((r) => setGrades(r.data.data ?? [])).catch(() => {});
   }, []);
 
-  // ?print=1 in the URL triggers the ID card print stylesheet path.
-  useEffect(() => {
-    if (params.get('print') === '1' && applicant) {
-      // Defer to next tick so the layout settles, then print.
-      const t = setTimeout(() => {
-        printIdCard(applicant, data.parent);
-        // Clear the query so a reload doesn't loop on the print dialog.
-        params.delete('print'); setParams(params, { replace: true });
-      }, 200);
-      return () => clearTimeout(t);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [applicant?.id, params]);
 
   const progress = useMemo(() => computeProgress(data), [data]);
 
@@ -302,56 +288,6 @@ function ActivitiesTab({ applicantId }: { applicantId: string }) {
       </div>
     </div>
   );
-}
-
-// ─── ID Card print — uses a popup window with a focused print stylesheet ──
-function printIdCard(applicant: Applicant, parent: AOParent | null): void {
-  const w = window.open('', '_blank', 'width=600,height=400');
-  if (!w) {
-    toast.error('Pop-ups blocked — allow pop-ups for this site to print the ID card.');
-    return;
-  }
-  const designation = applicant.designation ?? applicant.job_title ?? '—';
-  const branch = applicant.branch_name ?? '—';
-  const id = applicant.app_no ?? applicant.id;
-  const phone = parent?.phone_assigned ?? applicant.phone ?? '';
-  const email = parent?.email_assigned ?? applicant.email ?? '';
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"><title>ID Card · ${applicant.full_name}</title>
-<style>
-  @page { size: 86mm 54mm; margin: 0; }
-  html, body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #fff; }
-  .card { width: 86mm; height: 54mm; padding: 8mm; box-sizing: border-box;
-          background: linear-gradient(135deg, #1f2937 0%, #111827 100%); color: #fff;
-          border-radius: 4mm; display: flex; flex-direction: column; justify-content: space-between; }
-  .brand { font-size: 9pt; letter-spacing: 0.12em; opacity: 0.7; }
-  .name { font-size: 14pt; font-weight: 800; line-height: 1.1; margin-top: 1mm; }
-  .designation { font-size: 9pt; opacity: 0.9; margin-top: 0.5mm; }
-  .meta { font-size: 7.5pt; opacity: 0.8; line-height: 1.45; }
-  .id { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 7pt; opacity: 0.7; }
-</style></head>
-<body onload="window.focus(); window.print(); setTimeout(function(){window.close();}, 250);">
-  <div class="card">
-    <div class="brand">CONCEPT KITCHEN</div>
-    <div>
-      <div class="name">${escapeHtml(applicant.full_name)}</div>
-      <div class="designation">${escapeHtml(designation)} · ${escapeHtml(branch)}</div>
-    </div>
-    <div class="meta">
-      ${email ? `<div>${escapeHtml(email)}</div>` : ''}
-      ${phone ? `<div>${escapeHtml(phone)}</div>` : ''}
-      <div class="id">${escapeHtml(id)}</div>
-    </div>
-  </div>
-</body></html>`;
-  w.document.open(); w.document.write(html); w.document.close();
-  // Stamp the print event on the server.
-  api.patch(`/applicants/${applicant.id}/onboarding/header`, { idCardPrintedAt: new Date().toISOString() })
-    .catch(() => {});
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
 }
 
 function computeProgress(d: FullData): { done: number; total: number; pct: number; label: string } {
@@ -721,15 +657,14 @@ function ErpSection({ applicantId, items, designationId, onRefresh }: { applican
   );
 }
 
-function IdCardSection({ applicantId, parent, onRefresh }: { applicantId: string; parent: AOParent | null; onRefresh: () => void }) {
+function IdCardSection({ applicantId, parent }: { applicantId: string; parent: AOParent | null; onRefresh: () => void }) {
   const printed = parent?.id_card_printed_at;
-  const mark = async () => {
-    try { await api.patch(`/applicants/${applicantId}/onboarding/header`, { idCardPrintedAt: new Date().toISOString() }); toast.success('Marked printed'); onRefresh(); }
-    catch { toast.error('Failed'); }
+  const openPrintPage = () => {
+    window.open(`/onboarding/${applicantId}/id-card`, '_blank', 'noopener,noreferrer');
   };
   return (
     <Section title="ID & Access Card" right={
-      <Button size="sm" variant="primary" icon={Printer} onClick={mark}>{printed ? 'Re-mark Printed' : 'Mark Printed'}</Button>
+      <Button size="sm" variant="primary" icon={Printer} onClick={openPrintPage}>{printed ? 'Re-print' : 'Open Print Page'}</Button>
     }>
       <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
         <div style={{
@@ -737,10 +672,10 @@ function IdCardSection({ applicantId, parent, onRefresh }: { applicantId: string
           background: 'linear-gradient(135deg, #1f2937 0%, #111827 100%)', color: '#fff',
           padding: 16, display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
         }}>
-          <div style={{ fontSize: 11, opacity: 0.7 }}>CONCEPT KITCHEN</div>
+          <div style={{ fontSize: 11, opacity: 0.7, letterSpacing: '0.12em' }}>CONCEPT KITCHEN</div>
           <div>
             <div style={{ fontSize: 15, fontWeight: 700 }}>ID Card Preview</div>
-            <div style={{ fontSize: 11, opacity: 0.7 }}>Linked to template — print from here</div>
+            <div style={{ fontSize: 11, opacity: 0.7 }}>Click "Open Print Page" to view + print the full card.</div>
           </div>
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--ck-muted)' }}>

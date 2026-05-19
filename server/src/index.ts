@@ -2072,13 +2072,27 @@ app.get('/api/v1/vacancies/:id/applicants', authRequired, async (req, res, next)
 
 app.get('/api/v1/applicants/:id', authRequired, async (req, res, next) => {
   try {
+    // Applicants come from either the legacy vacancy flow or the newer
+    // job-listing flow. LEFT JOIN both and COALESCE so either source
+    // resolves a branch / job profile / company.
     const rows = await query<Record<string, unknown>>(
-      `SELECT a.*, v.positions, v.filled,
-              jp.title AS job_title, b.name AS branch_name
+      `SELECT a.*,
+              COALESCE(v.positions, jl.positions) AS positions,
+              COALESCE(v.filled, jl.filled)       AS filled,
+              COALESCE(vjp.title, jljp.title)         AS job_title,
+              COALESCE(vjp.designation, jljp.designation) AS designation,
+              COALESCE(vb.name, jlb.name)             AS branch_name,
+              COALESCE(vb.city, jlb.city)             AS branch_city,
+              loc.name AS location_name,
+              COALESCE(v.company_name, jl.company_name) AS company_name
        FROM applicants a
-       JOIN vacancies v ON v.id = a.vacancy_id
-       JOIN job_profiles jp ON jp.id = v.job_profile_id
-       JOIN branches b ON b.id = v.branch_id
+       LEFT JOIN vacancies     v    ON v.id   = a.vacancy_id
+       LEFT JOIN branches      vb   ON vb.id  = v.branch_id
+       LEFT JOIN job_profiles  vjp  ON vjp.id = v.job_profile_id
+       LEFT JOIN job_listings  jl   ON jl.id  = a.job_listing_id
+       LEFT JOIN branches      jlb  ON jlb.id = jl.branch_id
+       LEFT JOIN locations     loc  ON loc.id = jl.location_id
+       LEFT JOIN job_profiles  jljp ON jljp.id = jl.job_profile_id
        WHERE a.id = ?`,
       [req.params.id]
     );

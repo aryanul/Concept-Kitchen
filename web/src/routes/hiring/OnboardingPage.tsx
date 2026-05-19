@@ -190,7 +190,7 @@ export function OnboardingPage() {
                           onClick={() => navigate(`/onboarding/${a.id}`)} variant={onboarded ? undefined : 'success'}>
                           <Play size={16} />
                         </IconBtn>
-                        <IconBtn title="Print ID Card" onClick={() => window.open(`/onboarding/${a.id}?print=1`, '_blank', 'noopener,noreferrer')}><Printer size={16} /></IconBtn>
+                        <IconBtn title="Print ID Card" onClick={() => window.open(`/onboarding/${a.id}/id-card`, '_blank', 'noopener,noreferrer')}><Printer size={16} /></IconBtn>
                         <IconBtn title="Close & Archive" disabled={onboarded} onClick={() => setCloseTarget(a)} variant="success">
                           <Archive size={16} />
                         </IconBtn>
