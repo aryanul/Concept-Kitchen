@@ -135,6 +135,102 @@ const CATEGORIES: CategorySpec[] = [
       { code: 'Hired',    label: 'Hired' },
     ],
   },
+  {
+    code: 'blood_group',
+    name: 'Blood Group',
+    description: 'Used in the onboarding header (Other Info).',
+    values: [
+      { code: 'A+',  label: 'A+' },
+      { code: 'A-',  label: 'A-' },
+      { code: 'B+',  label: 'B+' },
+      { code: 'B-',  label: 'B-' },
+      { code: 'AB+', label: 'AB+' },
+      { code: 'AB-', label: 'AB-' },
+      { code: 'O+',  label: 'O+' },
+      { code: 'O-',  label: 'O-' },
+    ],
+  },
+  {
+    code: 'giveaway_occasion',
+    name: 'Giveaway Occasion',
+    description: 'Occasion grouping for the onboarding giveaway picker tiles.',
+    values: [
+      { code: 'Onboarding', label: 'Onboarding', isDefault: true },
+      { code: 'Birthday',   label: 'Birthday' },
+      { code: 'Anniversary',label: 'Work Anniversary' },
+      { code: 'Festival',   label: 'Festival' },
+      { code: 'Promotion',  label: 'Promotion' },
+      { code: 'Exit',       label: 'Exit / Farewell' },
+    ],
+  },
+  {
+    code: 'erp_module_status',
+    name: 'ERP Module Status',
+    description: 'Activation state of an ERP module per employee.',
+    isSystem: true,
+    values: [
+      { code: 'active',   label: 'Active' },
+      { code: 'inactive', label: 'Inactive', isDefault: true },
+      { code: 'blocked',  label: 'Blocked' },
+    ],
+  },
+  {
+    code: 'asset_status',
+    name: 'Asset Status',
+    description: 'State of an asset in the asset master.',
+    isSystem: true,
+    values: [
+      { code: 'available',    label: 'Available', isDefault: true },
+      { code: 'allocated',    label: 'Allocated' },
+      { code: 'maintenance',  label: 'Maintenance' },
+      { code: 'retired',      label: 'Retired' },
+    ],
+  },
+  {
+    code: 'onboarding_item_status',
+    name: 'Onboarding Item Status',
+    description: 'Per-applicant status for programs / tours / activities.',
+    isSystem: true,
+    values: [
+      { code: 'pending',  label: 'Pending', isDefault: true },
+      { code: 'ongoing',  label: 'Ongoing' },
+      { code: 'done',     label: 'Done' },
+    ],
+  },
+  {
+    code: 'training_status',
+    name: 'Training Status',
+    description: 'Per-applicant status for assigned training modules.',
+    isSystem: true,
+    values: [
+      { code: 'pending', label: 'Pending', isDefault: true },
+      { code: 'ongoing', label: 'Ongoing' },
+      { code: 'done',    label: 'Done' },
+      { code: 'overdue', label: 'Over Due' },
+    ],
+  },
+  {
+    code: 'onboarding_status',
+    name: 'Onboarding Status',
+    description: 'Overall onboarding session status shown on the list page.',
+    isSystem: true,
+    values: [
+      { code: 'pending',    label: 'Pending', isDefault: true },
+      { code: 'onboarding', label: 'Onboarding' },
+      { code: 'onboarded',  label: 'Onboarded' },
+    ],
+  },
+  {
+    code: 'phone_pool_status',
+    name: 'Phone Pool Status',
+    description: 'Status of a company phone number in the pool.',
+    isSystem: true,
+    values: [
+      { code: 'available', label: 'Available', isDefault: true },
+      { code: 'assigned',  label: 'Assigned' },
+      { code: 'blocked',   label: 'Blocked' },
+    ],
+  },
 ];
 
 const DEFAULT_TAGS = [

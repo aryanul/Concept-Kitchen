@@ -1068,10 +1068,17 @@ async function loadApplicantTags(applicantIds: string[]): Promise<Map<string, Ar
 app.get('/api/v1/job-listings/:id/applicants', authRequired, async (req, res, next) => {
   try {
     const status = typeof req.query.status === 'string' ? req.query.status : '';
+    const stage  = typeof req.query.stage === 'string'  ? req.query.stage  : '';
+    const stages = typeof req.query.stages === 'string' ? req.query.stages.split(',').map((s) => s.trim()).filter(Boolean) : [];
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
     const filters: string[] = ['a.job_listing_id = ?'];
     const params: unknown[] = [req.params.id];
     if (status) { filters.push('a.status = ?'); params.push(status); }
+    if (stage)  { filters.push('a.stage = ?');  params.push(stage); }
+    if (stages.length) {
+      filters.push(`a.stage IN (${stages.map(() => '?').join(',')})`);
+      params.push(...stages);
+    }
     if (search) {
       filters.push('(a.full_name LIKE ? OR a.email LIKE ? OR a.app_no LIKE ?)');
       const like = `%${search}%`;
@@ -1171,8 +1178,18 @@ app.patch('/api/v1/job-listing-applicants/:id', authRequired, async (req, res, n
       }
     }
     if (sets.length) {
+      // Snapshot prior state if status is changing — used for the activity log.
+      let prev: { stage: string | null; status: string | null } | null = null;
+      if (body.status !== undefined) {
+        prev = await getApplicantStageStatus(req.params.id);
+      }
       vals.push(req.params.id);
       await query(`UPDATE applicants SET ${sets.join(', ')} WHERE id = ?`, vals);
+      if (prev && body.status !== prev.status) {
+        await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'status_change', {
+          fromStatus: prev.status, toStatus: String(body.status),
+        });
+      }
     }
     if (Array.isArray(body.tags)) {
       await query('DELETE FROM applicant_tags WHERE applicant_id = ?', [req.params.id]);
@@ -1181,6 +1198,9 @@ app.patch('/api/v1/job-listing-applicants/:id', authRequired, async (req, res, n
           await query('INSERT IGNORE INTO applicant_tags (applicant_id, tag_id) VALUES (?, ?)', [req.params.id, tagId]);
         }
       }
+      await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'tag', {
+        meta: { tagIds: body.tags },
+      });
     }
     if (!sets.length && !Array.isArray(body.tags)) {
       return res.status(400).json({ error: { code: 'VALIDATION', message: 'No fields' } });
@@ -1200,17 +1220,37 @@ app.delete('/api/v1/job-listing-applicants/:id', authRequired, async (req, res, 
 app.get('/api/v1/applicants/hired', authRequired, async (req, res, next) => {
   try {
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
-    const where = search ? `WHERE a.stage='hired' AND (a.full_name LIKE ? OR a.email LIKE ?)` : `WHERE a.stage='hired'`;
+    // Applicants may come from either the legacy vacancy flow (vacancy_id) or the
+    // newer Job Listing flow (job_listing_id). LEFT JOIN both and COALESCE so
+    // either source resolves to a branch + job profile.
+    const where = search
+      ? `WHERE (a.stage='hired' OR a.status='Hired') AND (a.full_name LIKE ? OR a.email LIKE ?)`
+      : `WHERE (a.stage='hired' OR a.status='Hired')`;
     const params = search ? [`%${search}%`, `%${search}%`] : [];
     const rows = await query(
-      `SELECT a.id, a.full_name, a.email, a.phone, a.current_company, a.experience_years,
-              a.match_score, a.screen_score, a.interview_score, a.source, a.applied_at, a.updated_at,
-              v.company_name, b.name AS branch_name, jp.designation, jp.title AS job_title,
-              IFNULL(ao.status, 'pending') AS onboarding_status
+      `SELECT a.id, a.app_no, a.image_url, a.full_name, a.email, a.phone,
+              a.current_company, a.\`current_role\`, a.location,
+              a.experience_years, a.salary_min, a.salary_max, a.salary_currency,
+              a.education_level, a.institution, a.match_ratio,
+              a.match_score, a.screen_score, a.interview_score,
+              a.source, a.applied_at, a.updated_at, a.status AS applicant_status,
+              COALESCE(v.company_name, jl.company_name) AS company_name,
+              COALESCE(vb.name, jlb.name) AS branch_name,
+              COALESCE(vjp.designation, jljp.designation) AS designation,
+              COALESCE(vjp.title, jljp.title) AS job_title,
+              o.ctc AS offer_ctc, o.ctc_currency AS offer_currency,
+              o.joining_date AS offer_joining_date,
+              o.designation AS offer_designation,
+              IFNULL(ao.status, 'pending') AS onboarding_status,
+              ao.promoted_employee_id
        FROM applicants a
-       JOIN vacancies v ON v.id = a.vacancy_id
-       JOIN branches b ON b.id = v.branch_id
-       JOIN job_profiles jp ON jp.id = v.job_profile_id
+       LEFT JOIN vacancies v       ON v.id  = a.vacancy_id
+       LEFT JOIN branches vb       ON vb.id = v.branch_id
+       LEFT JOIN job_profiles vjp  ON vjp.id = v.job_profile_id
+       LEFT JOIN job_listings jl   ON jl.id = a.job_listing_id
+       LEFT JOIN branches jlb      ON jlb.id = jl.branch_id
+       LEFT JOIN job_profiles jljp ON jljp.id = jl.job_profile_id
+       LEFT JOIN applicant_offers o ON o.applicant_id = a.id
        LEFT JOIN applicant_onboarding ao ON ao.applicant_id = a.id
        ${where} ORDER BY a.updated_at DESC`,
       params
@@ -1359,10 +1399,14 @@ app.get('/api/v1/hiring/interview-templates', authRequired, async (_req, res, ne
 
 app.post('/api/v1/hiring/interview-templates', authRequired, async (req, res, next) => {
   try {
-    const { title, description } = req.body ?? {};
+    const { title, description, fieldsJson, imageUrl, isDefault } = req.body ?? {};
     if (!title) return res.status(400).json({ error: { code: 'VALIDATION', message: 'title required' } });
     const id = ulid();
-    await query('INSERT INTO interview_templates (id, title, description) VALUES (?, ?, ?)', [id, title, description || null]);
+    const fjs = fieldsJson == null ? null : typeof fieldsJson === 'string' ? fieldsJson : JSON.stringify(fieldsJson);
+    await query(
+      'INSERT INTO interview_templates (id, title, description, fields_json, image_url, is_default) VALUES (?, ?, ?, ?, ?, ?)',
+      [id, title, description || null, fjs, imageUrl || null, isDefault === true || isDefault === 1 || isDefault === '1' ? 1 : 0]
+    );
     res.status(201).json({ data: { id } });
   } catch (err) { next(err); }
 });
@@ -1377,11 +1421,635 @@ app.get('/api/v1/onboarding/giveaways', authRequired, async (_req, res, next) =>
 
 app.post('/api/v1/onboarding/giveaways', authRequired, async (req, res, next) => {
   try {
-    const { name } = req.body ?? {};
+    const { name, category, occasion, thumbnailUrl, description, isDefault, isActive } = req.body ?? {};
     if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
     const id = ulid();
-    await query('INSERT INTO onboarding_giveaway_templates (id, name) VALUES (?, ?)', [id, name]);
+    await query(
+      `INSERT INTO onboarding_giveaway_templates (id, name, category, occasion, thumbnail_url, description, is_default, is_active)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, name, category || null, occasion || null, thumbnailUrl || null, description || null,
+       isDefault === true || isDefault === 1 || isDefault === '1' ? 1 : 0,
+       isActive === false || isActive === 0 || isActive === '0' ? 0 : 1]
+    );
     res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Applicant onboarding — child tables (giveaways, ERP, assets, presentations,
+// docs, items, trainings). The parent /applicants/:id/onboarding endpoint
+// returns the AO row; these endpoints work against the AO row id.
+// ───────────────────────────────────────────────────────────────────────────
+
+async function ensureOnboardingRow(applicantId: string): Promise<string> {
+  const existing = await query<{ id: string }>(
+    'SELECT id FROM applicant_onboarding WHERE applicant_id = ?',
+    [applicantId]
+  );
+  if (existing[0]?.id) return existing[0].id;
+  const id = ulid();
+  await query(
+    'INSERT INTO applicant_onboarding (id, applicant_id, status) VALUES (?, ?, ?)',
+    [id, applicantId, 'pending']
+  );
+  return id;
+}
+
+// Onboarding activity log helper. Best-effort — failure here must not block
+// the underlying action.
+async function writeOnboardingActivity(
+  aoId: string,
+  applicantId: string,
+  actorUserId: string | null,
+  action: string,
+  opts: { section?: string; message?: string | null; meta?: unknown } = {}
+): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO onboarding_activities
+         (id, ao_id, applicant_id, actor_user_id, action, section, message, meta_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        ulid(), aoId, applicantId, actorUserId, action,
+        opts.section ?? null,
+        opts.message ?? null,
+        opts.meta != null ? JSON.stringify(opts.meta) : null,
+      ]
+    );
+  } catch (e) {
+    console.error('[onboarding-activity] failed to log', action, e);
+  }
+}
+
+// Resolve applicantId from a child row's ao_id (used by activity helpers that
+// only have the child row's parent link).
+async function applicantForAo(aoId: string): Promise<string | null> {
+  const rows = await query<{ applicant_id: string }>('SELECT applicant_id FROM applicant_onboarding WHERE id = ?', [aoId]);
+  return rows[0]?.applicant_id ?? null;
+}
+
+// Aggregated read used by the detail page (header + all children).
+app.get('/api/v1/applicants/:id/onboarding/full', authRequired, async (req, res, next) => {
+  try {
+    const applicantId = req.params.id;
+    const ao = await query<Record<string, unknown>>(
+      'SELECT * FROM applicant_onboarding WHERE applicant_id = ?',
+      [applicantId]
+    );
+    const parent = ao[0] ?? null;
+    if (!parent) return res.json({ data: { parent: null } });
+    const aoId = parent.id as string;
+    const [giveaways, erp, assets, presentations, docs, items, trainings] = await Promise.all([
+      query(
+        `SELECT g.*, t.name AS template_name, t.thumbnail_url AS template_thumbnail
+         FROM applicant_giveaways g
+         LEFT JOIN onboarding_giveaway_templates t ON t.id = g.giveaway_template_id
+         WHERE g.ao_id = ?`,
+        [aoId]
+      ),
+      query(
+        `SELECT m.id AS erp_module_id, m.code, m.name, m.description, m.icon,
+                e.id AS link_id, e.status, e.activated_at
+         FROM applicant_erp_modules e
+         JOIN erp_modules m ON m.id = e.erp_module_id
+         WHERE e.ao_id = ? ORDER BY m.sort_order, m.name`,
+        [aoId]
+      ),
+      query(
+        `SELECT a.*, ast.asset_tag, ast.name AS asset_name, ast.serial_no, c.name AS category_name
+         FROM applicant_asset_allocations a
+         JOIN assets ast ON ast.id = a.asset_id
+         LEFT JOIN asset_categories c ON c.id = ast.category_id
+         WHERE a.ao_id = ?`,
+        [aoId]
+      ),
+      query(
+        `SELECT ap.*, p.title, p.category, p.sub_category, p.thumbnail_url, p.file_url
+         FROM applicant_presentations ap
+         JOIN presentations p ON p.id = ap.presentation_id
+         WHERE ap.ao_id = ?`,
+        [aoId]
+      ),
+      query(
+        `SELECT ad.*, d.title, d.category, d.sub_category, d.thumbnail_url, d.file_url, d.requires_signature
+         FROM applicant_documents ad
+         JOIN onboarding_docs d ON d.id = ad.doc_id
+         WHERE ad.ao_id = ?`,
+        [aoId]
+      ),
+      query(
+        `SELECT ai.*, i.kind, i.title, i.category, i.sub_category, i.thumbnail_url
+         FROM applicant_onboarding_items ai
+         JOIN onboarding_items i ON i.id = ai.item_id
+         WHERE ai.ao_id = ?`,
+        [aoId]
+      ),
+      query(
+        `SELECT at.*, tm.code, tm.name, tm.description, tm.cover_image_url, tm.duration_hours, tm.chapter_count
+         FROM applicant_trainings at
+         JOIN training_modules tm ON tm.id = at.training_module_id
+         WHERE at.ao_id = ?`,
+        [aoId]
+      ),
+    ]);
+    res.json({ data: { parent, giveaways, erp, assets, presentations, docs, items, trainings } });
+  } catch (err) { next(err); }
+});
+
+// Update header fields (DOB, blood group, buddy, branch/dept/etc.)
+app.patch('/api/v1/applicants/:id/onboarding/header', authRequired, async (req, res, next) => {
+  try {
+    const aoId = await ensureOnboardingRow(req.params.id);
+    const body = req.body ?? {};
+    const sectionFromKeys = (keys: string[]): string => {
+      if (keys.some((k) => k === 'idCardPrintedAt' || k === 'idCardTemplateId')) return 'id_card';
+      if (keys.includes('faceMappedAt')) return 'face';
+      if (keys.includes('biometricMappedAt')) return 'biometric';
+      if (keys.includes('inductionBuddyEmployeeId')) return 'buddy';
+      if (keys.some((k) => k === 'emailAssigned' || k === 'phoneAssigned' || k === 'setupEmailAccount')) return 'email_phone';
+      return 'header';
+    };
+    const map: Array<[string, string]> = [
+      ['dob', 'dob'],
+      ['bloodGroup', 'blood_group'],
+      ['divisionId', 'division_id'],
+      ['departmentId', 'department_id'],
+      ['designationId', 'designation_id'],
+      ['branchId', 'branch_id'],
+      ['locationId', 'location_id'],
+      ['setupEmailAccount', 'setup_email_account'],
+      ['inductionBuddyEmployeeId', 'induction_buddy_employee_id'],
+      ['idCardTemplateId', 'id_card_template_id'],
+      ['idCardPrintedAt', 'id_card_printed_at'],
+      ['faceMappedAt', 'face_mapped_at'],
+      ['biometricMappedAt', 'biometric_mapped_at'],
+      ['emailAssigned', 'email_assigned'],
+      ['phoneAssigned', 'phone_assigned'],
+      ['inductionNotes', 'induction_notes'],
+      ['onboardingNotes', 'onboarding_notes'],
+      ['trainingNotes', 'training_notes'],
+      ['status', 'status'],
+    ];
+    const sets: string[] = []; const vals: unknown[] = [];
+    for (const [key, col] of map) {
+      if (body[key] !== undefined) {
+        sets.push(`${col} = ?`);
+        if (key === 'setupEmailAccount') vals.push(body[key] ? 1 : 0);
+        else vals.push(body[key] === '' ? null : body[key]);
+      }
+    }
+    if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+    vals.push(aoId);
+    await query(`UPDATE applicant_onboarding SET ${sets.join(', ')} WHERE id = ?`, vals);
+    const keys = Object.keys(body).filter((k) => map.some((m) => m[0] === k));
+    await writeOnboardingActivity(aoId, req.params.id, req.user?.id ?? null, 'update_header', {
+      section: sectionFromKeys(keys), meta: Object.fromEntries(keys.map((k) => [k, body[k]])),
+    });
+    res.json({ data: { id: aoId } });
+  } catch (err) { next(err); }
+});
+
+// Giveaways (child)
+app.post('/api/v1/applicants/:id/onboarding/giveaways', authRequired, async (req, res, next) => {
+  try {
+    const aoId = await ensureOnboardingRow(req.params.id);
+    const { giveawayTemplateId, customName, status } = req.body ?? {};
+    if (!giveawayTemplateId && !customName) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'giveawayTemplateId or customName required' } });
+    }
+    const id = ulid();
+    await query(
+      'INSERT INTO applicant_giveaways (id, ao_id, giveaway_template_id, custom_name, status, given_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [id, aoId, giveawayTemplateId || null, customName || null, status || 'planned', status === 'given' ? new Date() : null]
+    );
+    await writeOnboardingActivity(aoId, req.params.id, req.user?.id ?? null, 'add_giveaway', {
+      section: 'giveaway', meta: { linkId: id, giveawayTemplateId, customName },
+    });
+    res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/v1/applicants/onboarding/giveaways/:linkId', authRequired, async (req, res, next) => {
+  try {
+    const { status } = req.body ?? {};
+    if (!status) return res.status(400).json({ error: { code: 'VALIDATION', message: 'status required' } });
+    const link = await query<{ ao_id: string }>('SELECT ao_id FROM applicant_giveaways WHERE id = ?', [req.params.linkId]);
+    await query(
+      'UPDATE applicant_giveaways SET status = ?, given_at = ? WHERE id = ?',
+      [status, status === 'given' ? new Date() : null, req.params.linkId]
+    );
+    if (link[0]) {
+      const applicantId = await applicantForAo(link[0].ao_id);
+      if (applicantId) {
+        await writeOnboardingActivity(link[0].ao_id, applicantId, req.user?.id ?? null, 'giveaway_status', {
+          section: 'giveaway', meta: { linkId: req.params.linkId, status },
+        });
+      }
+    }
+    res.json({ data: { id: req.params.linkId } });
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/v1/applicants/onboarding/giveaways/:linkId', authRequired, async (req, res, next) => {
+  try {
+    const link = await query<{ ao_id: string }>('SELECT ao_id FROM applicant_giveaways WHERE id = ?', [req.params.linkId]);
+    await query('DELETE FROM applicant_giveaways WHERE id = ?', [req.params.linkId]);
+    if (link[0]) {
+      const applicantId = await applicantForAo(link[0].ao_id);
+      if (applicantId) {
+        await writeOnboardingActivity(link[0].ao_id, applicantId, req.user?.id ?? null, 'remove_giveaway', {
+          section: 'giveaway', meta: { linkId: req.params.linkId },
+        });
+      }
+    }
+    res.json({ data: { id: req.params.linkId } });
+  } catch (err) { next(err); }
+});
+
+// ERP modules (child) — replaceAll endpoint to sync the grid
+app.put('/api/v1/applicants/:id/onboarding/erp-modules', authRequired, async (req, res, next) => {
+  try {
+    const aoId = await ensureOnboardingRow(req.params.id);
+    const modules = Array.isArray(req.body?.modules) ? req.body.modules as Array<{ erpModuleId: string; status?: string }> : [];
+    await query('DELETE FROM applicant_erp_modules WHERE ao_id = ?', [aoId]);
+    for (const m of modules) {
+      if (!m?.erpModuleId) continue;
+      await query(
+        'INSERT INTO applicant_erp_modules (id, ao_id, erp_module_id, status, activated_at, blocked_at) VALUES (?, ?, ?, ?, ?, ?)',
+        [ulid(), aoId, m.erpModuleId, m.status || 'inactive',
+         m.status === 'active' ? new Date() : null,
+         m.status === 'blocked' ? new Date() : null]
+      );
+    }
+    await writeOnboardingActivity(aoId, req.params.id, req.user?.id ?? null, 'sync_erp_modules', {
+      section: 'erp', meta: { count: modules.length },
+    });
+    res.json({ data: { id: aoId, count: modules.length } });
+  } catch (err) { next(err); }
+});
+
+// Patch a single ERP module activation row
+app.patch('/api/v1/applicants/onboarding/erp-modules/:linkId', authRequired, async (req, res, next) => {
+  try {
+    const { status } = req.body ?? {};
+    if (!status) return res.status(400).json({ error: { code: 'VALIDATION', message: 'status required' } });
+    const link = await query<{ ao_id: string }>('SELECT ao_id FROM applicant_erp_modules WHERE id = ?', [req.params.linkId]);
+    await query(
+      'UPDATE applicant_erp_modules SET status = ?, activated_at = ?, blocked_at = ? WHERE id = ?',
+      [status,
+       status === 'active' ? new Date() : null,
+       status === 'blocked' ? new Date() : null,
+       req.params.linkId]
+    );
+    if (link[0]) {
+      const applicantId = await applicantForAo(link[0].ao_id);
+      if (applicantId) {
+        await writeOnboardingActivity(link[0].ao_id, applicantId, req.user?.id ?? null, 'erp_module_status', {
+          section: 'erp', meta: { linkId: req.params.linkId, status },
+        });
+      }
+    }
+    res.json({ data: { id: req.params.linkId } });
+  } catch (err) { next(err); }
+});
+
+// Asset allocations
+app.post('/api/v1/applicants/:id/onboarding/assets', authRequired, async (req, res, next) => {
+  try {
+    const aoId = await ensureOnboardingRow(req.params.id);
+    const { assetId, notes } = req.body ?? {};
+    if (!assetId) return res.status(400).json({ error: { code: 'VALIDATION', message: 'assetId required' } });
+    const id = ulid();
+    await query(
+      'INSERT INTO applicant_asset_allocations (id, ao_id, asset_id, notes) VALUES (?, ?, ?, ?)',
+      [id, aoId, assetId, notes || null]
+    );
+    // Mark asset as allocated
+    await query("UPDATE assets SET status = 'allocated' WHERE id = ?", [assetId]);
+    await writeOnboardingActivity(aoId, req.params.id, req.user?.id ?? null, 'allocate_asset', {
+      section: 'asset', meta: { linkId: id, assetId },
+    });
+    res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/v1/applicants/onboarding/assets/:linkId', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query<{ asset_id: string; ao_id: string }>(
+      'SELECT asset_id, ao_id FROM applicant_asset_allocations WHERE id = ?',
+      [req.params.linkId]
+    );
+    await query('DELETE FROM applicant_asset_allocations WHERE id = ?', [req.params.linkId]);
+    if (rows[0]?.asset_id) {
+      await query("UPDATE assets SET status = 'available' WHERE id = ?", [rows[0].asset_id]);
+      const applicantId = await applicantForAo(rows[0].ao_id);
+      if (applicantId) {
+        await writeOnboardingActivity(rows[0].ao_id, applicantId, req.user?.id ?? null, 'return_asset', {
+          section: 'asset', meta: { linkId: req.params.linkId, assetId: rows[0].asset_id },
+        });
+      }
+    }
+    res.json({ data: { id: req.params.linkId } });
+  } catch (err) { next(err); }
+});
+
+// Helper: log + write activity for a generic child link (presentations, docs, items, trainings).
+async function logChild(
+  table: string,
+  linkId: string,
+  actorUserId: string | null,
+  action: string,
+  section: string,
+  meta?: unknown
+): Promise<void> {
+  const link = await query<{ ao_id: string }>(`SELECT ao_id FROM ${table} WHERE id = ?`, [linkId]);
+  if (!link[0]) return;
+  const applicantId = await applicantForAo(link[0].ao_id);
+  if (!applicantId) return;
+  await writeOnboardingActivity(link[0].ao_id, applicantId, actorUserId, action, { section, meta });
+}
+
+// Presentations
+app.post('/api/v1/applicants/:id/onboarding/presentations', authRequired, async (req, res, next) => {
+  try {
+    const aoId = await ensureOnboardingRow(req.params.id);
+    const { presentationId } = req.body ?? {};
+    if (!presentationId) return res.status(400).json({ error: { code: 'VALIDATION', message: 'presentationId required' } });
+    const id = ulid();
+    await query('INSERT IGNORE INTO applicant_presentations (id, ao_id, presentation_id) VALUES (?, ?, ?)', [id, aoId, presentationId]);
+    await writeOnboardingActivity(aoId, req.params.id, req.user?.id ?? null, 'add_presentation', { section: 'presentation', meta: { linkId: id, presentationId } });
+    res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/v1/applicants/onboarding/presentations/:linkId', authRequired, async (req, res, next) => {
+  try {
+    const { status } = req.body ?? {};
+    if (!status) return res.status(400).json({ error: { code: 'VALIDATION', message: 'status required' } });
+    await query('UPDATE applicant_presentations SET status = ?, viewed_at = ? WHERE id = ?',
+      [status, status === 'done' ? new Date() : null, req.params.linkId]);
+    await logChild('applicant_presentations', req.params.linkId, req.user?.id ?? null, 'presentation_status', 'presentation', { linkId: req.params.linkId, status });
+    res.json({ data: { id: req.params.linkId } });
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/v1/applicants/onboarding/presentations/:linkId', authRequired, async (req, res, next) => {
+  try {
+    await logChild('applicant_presentations', req.params.linkId, req.user?.id ?? null, 'remove_presentation', 'presentation', { linkId: req.params.linkId });
+    await query('DELETE FROM applicant_presentations WHERE id = ?', [req.params.linkId]);
+    res.json({ data: { id: req.params.linkId } });
+  } catch (err) { next(err); }
+});
+
+// Documents
+app.post('/api/v1/applicants/:id/onboarding/docs', authRequired, async (req, res, next) => {
+  try {
+    const aoId = await ensureOnboardingRow(req.params.id);
+    const { docId } = req.body ?? {};
+    if (!docId) return res.status(400).json({ error: { code: 'VALIDATION', message: 'docId required' } });
+    const id = ulid();
+    await query('INSERT IGNORE INTO applicant_documents (id, ao_id, doc_id) VALUES (?, ?, ?)', [id, aoId, docId]);
+    await writeOnboardingActivity(aoId, req.params.id, req.user?.id ?? null, 'add_document', { section: 'doc', meta: { linkId: id, docId } });
+    res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/v1/applicants/onboarding/docs/:linkId', authRequired, async (req, res, next) => {
+  try {
+    const { status, signedUrl } = req.body ?? {};
+    const sets: string[] = []; const vals: unknown[] = [];
+    if (status !== undefined) { sets.push('status = ?'); vals.push(status); }
+    if (status === 'signed') { sets.push('signed_at = ?'); vals.push(new Date()); }
+    if (signedUrl !== undefined) { sets.push('signed_url = ?'); vals.push(signedUrl); }
+    if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+    vals.push(req.params.linkId);
+    await query(`UPDATE applicant_documents SET ${sets.join(', ')} WHERE id = ?`, vals);
+    await logChild('applicant_documents', req.params.linkId, req.user?.id ?? null, 'doc_status', 'doc', { linkId: req.params.linkId, status, signedUrl });
+    res.json({ data: { id: req.params.linkId } });
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/v1/applicants/onboarding/docs/:linkId', authRequired, async (req, res, next) => {
+  try {
+    await logChild('applicant_documents', req.params.linkId, req.user?.id ?? null, 'remove_document', 'doc', { linkId: req.params.linkId });
+    await query('DELETE FROM applicant_documents WHERE id = ?', [req.params.linkId]);
+    res.json({ data: { id: req.params.linkId } });
+  } catch (err) { next(err); }
+});
+
+// Onboarding items (programs / tours / activities)
+app.post('/api/v1/applicants/:id/onboarding/items', authRequired, async (req, res, next) => {
+  try {
+    const aoId = await ensureOnboardingRow(req.params.id);
+    const { itemId, scheduledAt } = req.body ?? {};
+    if (!itemId) return res.status(400).json({ error: { code: 'VALIDATION', message: 'itemId required' } });
+    const id = ulid();
+    await query('INSERT IGNORE INTO applicant_onboarding_items (id, ao_id, item_id, scheduled_at) VALUES (?, ?, ?, ?)',
+      [id, aoId, itemId, scheduledAt || null]);
+    await writeOnboardingActivity(aoId, req.params.id, req.user?.id ?? null, 'add_item', { section: 'item', meta: { linkId: id, itemId } });
+    res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/v1/applicants/onboarding/items/:linkId', authRequired, async (req, res, next) => {
+  try {
+    const { status, scheduledAt, notes } = req.body ?? {};
+    const sets: string[] = []; const vals: unknown[] = [];
+    if (status !== undefined) { sets.push('status = ?'); vals.push(status); }
+    if (status === 'done') { sets.push('completed_at = ?'); vals.push(new Date()); }
+    if (scheduledAt !== undefined) { sets.push('scheduled_at = ?'); vals.push(scheduledAt || null); }
+    if (notes !== undefined) { sets.push('notes = ?'); vals.push(notes || null); }
+    if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+    vals.push(req.params.linkId);
+    await query(`UPDATE applicant_onboarding_items SET ${sets.join(', ')} WHERE id = ?`, vals);
+    await logChild('applicant_onboarding_items', req.params.linkId, req.user?.id ?? null, 'item_status', 'item', { linkId: req.params.linkId, status, scheduledAt });
+    res.json({ data: { id: req.params.linkId } });
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/v1/applicants/onboarding/items/:linkId', authRequired, async (req, res, next) => {
+  try {
+    await logChild('applicant_onboarding_items', req.params.linkId, req.user?.id ?? null, 'remove_item', 'item', { linkId: req.params.linkId });
+    await query('DELETE FROM applicant_onboarding_items WHERE id = ?', [req.params.linkId]);
+    res.json({ data: { id: req.params.linkId } });
+  } catch (err) { next(err); }
+});
+
+// Trainings
+app.post('/api/v1/applicants/:id/onboarding/trainings', authRequired, async (req, res, next) => {
+  try {
+    const aoId = await ensureOnboardingRow(req.params.id);
+    const { trainingModuleId, dueAt } = req.body ?? {};
+    if (!trainingModuleId) return res.status(400).json({ error: { code: 'VALIDATION', message: 'trainingModuleId required' } });
+    const id = ulid();
+    await query('INSERT IGNORE INTO applicant_trainings (id, ao_id, training_module_id, due_at) VALUES (?, ?, ?, ?)',
+      [id, aoId, trainingModuleId, dueAt || null]);
+    await writeOnboardingActivity(aoId, req.params.id, req.user?.id ?? null, 'add_training', { section: 'training', meta: { linkId: id, trainingModuleId } });
+    res.status(201).json({ data: { id } });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/v1/applicants/onboarding/trainings/:linkId', authRequired, async (req, res, next) => {
+  try {
+    const { status, dueAt, notes } = req.body ?? {};
+    const sets: string[] = []; const vals: unknown[] = [];
+    if (status !== undefined) {
+      sets.push('status = ?'); vals.push(status);
+      if (status === 'ongoing') { sets.push('started_at = ?'); vals.push(new Date()); }
+      if (status === 'done')    { sets.push('completed_at = ?'); vals.push(new Date()); }
+    }
+    if (dueAt !== undefined) { sets.push('due_at = ?'); vals.push(dueAt || null); }
+    if (notes !== undefined) { sets.push('notes = ?'); vals.push(notes || null); }
+    if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+    vals.push(req.params.linkId);
+    await query(`UPDATE applicant_trainings SET ${sets.join(', ')} WHERE id = ?`, vals);
+    await logChild('applicant_trainings', req.params.linkId, req.user?.id ?? null, 'training_status', 'training', { linkId: req.params.linkId, status });
+    res.json({ data: { id: req.params.linkId } });
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/v1/applicants/onboarding/trainings/:linkId', authRequired, async (req, res, next) => {
+  try {
+    await logChild('applicant_trainings', req.params.linkId, req.user?.id ?? null, 'remove_training', 'training', { linkId: req.params.linkId });
+    await query('DELETE FROM applicant_trainings WHERE id = ?', [req.params.linkId]);
+    res.json({ data: { id: req.params.linkId } });
+  } catch (err) { next(err); }
+});
+
+// Close & Archive — sets onboarding_status='onboarded', stamps closed_at,
+// and (when `createEmployee=true` and all required data is available) creates
+// the corresponding employees row, links it via promoted_employee_id, and
+// flips any allocated assets' current_employee_id.
+//
+// The frontend Close & Archive button passes gradeId (HR picks one) and an
+// optional overrides object; everything else is derived from the onboarding
+// header, the offer, and the applicant record.
+app.post('/api/v1/applicants/:id/onboarding/close', authRequired, async (req, res, next) => {
+  try {
+    const aoId = await ensureOnboardingRow(req.params.id);
+    const body = req.body ?? {};
+    const createEmployee = body.createEmployee !== false; // default true
+    const gradeId = typeof body.gradeId === 'string' && body.gradeId ? body.gradeId : null;
+
+    // Pull everything we need for promotion in one shot.
+    const ctx = await query<{
+      ao_id: string; promoted_employee_id: string | null;
+      branch_id: string | null; department_id: string | null;
+      designation_id: string | null; designation_name: string | null;
+      dob: string | null; email_assigned: string | null; phone_assigned: string | null;
+      full_name: string; applicant_email: string; applicant_phone: string | null;
+      offer_ctc: string | null; offer_joining: string | null; offer_designation: string | null;
+      jp_designation: string | null;
+    }>(
+      `SELECT ao.id AS ao_id, ao.promoted_employee_id,
+              ao.branch_id, ao.department_id, ao.designation_id,
+              d.name AS designation_name,
+              ao.dob, ao.email_assigned, ao.phone_assigned,
+              a.full_name, a.email AS applicant_email, a.phone AS applicant_phone,
+              o.ctc AS offer_ctc, o.joining_date AS offer_joining, o.designation AS offer_designation,
+              jp.designation AS jp_designation
+       FROM applicant_onboarding ao
+       JOIN applicants a ON a.id = ao.applicant_id
+       LEFT JOIN designations d ON d.id = ao.designation_id
+       LEFT JOIN applicant_offers o ON o.applicant_id = ao.applicant_id
+       LEFT JOIN job_listings jl ON jl.id = a.job_listing_id
+       LEFT JOIN job_profiles jp ON jp.id = jl.job_profile_id
+       WHERE ao.id = ?`,
+      [aoId]
+    );
+    const row = ctx[0];
+
+    let employeeId: string | null = row?.promoted_employee_id ?? null;
+    let employeeCode: string | null = null;
+    let warning: string | null = null;
+
+    if (createEmployee && !employeeId && row) {
+      // Validate required employees columns: branch_id, department_id, grade_id,
+      // joining_date, ctc, designation, first_name, last_name, email, phone.
+      const designation = row.offer_designation || row.designation_name || row.jp_designation;
+      const joiningDate = row.offer_joining;
+      const ctc = row.offer_ctc != null ? Number(row.offer_ctc) : null;
+      const email = row.email_assigned || row.applicant_email;
+      const phone = row.phone_assigned || row.applicant_phone;
+      const [first, ...rest] = (row.full_name || '').trim().split(/\s+/);
+      const last = rest.join(' ') || first;
+      const missing: string[] = [];
+      if (!row.branch_id)     missing.push('branch');
+      if (!row.department_id) missing.push('department');
+      if (!gradeId)           missing.push('gradeId');
+      if (!designation)       missing.push('designation');
+      if (!joiningDate)       missing.push('joining_date (offer)');
+      if (ctc == null)        missing.push('ctc (offer)');
+      if (!email)             missing.push('email');
+      if (!phone)             missing.push('phone');
+      if (!first)             missing.push('first_name');
+
+      if (missing.length) {
+        warning = `Employee row not created — missing: ${missing.join(', ')}. Onboarding closed without promotion.`;
+      } else {
+        employeeId = ulid();
+        employeeCode = `EMP${String(Date.now()).slice(-6)}`;
+        try {
+          await query(
+            `INSERT INTO employees
+               (id, code, first_name, last_name, designation, status,
+                joining_date, email, phone, branch_id, department_id, grade_id, ctc)
+             VALUES (?, ?, ?, ?, ?, 'PROBATION', ?, ?, ?, ?, ?, ?, ?)`,
+            [employeeId, employeeCode, first, last, designation!,
+             joiningDate, email, phone, row.branch_id, row.department_id, gradeId,
+             Math.round((ctc as number) * 100)]
+          );
+          // Re-point any onboarding-allocated assets to the new employee.
+          await query(
+            `UPDATE assets a
+                JOIN applicant_asset_allocations aaa ON aaa.asset_id = a.id
+                SET a.current_employee_id = ?
+              WHERE aaa.ao_id = ?`,
+            [employeeId, aoId]
+          );
+          // Re-point any onboarding-assigned phone number to the new employee.
+          if (row.phone_assigned) {
+            await query(
+              "UPDATE phone_number_pool SET assigned_employee_id = ?, status = 'assigned' WHERE number = ?",
+              [employeeId, row.phone_assigned]
+            );
+          }
+        } catch (e) {
+          console.error('[onboarding-close] employee creation failed', e);
+          employeeId = null;
+          employeeCode = null;
+          warning = 'Employee row creation failed (see server logs). Onboarding closed without promotion.';
+        }
+      }
+    }
+
+    await query(
+      "UPDATE applicant_onboarding SET status = 'onboarded', closed_at = ?, promoted_employee_id = COALESCE(?, promoted_employee_id) WHERE id = ?",
+      [new Date(), employeeId, aoId]
+    );
+
+    await writeOnboardingActivity(aoId, req.params.id, req.user?.id ?? null, 'close_and_archive', {
+      section: 'close', meta: { employeeId, employeeCode, warning },
+    });
+
+    res.json({ data: { id: aoId, status: 'onboarded', employeeId, employeeCode, warning } });
+  } catch (err) { next(err); }
+});
+
+// Activities feed for the onboarding detail page.
+app.get('/api/v1/applicants/:id/onboarding/activities', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query(
+      `SELECT a.*, CONCAT_WS(' ', e.first_name, e.last_name) AS actor_name, u.email AS actor_email
+       FROM onboarding_activities a
+       LEFT JOIN users u ON u.id = a.actor_user_id
+       LEFT JOIN employees e ON e.id = u.employee_id
+       WHERE a.applicant_id = ?
+       ORDER BY a.created_at DESC
+       LIMIT 500`,
+      [req.params.id]
+    );
+    res.json({ data: rows });
   } catch (err) { next(err); }
 });
 
@@ -1454,20 +2122,467 @@ app.patch('/api/v1/applicants/:id', authRequired, async (req, res, next) => {
 
 app.post('/api/v1/applicants/:id/hire', authRequired, async (req, res, next) => {
   try {
-    await query("UPDATE applicants SET stage = 'hired' WHERE id = ?", [req.params.id]);
-    const rows = await query<{ vacancy_id: string }>('SELECT vacancy_id FROM applicants WHERE id = ?', [req.params.id]);
-    if (rows[0]) {
-      await query('UPDATE vacancies SET filled = filled + 1 WHERE id = ?', [rows[0].vacancy_id]);
-      await query("UPDATE vacancies SET status = 'filled' WHERE id = ? AND filled >= positions", [rows[0].vacancy_id]);
+    await query("UPDATE applicants SET stage = 'hired', status = 'Hired' WHERE id = ?", [req.params.id]);
+    const rows = await query<{ vacancy_id: string | null; job_listing_id: string | null }>(
+      'SELECT vacancy_id, job_listing_id FROM applicants WHERE id = ?',
+      [req.params.id]
+    );
+    const row = rows[0];
+    if (row?.vacancy_id) {
+      await query('UPDATE vacancies SET filled = filled + 1 WHERE id = ?', [row.vacancy_id]);
+      await query("UPDATE vacancies SET status = 'filled' WHERE id = ? AND filled >= positions", [row.vacancy_id]);
     }
+    if (row?.job_listing_id) {
+      await query('UPDATE job_listings SET filled = filled + 1 WHERE id = ?', [row.job_listing_id]);
+    }
+    await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'hire', {
+      toStage: 'hired', toStatus: 'Hired',
+    });
     res.json({ data: { id: req.params.id, stage: 'hired' } });
   } catch (err) { next(err); }
 });
 
 app.post('/api/v1/applicants/:id/reject', authRequired, async (req, res, next) => {
   try {
-    await query("UPDATE applicants SET stage = 'rejected' WHERE id = ?", [req.params.id]);
+    await query("UPDATE applicants SET stage = 'rejected', status = 'Rejected' WHERE id = ?", [req.params.id]);
+    await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'reject', { toStage: 'rejected', toStatus: 'Rejected' });
     res.json({ data: { id: req.params.id, stage: 'rejected' } });
+  } catch (err) { next(err); }
+});
+
+// ─── HIRING FUNNEL — per-applicant screening / interview / offer / activity ──
+
+// Audit log helper. Best-effort — failure to log should not break the action.
+async function writeApplicantActivity(
+  applicantId: string,
+  actorUserId: string | null,
+  action: string,
+  opts: {
+    fromStage?: string | null; toStage?: string | null;
+    fromStatus?: string | null; toStatus?: string | null;
+    message?: string | null; meta?: unknown;
+  } = {}
+): Promise<void> {
+  try {
+    const listingRows = await query<{ job_listing_id: string | null }>(
+      'SELECT job_listing_id FROM applicants WHERE id = ?', [applicantId]
+    );
+    const listingId = listingRows[0]?.job_listing_id ?? null;
+    await query(
+      `INSERT INTO applicant_activities
+         (id, applicant_id, job_listing_id, actor_user_id, action,
+          from_stage, to_stage, from_status, to_status, message, meta_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        ulid(), applicantId, listingId, actorUserId, action,
+        opts.fromStage ?? null, opts.toStage ?? null,
+        opts.fromStatus ?? null, opts.toStatus ?? null,
+        opts.message ?? null,
+        opts.meta != null ? JSON.stringify(opts.meta) : null,
+      ]
+    );
+  } catch (e) {
+    console.error('[activity] failed to log', action, e);
+  }
+}
+
+async function getApplicantStageStatus(id: string): Promise<{ stage: string | null; status: string | null }> {
+  const rows = await query<{ stage: string | null; status: string | null }>(
+    'SELECT stage, status FROM applicants WHERE id = ?', [id]
+  );
+  return rows[0] ?? { stage: null, status: null };
+}
+
+// ── Screening ───────────────────────────────────────────────────────────────
+app.get('/api/v1/applicants/:id/screening', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query<Record<string, unknown>>(
+      `SELECT s.*, t.name AS template_name
+       FROM applicant_screenings s
+       LEFT JOIN screening_templates t ON t.id = s.template_id
+       WHERE s.applicant_id = ?`,
+      [req.params.id]
+    );
+    res.json({ data: rows[0] ?? null });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/applicants/:id/screening', authRequired, async (req, res, next) => {
+  try {
+    const { templateId, responses, score, result, notes } = req.body ?? {};
+    const responsesJson = responses == null ? null : typeof responses === 'string' ? responses : JSON.stringify(responses);
+    const existing = await query<{ id: string }>('SELECT id FROM applicant_screenings WHERE applicant_id = ?', [req.params.id]);
+    const now = new Date();
+    if (existing[0]) {
+      await query(
+        `UPDATE applicant_screenings
+            SET template_id = ?, responses_json = ?, score = ?, result = ?, notes = ?,
+                screened_at = ?, screened_by_user_id = ?
+          WHERE id = ?`,
+        [templateId || null, responsesJson, score ?? null, result || null, notes || null,
+         now, req.user?.id ?? null, existing[0].id]
+      );
+    } else {
+      await query(
+        `INSERT INTO applicant_screenings
+           (id, applicant_id, template_id, responses_json, score, result, notes, screened_at, screened_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ulid(), req.params.id, templateId || null, responsesJson, score ?? null, result || null, notes || null,
+         now, req.user?.id ?? null]
+      );
+    }
+    const prev = await getApplicantStageStatus(req.params.id);
+    await query(
+      "UPDATE applicants SET stage = 'screening', status = 'Screening', screen_score = COALESCE(?, screen_score) WHERE id = ?",
+      [score ?? null, req.params.id]
+    );
+    await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'screen', {
+      fromStage: prev.stage, toStage: 'screening',
+      fromStatus: prev.status, toStatus: 'Screening',
+      meta: { score, result, templateId },
+    });
+    res.json({ data: { id: req.params.id, stage: 'screening', status: 'Screening' } });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/applicants/:id/approve-interview', authRequired, async (req, res, next) => {
+  try {
+    const prev = await getApplicantStageStatus(req.params.id);
+    await query("UPDATE applicants SET stage = 'interview', status = 'Interview Approved' WHERE id = ?", [req.params.id]);
+    await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'approve_interview', {
+      fromStage: prev.stage, toStage: 'interview',
+      fromStatus: prev.status, toStatus: 'Interview Approved',
+    });
+    res.json({ data: { id: req.params.id, stage: 'interview' } });
+  } catch (err) { next(err); }
+});
+
+// ── Interviews ──────────────────────────────────────────────────────────────
+app.get('/api/v1/applicants/:id/interviews', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query(
+      `SELECT i.*, t.title AS template_title, t.fields_json AS template_fields,
+              CONCAT_WS(' ', e.first_name, e.last_name) AS interviewer_name,
+              u.email AS interviewer_email
+       FROM applicant_interviews i
+       LEFT JOIN interview_templates t ON t.id = i.template_id
+       LEFT JOIN users u ON u.id = i.interviewer_user_id
+       LEFT JOIN employees e ON e.id = u.employee_id
+       WHERE i.applicant_id = ?
+       ORDER BY i.round_no, i.scheduled_at`,
+      [req.params.id]
+    );
+    res.json({ data: rows });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/applicants/:id/interviews', authRequired, async (req, res, next) => {
+  try {
+    const { templateId, mode, scheduledAt, durationMinutes, interviewerUserId, meetingUrl, roundNo, notes } = req.body ?? {};
+    const id = ulid();
+    let resolvedRound = Number(roundNo);
+    if (!resolvedRound) {
+      const max = await query<{ n: number | string | null }>('SELECT COALESCE(MAX(round_no), 0) AS n FROM applicant_interviews WHERE applicant_id = ?', [req.params.id]);
+      resolvedRound = Number(max[0]?.n ?? 0) + 1;
+    }
+    await query(
+      `INSERT INTO applicant_interviews
+         (id, applicant_id, round_no, template_id, mode, scheduled_at, duration_minutes,
+          interviewer_user_id, meeting_url, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, req.params.id, resolvedRound, templateId || null, mode || null,
+       scheduledAt || null, durationMinutes != null && durationMinutes !== '' ? Number(durationMinutes) : null,
+       interviewerUserId || null, meetingUrl || null, notes || null]
+    );
+    const prev = await getApplicantStageStatus(req.params.id);
+    await query("UPDATE applicants SET stage = 'interview', status = 'Interview Scheduled' WHERE id = ?", [req.params.id]);
+    await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'schedule_interview', {
+      fromStage: prev.stage, toStage: 'interview',
+      fromStatus: prev.status, toStatus: 'Interview Scheduled',
+      meta: { roundNo: resolvedRound, mode, scheduledAt, interviewerUserId },
+    });
+    res.status(201).json({ data: { id, round_no: resolvedRound } });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/v1/applicants/interviews/:interviewId', authRequired, async (req, res, next) => {
+  try {
+    const body = { ...(req.body ?? {}) } as Record<string, unknown>;
+    if (body.responses !== undefined && body.responses !== null && typeof body.responses !== 'string') {
+      body.responsesJson = JSON.stringify(body.responses);
+      delete body.responses;
+    }
+    const map: Array<[string, string]> = [
+      ['mode', 'mode'], ['scheduledAt', 'scheduled_at'], ['durationMinutes', 'duration_minutes'],
+      ['interviewerUserId', 'interviewer_user_id'], ['meetingUrl', 'meeting_url'],
+      ['recordingUrl', 'recording_url'], ['responsesJson', 'responses_json'],
+      ['score', 'score'], ['result', 'result'], ['notes', 'notes'],
+    ];
+    const sets: string[] = []; const vals: unknown[] = [];
+    for (const [k, c] of map) {
+      if (body[k] !== undefined) { sets.push(`${c} = ?`); vals.push(body[k] === '' ? null : body[k]); }
+    }
+    if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No fields' } });
+    vals.push(req.params.interviewId);
+    await query(`UPDATE applicant_interviews SET ${sets.join(', ')} WHERE id = ?`, vals);
+    res.json({ data: { id: req.params.interviewId } });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/applicants/interviews/:interviewId/share', authRequired, async (req, res, next) => {
+  try {
+    await query('UPDATE applicant_interviews SET shared_at = ? WHERE id = ?', [new Date(), req.params.interviewId]);
+    const rows = await query<{ applicant_id: string }>('SELECT applicant_id FROM applicant_interviews WHERE id = ?', [req.params.interviewId]);
+    if (rows[0]) {
+      await writeApplicantActivity(rows[0].applicant_id, req.user?.id ?? null, 'share_schedule', { meta: { interviewId: req.params.interviewId } });
+    }
+    res.json({ data: { id: req.params.interviewId } });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/applicants/interviews/:interviewId/start', authRequired, async (req, res, next) => {
+  try {
+    await query('UPDATE applicant_interviews SET started_at = ? WHERE id = ?', [new Date(), req.params.interviewId]);
+    const rows = await query<{ applicant_id: string }>('SELECT applicant_id FROM applicant_interviews WHERE id = ?', [req.params.interviewId]);
+    if (rows[0]) {
+      await writeApplicantActivity(rows[0].applicant_id, req.user?.id ?? null, 'start_interview', { meta: { interviewId: req.params.interviewId } });
+    }
+    res.json({ data: { id: req.params.interviewId } });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/applicants/interviews/:interviewId/complete', authRequired, async (req, res, next) => {
+  try {
+    const { responses, score, result, notes } = req.body ?? {};
+    const responsesJson = responses == null ? null : typeof responses === 'string' ? responses : JSON.stringify(responses);
+    await query(
+      `UPDATE applicant_interviews
+          SET responses_json = ?, score = ?, result = ?, notes = COALESCE(?, notes),
+              completed_at = ?
+        WHERE id = ?`,
+      [responsesJson, score ?? null, result || null, notes ?? null, new Date(), req.params.interviewId]
+    );
+    const rows = await query<{ applicant_id: string }>('SELECT applicant_id FROM applicant_interviews WHERE id = ?', [req.params.interviewId]);
+    if (rows[0]) {
+      if (score != null) {
+        await query('UPDATE applicants SET interview_score = ? WHERE id = ?', [Number(score), rows[0].applicant_id]);
+      }
+      await writeApplicantActivity(rows[0].applicant_id, req.user?.id ?? null, 'complete_interview', { meta: { interviewId: req.params.interviewId, score, result } });
+    }
+    res.json({ data: { id: req.params.interviewId } });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/applicants/:id/no-show', authRequired, async (req, res, next) => {
+  try {
+    const prev = await getApplicantStageStatus(req.params.id);
+    await query("UPDATE applicants SET status = 'No Show' WHERE id = ?", [req.params.id]);
+    await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'no_show', {
+      fromStage: prev.stage, toStage: prev.stage, fromStatus: prev.status, toStatus: 'No Show',
+    });
+    res.json({ data: { id: req.params.id } });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/applicants/:id/hold', authRequired, async (req, res, next) => {
+  try {
+    const prev = await getApplicantStageStatus(req.params.id);
+    await query("UPDATE applicants SET status = 'On Hold' WHERE id = ?", [req.params.id]);
+    await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'hold', {
+      fromStage: prev.stage, toStage: prev.stage, fromStatus: prev.status, toStatus: 'On Hold',
+    });
+    res.json({ data: { id: req.params.id } });
+  } catch (err) { next(err); }
+});
+
+// ── Offers ──────────────────────────────────────────────────────────────────
+app.get('/api/v1/applicants/:id/offer', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query<Record<string, unknown>>(
+      `SELECT o.*, t.name AS template_name, t.body_md AS template_body
+       FROM applicant_offers o
+       LEFT JOIN offer_templates t ON t.id = o.template_id
+       WHERE o.applicant_id = ?`,
+      [req.params.id]
+    );
+    res.json({ data: rows[0] ?? null });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/applicants/:id/offer', authRequired, async (req, res, next) => {
+  try {
+    const { templateId, draftBody, ctc, ctcCurrency, joiningDate, designation, notes } = req.body ?? {};
+    const existing = await query<{ id: string }>('SELECT id FROM applicant_offers WHERE applicant_id = ?', [req.params.id]);
+    const now = new Date();
+    if (existing[0]) {
+      await query(
+        `UPDATE applicant_offers
+            SET template_id = ?, draft_body = ?, ctc = ?, ctc_currency = ?, joining_date = ?,
+                designation = ?, notes = ?, drafted_at = ?, status = COALESCE(status, 'Draft')
+          WHERE id = ?`,
+        [templateId || null, draftBody || null,
+         ctc != null && ctc !== '' ? Number(ctc) : null, ctcCurrency || null,
+         joiningDate || null, designation || null, notes || null, now, existing[0].id]
+      );
+    } else {
+      await query(
+        `INSERT INTO applicant_offers
+           (id, applicant_id, template_id, draft_body, ctc, ctc_currency, joining_date,
+            designation, notes, status, drafted_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Draft', ?)`,
+        [ulid(), req.params.id, templateId || null, draftBody || null,
+         ctc != null && ctc !== '' ? Number(ctc) : null, ctcCurrency || null,
+         joiningDate || null, designation || null, notes || null, now]
+      );
+    }
+    const prev = await getApplicantStageStatus(req.params.id);
+    await query("UPDATE applicants SET stage = 'offer', status = COALESCE(status, 'Offer Sent') WHERE id = ?", [req.params.id]);
+    await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'draft_offer', {
+      fromStage: prev.stage, toStage: 'offer',
+      fromStatus: prev.status,
+      meta: { templateId, ctc, joiningDate, designation },
+    });
+    res.json({ data: { id: req.params.id, stage: 'offer' } });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/applicants/:id/offer/share', authRequired, async (req, res, next) => {
+  try {
+    const now = new Date();
+    await query(
+      "UPDATE applicant_offers SET status = 'Sent', sent_at = COALESCE(sent_at, ?), shared_at = ? WHERE applicant_id = ?",
+      [now, now, req.params.id]
+    );
+    const prev = await getApplicantStageStatus(req.params.id);
+    await query("UPDATE applicants SET stage = 'offer', status = 'Offer Sent' WHERE id = ?", [req.params.id]);
+    await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'share_offer', {
+      fromStage: prev.stage, toStage: 'offer',
+      fromStatus: prev.status, toStatus: 'Offer Sent',
+    });
+    res.json({ data: { id: req.params.id, status: 'Offer Sent' } });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/applicants/:id/offer/accept', authRequired, async (req, res, next) => {
+  try {
+    await query("UPDATE applicant_offers SET status = 'Accepted', accepted_at = ? WHERE applicant_id = ?", [new Date(), req.params.id]);
+    const prev = await getApplicantStageStatus(req.params.id);
+    await query("UPDATE applicants SET status = 'Offer Accepted' WHERE id = ?", [req.params.id]);
+    await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'accept_offer', {
+      fromStage: prev.stage, fromStatus: prev.status, toStatus: 'Offer Accepted',
+    });
+    res.json({ data: { id: req.params.id } });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/applicants/:id/offer/decline', authRequired, async (req, res, next) => {
+  try {
+    await query("UPDATE applicant_offers SET status = 'Declined', declined_at = ? WHERE applicant_id = ?", [new Date(), req.params.id]);
+    const prev = await getApplicantStageStatus(req.params.id);
+    await query("UPDATE applicants SET status = 'Offer Declined' WHERE id = ?", [req.params.id]);
+    await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'decline_offer', {
+      fromStage: prev.stage, fromStatus: prev.status, toStatus: 'Offer Declined',
+    });
+    res.json({ data: { id: req.params.id } });
+  } catch (err) { next(err); }
+});
+
+// ── Onboard (handoff from Hire tab into existing applicant_onboarding flow) ──
+app.post('/api/v1/applicants/:id/onboard', authRequired, async (req, res, next) => {
+  try {
+    const existing = await query<{ id: string }>('SELECT id FROM applicant_onboarding WHERE applicant_id = ?', [req.params.id]);
+    let aoId = existing[0]?.id ?? '';
+    // Pull context to pre-fill the onboarding header. Best-effort: any field
+    // that can't be resolved is left null and HR fills it in the detail page.
+    const ctx = await query<{
+      branch_id: string | null; location_id: string | null; department_id: string | null;
+      designation_name: string | null; email: string; phone: string | null;
+    }>(
+      `SELECT jl.branch_id, jl.location_id, jp.department_id,
+              COALESCE(o.designation, jp.designation) AS designation_name,
+              a.email, a.phone
+       FROM applicants a
+       LEFT JOIN job_listings jl ON jl.id = a.job_listing_id
+       LEFT JOIN job_profiles jp ON jp.id = jl.job_profile_id
+       LEFT JOIN applicant_offers o ON o.applicant_id = a.id
+       WHERE a.id = ?`,
+      [req.params.id]
+    );
+    const c = ctx[0] ?? null;
+    let designationId: string | null = null;
+    if (c?.designation_name) {
+      const d = await query<{ id: string }>('SELECT id FROM designations WHERE name = ? LIMIT 1', [c.designation_name]);
+      designationId = d[0]?.id ?? null;
+    }
+
+    if (!aoId) {
+      aoId = ulid();
+      await query(
+        `INSERT INTO applicant_onboarding
+           (id, applicant_id, status, branch_id, location_id, department_id, designation_id, phone_assigned)
+         VALUES (?, ?, 'onboarding', ?, ?, ?, ?, ?)`,
+        [aoId, req.params.id,
+         c?.branch_id ?? null, c?.location_id ?? null, c?.department_id ?? null,
+         designationId, c?.phone ?? null]
+      );
+    } else {
+      // Only pre-fill columns that are still NULL on the existing row.
+      await query(
+        `UPDATE applicant_onboarding
+            SET status = 'onboarding',
+                branch_id      = COALESCE(branch_id, ?),
+                location_id    = COALESCE(location_id, ?),
+                department_id  = COALESCE(department_id, ?),
+                designation_id = COALESCE(designation_id, ?),
+                phone_assigned = COALESCE(phone_assigned, ?)
+          WHERE id = ?`,
+        [c?.branch_id ?? null, c?.location_id ?? null, c?.department_id ?? null,
+         designationId, c?.phone ?? null, aoId]
+      );
+    }
+    const prev = await getApplicantStageStatus(req.params.id);
+    await writeApplicantActivity(req.params.id, req.user?.id ?? null, 'onboard', {
+      fromStage: prev.stage, fromStatus: prev.status,
+      meta: { aoId, prefilled: { branchId: c?.branch_id, departmentId: c?.department_id, designationId } },
+    });
+    await writeOnboardingActivity(aoId, req.params.id, req.user?.id ?? null, 'open', {
+      section: 'header', meta: { prefilled: true },
+    });
+    res.json({ data: { id: req.params.id, aoId } });
+  } catch (err) { next(err); }
+});
+
+// ── Activities feed ─────────────────────────────────────────────────────────
+app.get('/api/v1/applicants/:id/activities', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query(
+      `SELECT a.*, CONCAT_WS(' ', e.first_name, e.last_name) AS actor_name, u.email AS actor_email
+       FROM applicant_activities a
+       LEFT JOIN users u ON u.id = a.actor_user_id
+       LEFT JOIN employees e ON e.id = u.employee_id
+       WHERE a.applicant_id = ?
+       ORDER BY a.created_at DESC`,
+      [req.params.id]
+    );
+    res.json({ data: rows });
+  } catch (err) { next(err); }
+});
+
+app.get('/api/v1/job-listings/:id/activities', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query(
+      `SELECT a.*, ap.full_name AS applicant_name, ap.app_no,
+              CONCAT_WS(' ', e.first_name, e.last_name) AS actor_name, u.email AS actor_email
+       FROM applicant_activities a
+       JOIN applicants ap ON ap.id = a.applicant_id
+       LEFT JOIN users u ON u.id = a.actor_user_id
+       LEFT JOIN employees e ON e.id = u.employee_id
+       WHERE a.job_listing_id = ?
+       ORDER BY a.created_at DESC
+       LIMIT 500`,
+      [req.params.id]
+    );
+    res.json({ data: rows });
   } catch (err) { next(err); }
 });
 

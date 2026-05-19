@@ -690,18 +690,25 @@ export function registerMasterRoutes(app: Application) {
     }
   });
 
-  // Interview templates
+  // Interview templates (extended with fields_json for scorecard schema)
   app.patch('/api/v1/hiring/interview-templates/:id', authRequired, async (req, res, next) => {
     try {
-      const { title, description, imageUrl, isDefault } = req.body ?? {};
-      const { sets, values } = updateSets(req.body ?? {}, [
+      const body = { ...(req.body ?? {}) } as Record<string, unknown>;
+      if (body.fieldsJson !== undefined && body.fieldsJson !== null && typeof body.fieldsJson !== 'string') {
+        body.fieldsJson = JSON.stringify(body.fieldsJson);
+      }
+      const { sets, values } = updateSets(body, [
         { key: 'title', column: 'title' },
         { key: 'description', column: 'description' },
+        { key: 'fieldsJson', column: 'fields_json' },
         { key: 'imageUrl', column: 'image_url' },
         { key: 'isDefault', column: 'is_default' },
       ]);
       if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
-      if (req.body?.isDefault !== undefined) values[values.length - 1] = parseBool(req.body.isDefault);
+      if (body.isDefault !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_default'));
+        if (idx >= 0) values[idx] = parseBool(body.isDefault);
+      }
       values.push(req.params.id);
       await query(`UPDATE interview_templates SET ${sets.join(', ')} WHERE id = ?`, values);
       res.json({ data: { id: req.params.id } });
@@ -968,6 +975,562 @@ export function registerMasterRoutes(app: Application) {
   app.delete('/api/v1/tags/:id', authRequired, async (req, res, next) => {
     try {
       await query('DELETE FROM tags WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Onboarding masters (Phase 0 of Induction & Onboarding rebuild)
+  // ────────────────────────────────────────────────────────────────────────
+
+  // Phone number pool
+  app.get('/api/v1/onboarding/phone-pool', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query(
+        `SELECT p.*, CONCAT_WS(' ', e.first_name, e.last_name) AS assigned_employee_name
+         FROM phone_number_pool p
+         LEFT JOIN employees e ON e.id = p.assigned_employee_id
+         ORDER BY p.number`
+      );
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/onboarding/phone-pool', authRequired, async (req, res, next) => {
+    try {
+      const { number, carrier, status, notes } = req.body ?? {};
+      if (!number) return res.status(400).json({ error: { code: 'VALIDATION', message: 'number required' } });
+      const id = ulid();
+      await query(
+        'INSERT INTO phone_number_pool (id, number, carrier, status, notes) VALUES (?, ?, ?, ?, ?)',
+        [id, number, carrier || null, status || 'available', notes || null]
+      );
+      res.status(201).json({ data: { id } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/onboarding/phone-pool/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'number', column: 'number' },
+        { key: 'carrier', column: 'carrier' },
+        { key: 'status', column: 'status' },
+        { key: 'assignedEmployeeId', column: 'assigned_employee_id' },
+        { key: 'notes', column: 'notes' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      values.push(req.params.id);
+      await query(`UPDATE phone_number_pool SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/onboarding/phone-pool/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM phone_number_pool WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // ERP modules
+  app.get('/api/v1/onboarding/erp-modules', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query('SELECT * FROM erp_modules ORDER BY sort_order, name');
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/onboarding/erp-modules', authRequired, async (req, res, next) => {
+    try {
+      const { code, name, description, icon, sortOrder, isActive } = req.body ?? {};
+      if (!code || !name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'code and name required' } });
+      const id = ulid();
+      await query(
+        'INSERT INTO erp_modules (id, code, name, description, icon, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [id, code, name, description || null, icon || null, Number(sortOrder) || 0, parseBool(isActive ?? true)]
+      );
+      res.status(201).json({ data: { id } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/onboarding/erp-modules/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'code', column: 'code' },
+        { key: 'name', column: 'name' },
+        { key: 'description', column: 'description' },
+        { key: 'icon', column: 'icon' },
+        { key: 'sortOrder', column: 'sort_order' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE erp_modules SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/onboarding/erp-modules/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM erp_modules WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // Designation ↔ ERP module defaults (used to pre-populate ERP grid)
+  app.get('/api/v1/designations/:id/erp-modules', authRequired, async (req, res, next) => {
+    try {
+      const rows = await query(
+        `SELECT m.id, m.code, m.name, m.description, m.icon, dem.default_status
+         FROM designation_erp_modules dem
+         JOIN erp_modules m ON m.id = dem.erp_module_id
+         WHERE dem.designation_id = ? ORDER BY m.sort_order, m.name`,
+        [req.params.id]
+      );
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.put('/api/v1/designations/:id/erp-modules', authRequired, async (req, res, next) => {
+    try {
+      const items = Array.isArray(req.body?.modules) ? req.body.modules as Array<{ erpModuleId: string; defaultStatus?: string }> : [];
+      await query('DELETE FROM designation_erp_modules WHERE designation_id = ?', [req.params.id]);
+      for (const m of items) {
+        if (!m?.erpModuleId) continue;
+        await query(
+          'INSERT INTO designation_erp_modules (designation_id, erp_module_id, default_status) VALUES (?, ?, ?)',
+          [req.params.id, m.erpModuleId, m.defaultStatus || 'active']
+        );
+      }
+      res.json({ data: { id: req.params.id, count: items.length } });
+    } catch (err) { next(err); }
+  });
+
+  // Asset categories
+  app.get('/api/v1/onboarding/asset-categories', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query('SELECT * FROM asset_categories ORDER BY name');
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/onboarding/asset-categories', authRequired, async (req, res, next) => {
+    try {
+      const { name, description, isActive } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
+      const id = ulid();
+      await query(
+        'INSERT INTO asset_categories (id, name, description, is_active) VALUES (?, ?, ?, ?)',
+        [id, name, description || null, parseBool(isActive ?? true)]
+      );
+      res.status(201).json({ data: { id } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/onboarding/asset-categories/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'name', column: 'name' },
+        { key: 'description', column: 'description' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE asset_categories SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/onboarding/asset-categories/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM asset_categories WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // Assets
+  app.get('/api/v1/onboarding/assets', authRequired, async (req, res, next) => {
+    try {
+      const status = typeof req.query.status === 'string' ? req.query.status : '';
+      const where = status ? 'WHERE a.status = ?' : '';
+      const params = status ? [status] : [];
+      const rows = await query(
+        `SELECT a.*, c.name AS category_name,
+                CONCAT_WS(' ', e.first_name, e.last_name) AS current_employee_name
+         FROM assets a
+         LEFT JOIN asset_categories c ON c.id = a.category_id
+         LEFT JOIN employees e ON e.id = a.current_employee_id
+         ${where} ORDER BY a.asset_tag`,
+        params
+      );
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/onboarding/assets', authRequired, async (req, res, next) => {
+    try {
+      const { assetTag, name, categoryId, subCategory, serialNo, description, status, purchaseDate, purchaseCost, thumbnailUrl } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
+      const tag = typeof assetTag === 'string' && assetTag.trim() ? assetTag.trim() : await nextCode('assets', 'asset_tag', 'AST');
+      const id = ulid();
+      await query(
+        `INSERT INTO assets (id, asset_tag, name, category_id, sub_category, serial_no, description, status, purchase_date, purchase_cost, thumbnail_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, tag, name, categoryId || null, subCategory || null, serialNo || null, description || null,
+         status || 'available', purchaseDate || null, purchaseCost != null && purchaseCost !== '' ? Number(purchaseCost) : null, thumbnailUrl || null]
+      );
+      res.status(201).json({ data: { id, asset_tag: tag } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/onboarding/assets/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'assetTag', column: 'asset_tag' },
+        { key: 'name', column: 'name' },
+        { key: 'categoryId', column: 'category_id' },
+        { key: 'subCategory', column: 'sub_category' },
+        { key: 'serialNo', column: 'serial_no' },
+        { key: 'description', column: 'description' },
+        { key: 'status', column: 'status' },
+        { key: 'currentEmployeeId', column: 'current_employee_id' },
+        { key: 'purchaseDate', column: 'purchase_date' },
+        { key: 'purchaseCost', column: 'purchase_cost' },
+        { key: 'thumbnailUrl', column: 'thumbnail_url' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      values.push(req.params.id);
+      await query(`UPDATE assets SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/onboarding/assets/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM assets WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // Presentations
+  app.get('/api/v1/onboarding/presentations', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query('SELECT * FROM presentations ORDER BY category, title');
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/onboarding/presentations', authRequired, async (req, res, next) => {
+    try {
+      const { category, subCategory, title, description, fileUrl, thumbnailUrl, durationMinutes, isActive } = req.body ?? {};
+      if (!title) return res.status(400).json({ error: { code: 'VALIDATION', message: 'title required' } });
+      const id = ulid();
+      await query(
+        `INSERT INTO presentations (id, category, sub_category, title, description, file_url, thumbnail_url, duration_minutes, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, category || null, subCategory || null, title, description || null, fileUrl || null, thumbnailUrl || null,
+         durationMinutes != null && durationMinutes !== '' ? Number(durationMinutes) : null, parseBool(isActive ?? true)]
+      );
+      res.status(201).json({ data: { id } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/onboarding/presentations/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'category', column: 'category' },
+        { key: 'subCategory', column: 'sub_category' },
+        { key: 'title', column: 'title' },
+        { key: 'description', column: 'description' },
+        { key: 'fileUrl', column: 'file_url' },
+        { key: 'thumbnailUrl', column: 'thumbnail_url' },
+        { key: 'durationMinutes', column: 'duration_minutes' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE presentations SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/onboarding/presentations/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM presentations WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // Onboarding documents
+  app.get('/api/v1/onboarding/docs', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query('SELECT * FROM onboarding_docs ORDER BY category, title');
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/onboarding/docs', authRequired, async (req, res, next) => {
+    try {
+      const { category, subCategory, title, description, fileUrl, thumbnailUrl, requiresSignature, isActive } = req.body ?? {};
+      if (!title) return res.status(400).json({ error: { code: 'VALIDATION', message: 'title required' } });
+      const id = ulid();
+      await query(
+        `INSERT INTO onboarding_docs (id, category, sub_category, title, description, file_url, thumbnail_url, requires_signature, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, category || null, subCategory || null, title, description || null, fileUrl || null, thumbnailUrl || null,
+         parseBool(requiresSignature), parseBool(isActive ?? true)]
+      );
+      res.status(201).json({ data: { id } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/onboarding/docs/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'category', column: 'category' },
+        { key: 'subCategory', column: 'sub_category' },
+        { key: 'title', column: 'title' },
+        { key: 'description', column: 'description' },
+        { key: 'fileUrl', column: 'file_url' },
+        { key: 'thumbnailUrl', column: 'thumbnail_url' },
+        { key: 'requiresSignature', column: 'requires_signature' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.requiresSignature !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('requires_signature'));
+        if (idx >= 0) values[idx] = parseBool(req.body.requiresSignature);
+      }
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE onboarding_docs SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/onboarding/docs/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM onboarding_docs WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // Onboarding items (programs / tours / activities — one master, kind discriminator)
+  app.get('/api/v1/onboarding/items', authRequired, async (req, res, next) => {
+    try {
+      const kind = typeof req.query.kind === 'string' ? req.query.kind : '';
+      const where = kind ? 'WHERE kind = ?' : '';
+      const params = kind ? [kind] : [];
+      const rows = await query(
+        `SELECT * FROM onboarding_items ${where} ORDER BY kind, category, title`,
+        params
+      );
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/onboarding/items', authRequired, async (req, res, next) => {
+    try {
+      const { kind, category, subCategory, title, description, thumbnailUrl, durationMinutes, isActive } = req.body ?? {};
+      if (!kind || !title) return res.status(400).json({ error: { code: 'VALIDATION', message: 'kind and title required' } });
+      if (!['program', 'tour', 'activity'].includes(kind)) {
+        return res.status(400).json({ error: { code: 'VALIDATION', message: 'kind must be program | tour | activity' } });
+      }
+      const id = ulid();
+      await query(
+        `INSERT INTO onboarding_items (id, kind, category, sub_category, title, description, thumbnail_url, duration_minutes, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, kind, category || null, subCategory || null, title, description || null, thumbnailUrl || null,
+         durationMinutes != null && durationMinutes !== '' ? Number(durationMinutes) : null, parseBool(isActive ?? true)]
+      );
+      res.status(201).json({ data: { id } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/onboarding/items/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'kind', column: 'kind' },
+        { key: 'category', column: 'category' },
+        { key: 'subCategory', column: 'sub_category' },
+        { key: 'title', column: 'title' },
+        { key: 'description', column: 'description' },
+        { key: 'thumbnailUrl', column: 'thumbnail_url' },
+        { key: 'durationMinutes', column: 'duration_minutes' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE onboarding_items SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/onboarding/items/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM onboarding_items WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Hiring funnel templates (screening + offer). Interview template extension
+  // for fields_json lives next to the existing routes above.
+  // ────────────────────────────────────────────────────────────────────────
+
+  // Screening templates
+  app.get('/api/v1/hiring/screening-templates', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query('SELECT * FROM screening_templates ORDER BY name');
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/hiring/screening-templates', authRequired, async (req, res, next) => {
+    try {
+      const { name, description, fieldsJson, isDefault, isActive } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
+      const id = ulid();
+      const fjs = fieldsJson == null ? null : typeof fieldsJson === 'string' ? fieldsJson : JSON.stringify(fieldsJson);
+      await query(
+        'INSERT INTO screening_templates (id, name, description, fields_json, is_default, is_active) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, name, description || null, fjs, parseBool(isDefault), parseBool(isActive ?? true)]
+      );
+      res.status(201).json({ data: { id } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/hiring/screening-templates/:id', authRequired, async (req, res, next) => {
+    try {
+      const body = { ...(req.body ?? {}) } as Record<string, unknown>;
+      if (body.fieldsJson !== undefined && body.fieldsJson !== null && typeof body.fieldsJson !== 'string') {
+        body.fieldsJson = JSON.stringify(body.fieldsJson);
+      }
+      const { sets, values } = updateSets(body, [
+        { key: 'name', column: 'name' },
+        { key: 'description', column: 'description' },
+        { key: 'fieldsJson', column: 'fields_json' },
+        { key: 'isDefault', column: 'is_default' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (body.isDefault !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_default'));
+        if (idx >= 0) values[idx] = parseBool(body.isDefault);
+      }
+      if (body.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE screening_templates SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/hiring/screening-templates/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM screening_templates WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // Offer templates
+  app.get('/api/v1/hiring/offer-templates', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query('SELECT * FROM offer_templates ORDER BY name');
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/hiring/offer-templates', authRequired, async (req, res, next) => {
+    try {
+      const { name, description, bodyMd, isDefault, isActive } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
+      const id = ulid();
+      await query(
+        'INSERT INTO offer_templates (id, name, description, body_md, is_default, is_active) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, name, description || null, bodyMd || null, parseBool(isDefault), parseBool(isActive ?? true)]
+      );
+      res.status(201).json({ data: { id } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/hiring/offer-templates/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'name', column: 'name' },
+        { key: 'description', column: 'description' },
+        { key: 'bodyMd', column: 'body_md' },
+        { key: 'isDefault', column: 'is_default' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isDefault !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_default'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isDefault);
+      }
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE offer_templates SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/hiring/offer-templates/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM offer_templates WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // Extend giveaway master with the new columns added in migration 0019.
+  // (POST/PATCH for the original `name`/`is_default` shape live in index.ts;
+  // this PATCH supports the extended fields without breaking existing callers.)
+  app.patch('/api/v1/onboarding/giveaways/:id/full', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'name', column: 'name' },
+        { key: 'category', column: 'category' },
+        { key: 'occasion', column: 'occasion' },
+        { key: 'thumbnailUrl', column: 'thumbnail_url' },
+        { key: 'description', column: 'description' },
+        { key: 'isDefault', column: 'is_default' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isDefault !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_default'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isDefault);
+      }
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE onboarding_giveaway_templates SET ${sets.join(', ')} WHERE id = ?`, values);
       res.json({ data: { id: req.params.id } });
     } catch (err) { next(err); }
   });

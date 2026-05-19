@@ -4,7 +4,7 @@
 // View, plus per-row actions Screen / Reject / Hold / Tag.
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { Plus, RefreshCcw, Search, MoreHorizontal, Tag as TagIcon } from 'lucide-react';
+import { Plus, RefreshCcw, Search, Eye, ClipboardCheck, PauseCircle, Ban, Tag as TagIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -72,11 +72,12 @@ export function ApplicationsTab({ listingId }: { listingId: string }) {
   const [addOpen, setAddOpen] = useState(false);
   const [tagTarget, setTagTarget] = useState<Applicant | null>(null);
   const [viewTarget, setViewTarget] = useState<Applicant | null>(null);
-  const [menuOpen, setMenuOpen] = useState<string | null>(null);
 
   const fetchApps = () => {
     setLoading(true);
-    api.get<{ data: Applicant[] }>(`/job-listings/${listingId}/applicants`, { params: { search: search || undefined, status: statusFilter || undefined } })
+    api.get<{ data: Applicant[] }>(`/job-listings/${listingId}/applicants`, {
+      params: { search: search || undefined, status: statusFilter || undefined, stage: 'applied' },
+    })
       .then((r) => setApps(r.data.data))
       .catch(() => setApps([]))
       .finally(() => setLoading(false));
@@ -91,16 +92,19 @@ export function ApplicationsTab({ listingId }: { listingId: string }) {
     api.get<{ data: Tag[] }>('/tags').then((r) => setTags(r.data.data)).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = () => setMenuOpen(null);
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
-  }, [menuOpen]);
-
   const setStatus = async (id: string, status: string) => {
     try { await api.patch(`/job-listing-applicants/${id}`, { status }); fetchApps(); }
     catch { toast.error('Failed'); }
+  };
+
+  // Send to Screening tab — uses the funnel POST so an activity row is written
+  // and the screening record is initialised (without a filled template yet).
+  const sendToScreening = async (a: Applicant) => {
+    try {
+      await api.post(`/applicants/${a.id}/screening`, {});
+      toast.success(`${a.full_name} moved to Screening`);
+      fetchApps();
+    } catch { toast.error('Failed'); }
   };
 
   return (
@@ -179,21 +183,24 @@ export function ApplicationsTab({ listingId }: { listingId: string }) {
                       ))}
                     </div>
                   </td>
-                  <td style={{ padding: '10px', position: 'relative' }}>
-                    <button aria-label="Actions"
-                      onClick={(e) => { e.stopPropagation(); setMenuOpen(menuOpen === a.id ? null : a.id); }}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)', padding: 4 }}>
-                      <MoreHorizontal size={18} />
-                    </button>
-                    {menuOpen === a.id && (
-                      <div onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', right: 12, top: 38, minWidth: 180, background: 'var(--ck-surface)', border: '1px solid var(--ck-line)', borderRadius: 8, boxShadow: 'var(--ck-shadow-lg)', zIndex: 10 }}>
-                        <MenuItem onClick={() => { setMenuOpen(null); setViewTarget(a); }}>View</MenuItem>
-                        <MenuItem onClick={() => { setMenuOpen(null); setStatus(a.id, 'Screening'); }}>Screen</MenuItem>
-                        <MenuItem onClick={() => { setMenuOpen(null); setStatus(a.id, 'On Hold'); }}>Hold</MenuItem>
-                        <MenuItem onClick={() => { setMenuOpen(null); setStatus(a.id, 'Rejected'); }}>Reject</MenuItem>
-                        <MenuItem onClick={() => { setMenuOpen(null); setTagTarget(a); }}>Tag…</MenuItem>
-                      </div>
-                    )}
+                  <td style={{ padding: '10px' }}>
+                    <div style={{ display: 'flex', gap: 2 }}>
+                      <IconBtn title="View" onClick={() => setViewTarget(a)}>
+                        <Eye size={16} />
+                      </IconBtn>
+                      <IconBtn title="Send to Screening" onClick={() => sendToScreening(a)}>
+                        <ClipboardCheck size={16} />
+                      </IconBtn>
+                      <IconBtn title="Hold" active={a.status === 'On Hold'} onClick={() => setStatus(a.id, 'On Hold')}>
+                        <PauseCircle size={16} />
+                      </IconBtn>
+                      <IconBtn title="Reject" active={a.status === 'Rejected'} variant="danger" onClick={() => setStatus(a.id, 'Rejected')}>
+                        <Ban size={16} />
+                      </IconBtn>
+                      <IconBtn title="Tag" onClick={() => setTagTarget(a)}>
+                        <TagIcon size={16} />
+                      </IconBtn>
+                    </div>
                   </td>
                 </tr>
               );
@@ -222,11 +229,21 @@ export function ApplicationsTab({ listingId }: { listingId: string }) {
   );
 }
 
-function MenuItem({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+function IconBtn({ title, onClick, children, active, variant }: {
+  title: string; onClick: () => void; children: ReactNode;
+  active?: boolean; variant?: 'danger' | 'success';
+}) {
+  const activeBg = variant === 'danger' ? '#fee2e2' : variant === 'success' ? '#dcfce7' : 'var(--ck-surface-alt)';
+  const activeFg = variant === 'danger' ? '#b91c1c' : variant === 'success' ? '#15803d' : 'var(--ck-ink)';
   return (
-    <button onClick={onClick} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--ck-ink)' }}
-      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--ck-surface-alt)')}
-      onMouseLeave={(e) => (e.currentTarget.style.background = '')}>
+    <button aria-label={title} title={title} onClick={onClick}
+      style={{
+        background: active ? activeBg : 'none', border: 'none', cursor: 'pointer',
+        color: active ? activeFg : 'var(--ck-muted)',
+        padding: 6, borderRadius: 6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      }}
+      onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = 'var(--ck-surface-alt)'; e.currentTarget.style.color = activeFg; } }}
+      onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'var(--ck-muted)'; } }}>
       {children}
     </button>
   );

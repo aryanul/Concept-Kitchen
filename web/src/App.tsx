@@ -16,6 +16,7 @@ import { JobProfilePage } from './routes/hiring/JobProfilePage';
 import { VacanciesPage } from './routes/hiring/VacanciesPage';
 import { ListingDetailPage } from './routes/hiring/ListingDetailPage';
 import { OnboardingPage } from './routes/hiring/OnboardingPage';
+import { OnboardingDetailPage } from './routes/hiring/OnboardingDetailPage';
 import {
   MastersHomePage,
   BranchMasterPage,
@@ -27,11 +28,20 @@ import {
   TrainingModuleMasterPage,
   CompanyMasterPage,
   InterviewTemplateMasterPage,
+  ScreeningTemplateMasterPage,
+  OfferTemplateMasterPage,
   GiveawayTemplateMasterPage,
   UserConsolePage,
   HolidayMasterPage,
   LookupMasterPage,
   TagMasterPage,
+  PhonePoolMasterPage,
+  ErpModuleMasterPage,
+  AssetCategoryMasterPage,
+  AssetMasterPage,
+  PresentationMasterPage,
+  OnboardingDocMasterPage,
+  OnboardingItemMasterPage,
 } from './routes/masters/MasterPages';
 import { StubPage } from './routes/StubPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -55,11 +65,20 @@ export default function App() {
             <Route path="/masters/training-modules" element={<TrainingModuleMasterPage />} />
             <Route path="/masters/companies" element={<CompanyMasterPage />} />
             <Route path="/masters/interview-templates" element={<InterviewTemplateMasterPage />} />
+            <Route path="/masters/screening-templates" element={<ScreeningTemplateMasterPage />} />
+            <Route path="/masters/offer-templates" element={<OfferTemplateMasterPage />} />
             <Route path="/masters/giveaways" element={<GiveawayTemplateMasterPage />} />
             <Route path="/masters/users" element={<UserConsolePage />} />
             <Route path="/masters/holidays" element={<HolidayMasterPage />} />
             <Route path="/masters/lookups" element={<LookupMasterPage />} />
             <Route path="/masters/tags" element={<TagMasterPage />} />
+            <Route path="/masters/phone-pool" element={<PhonePoolMasterPage />} />
+            <Route path="/masters/erp-modules" element={<ErpModuleMasterPage />} />
+            <Route path="/masters/asset-categories" element={<AssetCategoryMasterPage />} />
+            <Route path="/masters/assets" element={<AssetMasterPage />} />
+            <Route path="/masters/presentations" element={<PresentationMasterPage />} />
+            <Route path="/masters/onboarding-docs" element={<OnboardingDocMasterPage />} />
+            <Route path="/masters/onboarding-items" element={<OnboardingItemMasterPage />} />
 
             {/* Phase 1 — placeholders until each module is built */}
             <Route path="/employees"     element={<EmployeesPage />} />
@@ -79,6 +98,7 @@ export default function App() {
             <Route path="/vacancy"       element={<VacanciesPage />} />
             <Route path="/hiring/listings/:id" element={<ListingDetailPage />} />
             <Route path="/onboarding"    element={<OnboardingPage />} />
+            <Route path="/onboarding/:applicantId" element={<OnboardingDetailPage />} />
 
             {/* Phase 3 stubs */}
             <Route path="/exit-clearance" element={<StubPage title="Exit Clearance"          phase="Phase 3" />} />

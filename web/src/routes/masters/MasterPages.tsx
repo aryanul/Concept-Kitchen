@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Building2, LayoutGrid, LocateFixed, Shield, Sparkles, Wallet, CalendarDays, ClipboardList, BookOpen, ListChecks, Tag, Plus } from 'lucide-react';
+import { Building2, LayoutGrid, LocateFixed, Shield, Sparkles, Wallet, CalendarDays, ClipboardList, BookOpen, ListChecks, Tag, Plus, Phone, Package, Presentation as PresentationIcon, FileText, MapPin, Cpu } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
@@ -48,11 +48,20 @@ export function MastersHomePage() {
     { title: 'Training Modules', desc: 'Course modules for job profiles', to: '/masters/training-modules', icon: BookOpen },
     { title: 'Companies', desc: 'Hiring company master', to: '/masters/companies', icon: Building2 },
     { title: 'Users', desc: 'User console and role access', to: '/masters/users', icon: Shield },
-    { title: 'Interview Templates', desc: 'Hiring template library', to: '/masters/interview-templates', icon: ClipboardList },
+    { title: 'Interview Templates', desc: 'Interview scorecards', to: '/masters/interview-templates', icon: ClipboardList },
+    { title: 'Screening Templates', desc: 'Screening questionnaires', to: '/masters/screening-templates', icon: ClipboardList },
+    { title: 'Offer Templates', desc: 'Offer letter bodies + merge tokens', to: '/masters/offer-templates', icon: FileText },
     { title: 'Giveaways', desc: 'Onboarding giveaway templates', to: '/masters/giveaways', icon: GiftIcon },
     { title: 'Holidays', desc: 'Holiday master', to: '/holidays', icon: CalendarDays },
     { title: 'Lookups', desc: 'Hiring statuses, sources, modes etc.', to: '/masters/lookups', icon: ListChecks },
     { title: 'Tags', desc: 'Applicant tag library', to: '/masters/tags', icon: Tag },
+    { title: 'Phone Pool', desc: 'Company phone numbers for onboarding', to: '/masters/phone-pool', icon: Phone },
+    { title: 'ERP Modules', desc: 'Modules activated per designation', to: '/masters/erp-modules', icon: Cpu },
+    { title: 'Asset Categories', desc: 'Asset category master', to: '/masters/asset-categories', icon: Package },
+    { title: 'Assets', desc: 'Allocatable asset master', to: '/masters/assets', icon: Package },
+    { title: 'Presentations', desc: 'Induction presentation library', to: '/masters/presentations', icon: PresentationIcon },
+    { title: 'Onboarding Docs', desc: 'Forms, policies and NDAs', to: '/masters/onboarding-docs', icon: FileText },
+    { title: 'Programs / Tours / Activities', desc: 'Onboarding item library', to: '/masters/onboarding-items', icon: MapPin },
   ];
 
   return (
@@ -297,47 +306,477 @@ export function CompanyMasterPage() {
   );
 }
 
+type InterviewTemplateFull = InterviewTemplate & { fields_json: unknown };
+
 export function InterviewTemplateMasterPage() {
   return (
-    <MasterCrudPage<InterviewTemplate>
+    <MasterCrudPage<InterviewTemplateFull>
       title="Interview Templates"
-      subtitle="Template cards used in the hiring workflow."
+      subtitle="Scorecard templates used by the Interviews tab on a Job Listing."
       endpoint="/hiring/interview-templates"
       columns={[
         { header: 'Title', render: (row) => <Strong>{row.title}</Strong> },
         { header: 'Description', render: (row) => row.description ?? '—' },
+        { header: 'Fields', render: (row) => `${countTplFields(row.fields_json)} field(s)` },
         { header: 'Default', render: (row) => <StatusPill status={Number(row.is_default) ? 'Default' : 'Custom'} /> },
       ]}
       buildFields={() => [
         { name: 'title', label: 'Title', type: 'text', placeholder: 'Interview template title', required: true },
         { name: 'description', label: 'Description', type: 'textarea', span: true },
+        { name: 'fieldsJson', label: 'Scorecard fields (JSON)', type: 'textarea',
+          help: 'Array of {name,label,type,required?,weight?,options?}. type ∈ text|number|select|checkbox.',
+          span: true },
         { name: 'imageUrl', label: 'Image URL', type: 'text', placeholder: 'https://...', span: true },
         { name: 'isDefault', label: 'Default', type: 'checkbox', span: true },
       ]}
-      rowToValues={(row) => row ? { title: row.title, description: row.description ?? '', imageUrl: row.image_url ?? '', isDefault: Boolean(row.is_default) } : { title: '', description: '', imageUrl: '', isDefault: false }}
-      buildPayload={(values) => ({ title: values.title, description: values.description || undefined, imageUrl: values.imageUrl || undefined, isDefault: Boolean(values.isDefault) })}
+      rowToValues={(row) => row ? {
+        title: row.title, description: row.description ?? '',
+        fieldsJson: row.fields_json ? JSON.stringify(row.fields_json, null, 2) : '',
+        imageUrl: row.image_url ?? '', isDefault: Boolean(row.is_default),
+      } : { title: '', description: '', fieldsJson: '', imageUrl: '', isDefault: false }}
+      buildPayload={(values) => ({
+        title: values.title, description: values.description || undefined,
+        fieldsJson: parseJsonOrNull(values.fieldsJson),
+        imageUrl: values.imageUrl || undefined,
+        isDefault: Boolean(values.isDefault),
+      })}
       searchKeys={['title', 'description']}
     />
   );
 }
 
-export function GiveawayTemplateMasterPage() {
+function countTplFields(fields: unknown): number {
+  if (Array.isArray(fields)) return fields.length;
+  if (typeof fields === 'string') {
+    try { const v = JSON.parse(fields); return Array.isArray(v) ? v.length : 0; } catch { return 0; }
+  }
+  return 0;
+}
+
+function parseJsonOrNull(v: unknown): unknown {
+  if (v == null || v === '') return null;
+  if (typeof v !== 'string') return v;
+  try { return JSON.parse(v); } catch { return null; }
+}
+
+// ─── Screening + Offer templates ───────────────────────────────────────────
+type ScreeningTemplateRow = { id: string; name: string; description: string | null; fields_json: unknown; is_default: number | boolean; is_active: number | boolean };
+type OfferTemplateRow = { id: string; name: string; description: string | null; body_md: string | null; is_default: number | boolean; is_active: number | boolean };
+
+export function ScreeningTemplateMasterPage() {
   return (
-    <MasterCrudPage<GiveawayTemplate>
-      title="Onboarding Giveaways"
-      subtitle="Gift items or kit templates used in onboarding."
-      endpoint="/onboarding/giveaways"
+    <MasterCrudPage<ScreeningTemplateRow>
+      title="Screening Templates"
+      subtitle="HR-defined screening questionnaires (salary, notice, location, fit)."
+      endpoint="/hiring/screening-templates"
       columns={[
         { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Description', render: (row) => row.description ?? '—' },
+        { header: 'Fields', render: (row) => `${countTplFields(row.fields_json)} field(s)` },
+        { header: 'Default', render: (row) => <StatusPill status={Number(row.is_default) ? 'Default' : 'Custom'} /> },
+        { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+      ]}
+      buildFields={() => [
+        { name: 'name', label: 'Name', type: 'text', required: true },
+        { name: 'description', label: 'Description', type: 'textarea', span: true },
+        { name: 'fieldsJson', label: 'Fields (JSON)', type: 'textarea',
+          help: 'Array of {name,label,type,required?,weight?,options?}. type ∈ text|number|select|checkbox.',
+          span: true },
+        { name: 'isDefault', label: 'Default', type: 'checkbox' },
+        { name: 'isActive', label: 'Active', type: 'checkbox' },
+      ]}
+      rowToValues={(row) => row ? {
+        name: row.name, description: row.description ?? '',
+        fieldsJson: row.fields_json ? JSON.stringify(row.fields_json, null, 2) : '',
+        isDefault: Boolean(row.is_default), isActive: Boolean(row.is_active),
+      } : { name: '', description: '', fieldsJson: '', isDefault: false, isActive: true }}
+      buildPayload={(values) => ({
+        name: values.name, description: values.description || undefined,
+        fieldsJson: parseJsonOrNull(values.fieldsJson),
+        isDefault: Boolean(values.isDefault), isActive: Boolean(values.isActive),
+      })}
+      searchKeys={['name', 'description']}
+    />
+  );
+}
+
+export function OfferTemplateMasterPage() {
+  return (
+    <MasterCrudPage<OfferTemplateRow>
+      title="Offer Letter Templates"
+      subtitle="Offer letter bodies with merge tokens: {{candidate_name}}, {{designation}}, {{ctc}}, {{joining_date}}, {{branch}}, {{company}}."
+      endpoint="/hiring/offer-templates"
+      columns={[
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Description', render: (row) => row.description ?? '—' },
+        { header: 'Default', render: (row) => <StatusPill status={Number(row.is_default) ? 'Default' : 'Custom'} /> },
+        { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+      ]}
+      buildFields={() => [
+        { name: 'name', label: 'Name', type: 'text', required: true },
+        { name: 'description', label: 'Description', type: 'textarea', span: true },
+        { name: 'bodyMd', label: 'Body (Markdown with merge tokens)', type: 'textarea', span: true,
+          help: 'Use {{candidate_name}}, {{designation}}, {{ctc}}, {{ctc_currency}}, {{joining_date}}, {{branch}}, {{company}}.' },
+        { name: 'isDefault', label: 'Default', type: 'checkbox' },
+        { name: 'isActive', label: 'Active', type: 'checkbox' },
+      ]}
+      rowToValues={(row) => row ? {
+        name: row.name, description: row.description ?? '', bodyMd: row.body_md ?? '',
+        isDefault: Boolean(row.is_default), isActive: Boolean(row.is_active),
+      } : { name: '', description: '', bodyMd: '', isDefault: false, isActive: true }}
+      buildPayload={(values) => ({
+        name: values.name, description: values.description || undefined, bodyMd: values.bodyMd || undefined,
+        isDefault: Boolean(values.isDefault), isActive: Boolean(values.isActive),
+      })}
+      searchKeys={['name', 'description']}
+    />
+  );
+}
+
+type GiveawayTemplateFull = GiveawayTemplate & {
+  category: string | null;
+  occasion: string | null;
+  thumbnail_url: string | null;
+  description: string | null;
+  is_active: number | boolean;
+};
+
+export function GiveawayTemplateMasterPage() {
+  return (
+    <MasterCrudPage<GiveawayTemplateFull>
+      title="Onboarding Giveaways"
+      subtitle="Gift items or kit templates used in onboarding — grouped by occasion."
+      endpoint="/onboarding/giveaways"
+      patchPathSuffix="/full"
+      columns={[
+        { header: 'Thumb', render: (row) => row.thumbnail_url
+          ? <img src={row.thumbnail_url} alt="" style={{ width: 36, height: 36, borderRadius: 6, objectFit: 'cover', border: '1px solid var(--ck-line)' }} />
+          : <span style={{ width: 36, height: 36, borderRadius: 6, background: 'var(--ck-line-soft)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>🎁</span>
+        },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Category', render: (row) => row.category ?? '—' },
+        { header: 'Occasion', render: (row) => row.occasion ?? '—' },
         { header: 'Default', render: (row) => <StatusPill status={Number(row.is_default) ? 'Default' : 'Custom'} /> },
       ]}
       buildFields={() => [
         { name: 'name', label: 'Name', type: 'text', placeholder: 'Welcome kit', required: true },
-        { name: 'isDefault', label: 'Default', type: 'checkbox', span: true },
+        { name: 'category', label: 'Category', type: 'text', placeholder: 'Apparel / Stationery / Hamper' },
+        { name: 'occasion', label: 'Occasion', type: 'text', placeholder: 'Onboarding / Birthday / Festival' },
+        { name: 'thumbnailUrl', label: 'Thumbnail URL', type: 'text', placeholder: 'https://…', span: true },
+        { name: 'description', label: 'Description', type: 'textarea', span: true },
+        { name: 'isDefault', label: 'Default', type: 'checkbox' },
+        { name: 'isActive', label: 'Active', type: 'checkbox' },
       ]}
-      rowToValues={(row) => row ? { name: row.name, isDefault: Boolean(row.is_default) } : { name: '', isDefault: false }}
-      buildPayload={(values) => ({ name: values.name, isDefault: Boolean(values.isDefault) })}
-      searchKeys={['name']}
+      rowToValues={(row) => row ? {
+        name: row.name,
+        category: row.category ?? '',
+        occasion: row.occasion ?? '',
+        thumbnailUrl: row.thumbnail_url ?? '',
+        description: row.description ?? '',
+        isDefault: Boolean(row.is_default),
+        isActive: Boolean(row.is_active ?? 1),
+      } : { name: '', category: '', occasion: '', thumbnailUrl: '', description: '', isDefault: false, isActive: true }}
+      buildPayload={(values) => ({
+        name: values.name,
+        category: values.category || undefined,
+        occasion: values.occasion || undefined,
+        thumbnailUrl: values.thumbnailUrl || undefined,
+        description: values.description || undefined,
+        isDefault: Boolean(values.isDefault),
+        isActive: Boolean(values.isActive),
+      })}
+      searchKeys={['name', 'category', 'occasion']}
+    />
+  );
+}
+
+// ─── Onboarding masters (Phase 0) ──────────────────────────────────────────
+type PhonePoolRow = { id: string; number: string; carrier: string | null; status: string; assigned_employee_id: string | null; assigned_employee_name: string | null; notes: string | null };
+type ErpModuleRow = { id: string; code: string; name: string; description: string | null; icon: string | null; sort_order: number; is_active: number | boolean };
+type AssetCategoryRow = { id: string; name: string; description: string | null; is_active: number | boolean };
+type AssetRow = { id: string; asset_tag: string; name: string; category_id: string | null; category_name: string | null; sub_category: string | null; serial_no: string | null; status: string; current_employee_name: string | null; purchase_date: string | null; purchase_cost: number | string | null; thumbnail_url: string | null; description: string | null };
+type PresentationRow = { id: string; category: string | null; sub_category: string | null; title: string; description: string | null; file_url: string | null; thumbnail_url: string | null; duration_minutes: number | string | null; is_active: number | boolean };
+type OnboardingDocRow = { id: string; category: string | null; sub_category: string | null; title: string; description: string | null; file_url: string | null; thumbnail_url: string | null; requires_signature: number | boolean; is_active: number | boolean };
+type OnboardingItemRow = { id: string; kind: string; category: string | null; sub_category: string | null; title: string; description: string | null; thumbnail_url: string | null; duration_minutes: number | string | null; is_active: number | boolean };
+
+export function PhonePoolMasterPage() {
+  return (
+    <MasterCrudPage<PhonePoolRow>
+      title="Phone Number Pool"
+      subtitle="Company-owned phone numbers assigned to employees during onboarding."
+      endpoint="/onboarding/phone-pool"
+      columns={[
+        { header: 'Number', render: (row) => <Mono>{row.number}</Mono> },
+        { header: 'Carrier', render: (row) => row.carrier ?? '—' },
+        { header: 'Status', render: (row) => <StatusPill status={row.status} /> },
+        { header: 'Assigned To', render: (row) => row.assigned_employee_name ?? '—' },
+        { header: 'Notes', render: (row) => row.notes ?? '—' },
+      ]}
+      buildFields={() => [
+        { name: 'number', label: 'Number', type: 'text', placeholder: '+91 9876543210', required: true },
+        { name: 'carrier', label: 'Carrier', type: 'text', placeholder: 'Airtel / Jio / VI' },
+        { name: 'status', label: 'Status', type: 'select', options: [
+          { label: 'Available', value: 'available' },
+          { label: 'Assigned', value: 'assigned' },
+          { label: 'Blocked', value: 'blocked' },
+        ]},
+        { name: 'notes', label: 'Notes', type: 'textarea', span: true },
+      ]}
+      rowToValues={(row) => row ? { number: row.number, carrier: row.carrier ?? '', status: row.status, notes: row.notes ?? '' } : { number: '', carrier: '', status: 'available', notes: '' }}
+      buildPayload={(values) => ({ number: values.number, carrier: values.carrier || undefined, status: values.status || 'available', notes: values.notes || undefined })}
+      searchKeys={['number', 'carrier', 'assigned_employee_name']}
+    />
+  );
+}
+
+export function ErpModuleMasterPage() {
+  return (
+    <MasterCrudPage<ErpModuleRow>
+      title="ERP Module Master"
+      subtitle="Modules (SWORD, Infurnia, etc.) that get activated per designation during onboarding."
+      endpoint="/onboarding/erp-modules"
+      columns={[
+        { header: 'Code', render: (row) => <Mono>{row.code}</Mono> },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Icon', render: (row) => row.icon ?? '—' },
+        { header: 'Sort', render: (row) => Number(row.sort_order) },
+        { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+      ]}
+      buildFields={() => [
+        { name: 'code', label: 'Code', type: 'text', placeholder: 'SWORD', required: true },
+        { name: 'name', label: 'Name', type: 'text', placeholder: 'SWORD ERP', required: true },
+        { name: 'description', label: 'Description', type: 'textarea', span: true },
+        { name: 'icon', label: 'Icon (lucide name)', type: 'text', placeholder: 'Cpu' },
+        { name: 'sortOrder', label: 'Sort Order', type: 'number' },
+        { name: 'isActive', label: 'Active', type: 'checkbox', span: true },
+      ]}
+      rowToValues={(row) => row ? { code: row.code, name: row.name, description: row.description ?? '', icon: row.icon ?? '', sortOrder: Number(row.sort_order) || 0, isActive: Boolean(row.is_active) } : { code: '', name: '', description: '', icon: '', sortOrder: 0, isActive: true }}
+      buildPayload={(values) => ({ code: values.code, name: values.name, description: values.description || undefined, icon: values.icon || undefined, sortOrder: Number(values.sortOrder) || 0, isActive: Boolean(values.isActive) })}
+      searchKeys={['code', 'name', 'description']}
+    />
+  );
+}
+
+export function AssetCategoryMasterPage() {
+  return (
+    <MasterCrudPage<AssetCategoryRow>
+      title="Asset Categories"
+      subtitle="Categorize allocatable assets (Laptop, Mobile, Furniture, etc.)."
+      endpoint="/onboarding/asset-categories"
+      columns={[
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Description', render: (row) => row.description ?? '—' },
+        { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+      ]}
+      buildFields={() => [
+        { name: 'name', label: 'Name', type: 'text', placeholder: 'Laptop', required: true },
+        { name: 'description', label: 'Description', type: 'textarea', span: true },
+        { name: 'isActive', label: 'Active', type: 'checkbox', span: true },
+      ]}
+      rowToValues={(row) => row ? { name: row.name, description: row.description ?? '', isActive: Boolean(row.is_active) } : { name: '', description: '', isActive: true }}
+      buildPayload={(values) => ({ name: values.name, description: values.description || undefined, isActive: Boolean(values.isActive) })}
+      searchKeys={['name', 'description']}
+    />
+  );
+}
+
+export function AssetMasterPage() {
+  const [cats, setCats] = useState<AssetCategoryRow[]>([]);
+  useEffect(() => {
+    api.get('/onboarding/asset-categories').then((r) => setCats(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => setCats([]));
+  }, []);
+  const catOptions = cats.map((c) => ({ label: c.name, value: c.id }));
+  return (
+    <MasterCrudPage<AssetRow>
+      title="Asset Master"
+      subtitle="Allocatable company assets used during onboarding."
+      endpoint="/onboarding/assets"
+      columns={[
+        { header: 'Tag', render: (row) => <Mono>{row.asset_tag}</Mono> },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Category', render: (row) => row.category_name ?? '—' },
+        { header: 'Sub Category', render: (row) => row.sub_category ?? '—' },
+        { header: 'Serial #', render: (row) => row.serial_no ?? '—' },
+        { header: 'Status', render: (row) => <StatusPill status={row.status} /> },
+        { header: 'Allocated To', render: (row) => row.current_employee_name ?? '—' },
+      ]}
+      buildFields={() => [
+        { name: 'assetTag', label: 'Asset Tag', type: 'text', placeholder: 'AST001 (auto if blank)' },
+        { name: 'name', label: 'Name', type: 'text', placeholder: 'MacBook Pro 14"', required: true },
+        { name: 'categoryId', label: 'Category', type: 'select', options: catOptions },
+        { name: 'subCategory', label: 'Sub Category', type: 'text', placeholder: 'M3 Pro' },
+        { name: 'serialNo', label: 'Serial #', type: 'text' },
+        { name: 'description', label: 'Description', type: 'textarea', span: true },
+        { name: 'status', label: 'Status', type: 'select', options: [
+          { label: 'Available', value: 'available' },
+          { label: 'Allocated', value: 'allocated' },
+          { label: 'Maintenance', value: 'maintenance' },
+          { label: 'Retired', value: 'retired' },
+        ]},
+        { name: 'purchaseDate', label: 'Purchase Date', type: 'text', placeholder: 'YYYY-MM-DD' },
+        { name: 'purchaseCost', label: 'Purchase Cost', type: 'number' },
+        { name: 'thumbnailUrl', label: 'Thumbnail URL', type: 'text', span: true },
+      ]}
+      rowToValues={(row) => row ? {
+        assetTag: row.asset_tag, name: row.name, categoryId: row.category_id ?? '',
+        subCategory: row.sub_category ?? '', serialNo: row.serial_no ?? '', description: row.description ?? '',
+        status: row.status, purchaseDate: row.purchase_date ?? '', purchaseCost: row.purchase_cost ?? '',
+        thumbnailUrl: row.thumbnail_url ?? '',
+      } : { assetTag: '', name: '', categoryId: '', subCategory: '', serialNo: '', description: '', status: 'available', purchaseDate: '', purchaseCost: '', thumbnailUrl: '' }}
+      buildPayload={(values) => ({
+        assetTag: values.assetTag || undefined, name: values.name,
+        categoryId: values.categoryId || undefined, subCategory: values.subCategory || undefined,
+        serialNo: values.serialNo || undefined, description: values.description || undefined,
+        status: values.status || 'available',
+        purchaseDate: values.purchaseDate || undefined,
+        purchaseCost: values.purchaseCost === '' || values.purchaseCost == null ? undefined : Number(values.purchaseCost),
+        thumbnailUrl: values.thumbnailUrl || undefined,
+      })}
+      searchKeys={['asset_tag', 'name', 'category_name', 'serial_no']}
+    />
+  );
+}
+
+export function PresentationMasterPage() {
+  return (
+    <MasterCrudPage<PresentationRow>
+      title="Presentation Master"
+      subtitle="Induction presentations shown to new joiners."
+      endpoint="/onboarding/presentations"
+      columns={[
+        { header: 'Title', render: (row) => <Strong>{row.title}</Strong> },
+        { header: 'Category', render: (row) => row.category ?? '—' },
+        { header: 'Sub Category', render: (row) => row.sub_category ?? '—' },
+        { header: 'Duration', render: (row) => row.duration_minutes != null ? `${row.duration_minutes} min` : '—' },
+        { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+      ]}
+      buildFields={() => [
+        { name: 'title', label: 'Title', type: 'text', placeholder: 'Welcome to Concept Kitchen', required: true },
+        { name: 'category', label: 'Category', type: 'text', placeholder: 'Company / Policy / Product' },
+        { name: 'subCategory', label: 'Sub Category', type: 'text' },
+        { name: 'description', label: 'Description', type: 'textarea', span: true },
+        { name: 'fileUrl', label: 'File URL', type: 'text', span: true },
+        { name: 'thumbnailUrl', label: 'Thumbnail URL', type: 'text', span: true },
+        { name: 'durationMinutes', label: 'Duration (min)', type: 'number' },
+        { name: 'isActive', label: 'Active', type: 'checkbox' },
+      ]}
+      rowToValues={(row) => row ? {
+        title: row.title, category: row.category ?? '', subCategory: row.sub_category ?? '',
+        description: row.description ?? '', fileUrl: row.file_url ?? '', thumbnailUrl: row.thumbnail_url ?? '',
+        durationMinutes: row.duration_minutes ?? '', isActive: Boolean(row.is_active),
+      } : { title: '', category: '', subCategory: '', description: '', fileUrl: '', thumbnailUrl: '', durationMinutes: '', isActive: true }}
+      buildPayload={(values) => ({
+        title: values.title, category: values.category || undefined, subCategory: values.subCategory || undefined,
+        description: values.description || undefined, fileUrl: values.fileUrl || undefined,
+        thumbnailUrl: values.thumbnailUrl || undefined,
+        durationMinutes: values.durationMinutes === '' || values.durationMinutes == null ? undefined : Number(values.durationMinutes),
+        isActive: Boolean(values.isActive),
+      })}
+      searchKeys={['title', 'category', 'sub_category']}
+    />
+  );
+}
+
+export function OnboardingDocMasterPage() {
+  return (
+    <MasterCrudPage<OnboardingDocRow>
+      title="Onboarding Documents"
+      subtitle="Forms, policies and NDAs presented during induction."
+      endpoint="/onboarding/docs"
+      columns={[
+        { header: 'Title', render: (row) => <Strong>{row.title}</Strong> },
+        { header: 'Category', render: (row) => row.category ?? '—' },
+        { header: 'Sub Category', render: (row) => row.sub_category ?? '—' },
+        { header: 'Signature', render: (row) => Number(row.requires_signature) ? 'Required' : '—' },
+        { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+      ]}
+      buildFields={() => [
+        { name: 'title', label: 'Title', type: 'text', placeholder: 'Code of Conduct', required: true },
+        { name: 'category', label: 'Category', type: 'text', placeholder: 'Policy / Form / NDA' },
+        { name: 'subCategory', label: 'Sub Category', type: 'text' },
+        { name: 'description', label: 'Description', type: 'textarea', span: true },
+        { name: 'fileUrl', label: 'File URL', type: 'text', span: true },
+        { name: 'thumbnailUrl', label: 'Thumbnail URL', type: 'text', span: true },
+        { name: 'requiresSignature', label: 'Requires Signature', type: 'checkbox' },
+        { name: 'isActive', label: 'Active', type: 'checkbox' },
+      ]}
+      rowToValues={(row) => row ? {
+        title: row.title, category: row.category ?? '', subCategory: row.sub_category ?? '',
+        description: row.description ?? '', fileUrl: row.file_url ?? '', thumbnailUrl: row.thumbnail_url ?? '',
+        requiresSignature: Boolean(row.requires_signature), isActive: Boolean(row.is_active),
+      } : { title: '', category: '', subCategory: '', description: '', fileUrl: '', thumbnailUrl: '', requiresSignature: false, isActive: true }}
+      buildPayload={(values) => ({
+        title: values.title, category: values.category || undefined, subCategory: values.subCategory || undefined,
+        description: values.description || undefined, fileUrl: values.fileUrl || undefined,
+        thumbnailUrl: values.thumbnailUrl || undefined,
+        requiresSignature: Boolean(values.requiresSignature), isActive: Boolean(values.isActive),
+      })}
+      searchKeys={['title', 'category', 'sub_category']}
+    />
+  );
+}
+
+export function OnboardingItemMasterPage() {
+  const [kind, setKind] = useState<'program' | 'tour' | 'activity'>('program');
+  return (
+    <div>
+      <PageHeader title="Programs / Tours / Activities" subtitle="Onboarding items shown in the Onboarding tab — pick a kind below." />
+      <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+        {(['program', 'tour', 'activity'] as const).map((k) => (
+          <button key={k} onClick={() => setKind(k)}
+            style={{
+              padding: '7px 14px', borderRadius: 8, fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+              background: kind === k ? 'var(--ck-ink)' : 'transparent',
+              color: kind === k ? '#fff' : 'var(--ck-ink)',
+              border: `1px solid ${kind === k ? 'var(--ck-ink)' : 'var(--ck-line)'}`,
+              textTransform: 'capitalize',
+            }}>
+            {k}s
+          </button>
+        ))}
+      </div>
+      <OnboardingItemList kind={kind} />
+    </div>
+  );
+}
+
+function OnboardingItemList({ kind }: { kind: 'program' | 'tour' | 'activity' }) {
+  return (
+    <MasterCrudPage<OnboardingItemRow>
+      key={kind}
+      title={`${kind.charAt(0).toUpperCase() + kind.slice(1)} Master`}
+      subtitle={`Onboarding ${kind} library.`}
+      endpoint="/onboarding/items"
+      listEndpoint={`/onboarding/items?kind=${kind}`}
+      columns={[
+        { header: 'Title', render: (row) => <Strong>{row.title}</Strong> },
+        { header: 'Category', render: (row) => row.category ?? '—' },
+        { header: 'Sub Category', render: (row) => row.sub_category ?? '—' },
+        { header: 'Duration', render: (row) => row.duration_minutes != null ? `${row.duration_minutes} min` : '—' },
+        { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+      ]}
+      buildFields={() => [
+        { name: 'title', label: 'Title', type: 'text', required: true },
+        { name: 'category', label: 'Category', type: 'text' },
+        { name: 'subCategory', label: 'Sub Category', type: 'text' },
+        { name: 'description', label: 'Description', type: 'textarea', span: true },
+        { name: 'thumbnailUrl', label: 'Thumbnail URL', type: 'text', span: true },
+        { name: 'durationMinutes', label: 'Duration (min)', type: 'number' },
+        { name: 'isActive', label: 'Active', type: 'checkbox' },
+      ]}
+      rowToValues={(row) => row ? {
+        title: row.title, category: row.category ?? '', subCategory: row.sub_category ?? '',
+        description: row.description ?? '', thumbnailUrl: row.thumbnail_url ?? '',
+        durationMinutes: row.duration_minutes ?? '', isActive: Boolean(row.is_active),
+      } : { title: '', category: '', subCategory: '', description: '', thumbnailUrl: '', durationMinutes: '', isActive: true }}
+      buildPayload={(values) => ({
+        kind,
+        title: values.title, category: values.category || undefined, subCategory: values.subCategory || undefined,
+        description: values.description || undefined, thumbnailUrl: values.thumbnailUrl || undefined,
+        durationMinutes: values.durationMinutes === '' || values.durationMinutes == null ? undefined : Number(values.durationMinutes),
+        isActive: Boolean(values.isActive),
+      })}
+      searchKeys={['title', 'category', 'sub_category']}
     />
   );
 }
@@ -393,6 +832,7 @@ export function DddMasterPage() {
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [designations, setDesignations] = useState<Designation[]>([]);
   const [reloadToken, setReloadToken] = useState(0);
+  const [erpTarget, setErpTarget] = useState<Designation | null>(null);
 
   useEffect(() => {
     api.get('/departments').then((r) => setRows(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => setRows([]));
@@ -497,11 +937,102 @@ export function DddMasterPage() {
               rowToValues={(row) => row ? { code: row.code ?? '', name: row.name, departmentId: row.department_id ?? '', divisionId: row.division_id ?? '', parentDesignationId: row.parent_designation_id ?? '', hierarchyLevel: row.hierarchy_level, isActive: Boolean(row.is_active) } : { code: '', name: '', departmentId: '', divisionId: '', parentDesignationId: '', hierarchyLevel: 0, isActive: true }}
               buildPayload={(values) => ({ code: values.code || undefined, name: values.name, departmentId: values.departmentId || undefined, divisionId: values.divisionId || undefined, parentDesignationId: values.parentDesignationId || undefined, hierarchyLevel: Number(values.hierarchyLevel || 0), isActive: Boolean(values.isActive) })}
               searchKeys={['code', 'name', 'department_name', 'division_name']}
+              extraActions={(row) => (
+                <button type="button" aria-label="ERP Modules" title="Default ERP Modules"
+                  onClick={() => setErpTarget(row)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}>
+                  <Cpu size={16} />
+                </button>
+              )}
             />
           )}
         </div>
       </Card>
+      {erpTarget && (
+        <DesignationErpModal designation={erpTarget} onClose={() => setErpTarget(null)} />
+      )}
     </div>
+  );
+}
+
+// ─── Designation ↔ ERP module defaults modal ────────────────────────────
+function DesignationErpModal({ designation, onClose }: { designation: Designation; onClose: () => void }) {
+  const [allModules, setAllModules] = useState<ErpModuleRow[]>([]);
+  const [linked, setLinked] = useState<Record<string, string>>({}); // erp_module_id -> default_status
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving]   = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      api.get<{ data: ErpModuleRow[] }>('/onboarding/erp-modules'),
+      api.get<{ data: Array<{ id: string; default_status: string }> }>(`/designations/${designation.id}/erp-modules`),
+    ]).then(([all, current]) => {
+      setAllModules(Array.isArray(all.data?.data) ? all.data.data : []);
+      const map: Record<string, string> = {};
+      for (const m of current.data?.data ?? []) map[m.id] = m.default_status ?? 'active';
+      setLinked(map);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [designation.id]);
+
+  const toggle = (id: string) => {
+    setLinked((cur) => {
+      const next = { ...cur };
+      if (next[id]) delete next[id]; else next[id] = 'active';
+      return next;
+    });
+  };
+  const setStatus = (id: string, status: string) => {
+    setLinked((cur) => ({ ...cur, [id]: status }));
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const modules = Object.entries(linked).map(([erpModuleId, defaultStatus]) => ({ erpModuleId, defaultStatus }));
+      await api.put(`/designations/${designation.id}/erp-modules`, { modules });
+      onClose();
+    } catch { window.alert('Save failed'); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Default ERP Modules" subtitle={designation.name} width={560}
+      footer={<>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button variant="primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+      </>}>
+      <div style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginBottom: 12 }}>
+        Pick modules that should be pre-listed in onboarding for this designation. The picked default status (Active / Inactive) is what HR sees in the Pre-Onboarding ERP grid.
+      </div>
+      {loading && <div style={{ padding: 24, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</div>}
+      {!loading && allModules.length === 0 && (
+        <div style={{ padding: 24, textAlign: 'center', color: 'var(--ck-muted)' }}>
+          No ERP modules. Add some in Masters → ERP Modules first.
+        </div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {allModules.map((m) => {
+          const on = !!linked[m.id];
+          return (
+            <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 8, border: '1px solid var(--ck-line)', borderRadius: 8 }}>
+              <input type="checkbox" checked={on} onChange={() => toggle(m.id)} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, color: 'var(--ck-ink)' }}>{m.name}</div>
+                <div style={{ fontSize: 11, color: 'var(--ck-muted)' }}>{m.code}{m.description ? ` · ${m.description}` : ''}</div>
+              </div>
+              {on && (
+                <select value={linked[m.id]} onChange={(e) => setStatus(m.id, e.target.value)}
+                  style={{ height: 32, padding: '0 8px', border: '1px solid var(--ck-line)', borderRadius: 6, fontSize: 12, background: 'var(--ck-surface)' }}>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
   );
 }
 

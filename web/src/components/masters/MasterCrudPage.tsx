@@ -33,6 +33,16 @@ type Props<Row extends { id: string }> = {
   title: string;
   subtitle?: string;
   endpoint: string;
+  /** Optional override for the GET list call (defaults to `endpoint`). */
+  listEndpoint?: string;
+  /** Optional override for POST create (defaults to `endpoint`). */
+  addEndpoint?: string;
+  /** Optional override for PATCH base (defaults to `endpoint`). */
+  patchEndpoint?: string;
+  /** Optional override for DELETE base (defaults to `endpoint`). */
+  deleteEndpoint?: string;
+  /** Optional suffix appended to PATCH URL after the id (e.g. "/full"). */
+  patchPathSuffix?: string;
   columns: MasterColumn<Row>[];
   buildFields: (rows: Row[]) => MasterField<Row>[];
   rowToValues: (row: Row | null) => Record<string, RowValue>;
@@ -41,12 +51,19 @@ type Props<Row extends { id: string }> = {
   pageSize?: number;
   addLabel?: string;
   onChanged?: () => void;
+  /** Optional extra inline action buttons rendered before Edit/Delete. */
+  extraActions?: (row: Row) => React.ReactNode;
 };
 
 export function MasterCrudPage<Row extends { id: string }>({
   title,
   subtitle,
   endpoint,
+  listEndpoint,
+  addEndpoint,
+  patchEndpoint,
+  deleteEndpoint,
+  patchPathSuffix,
   columns,
   buildFields,
   rowToValues,
@@ -55,7 +72,12 @@ export function MasterCrudPage<Row extends { id: string }>({
   pageSize = 1000,
   addLabel = 'Add',
   onChanged,
+  extraActions,
 }: Props<Row>) {
+  const getUrl    = listEndpoint    ?? endpoint;
+  const postUrl   = addEndpoint     ?? endpoint;
+  const patchBase = patchEndpoint   ?? endpoint;
+  const delBase   = deleteEndpoint  ?? endpoint;
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -67,7 +89,7 @@ export function MasterCrudPage<Row extends { id: string }>({
   const fetchRows = () => {
     setLoading(true);
     api
-      .get(endpoint, { params: { page: 1, pageSize } })
+      .get(getUrl, { params: { page: 1, pageSize } })
       .then((r) => {
         const data = normalizeRows<Row>(r.data);
         setRows(data);
@@ -76,7 +98,7 @@ export function MasterCrudPage<Row extends { id: string }>({
       .finally(() => setLoading(false));
   };
 
-  useEffect(fetchRows, [endpoint, pageSize]);
+  useEffect(fetchRows, [getUrl, pageSize]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -106,7 +128,7 @@ export function MasterCrudPage<Row extends { id: string }>({
   const onDelete = async (row: Row) => {
     if (!window.confirm(`Delete ${title.toLowerCase()} item?`)) return;
     try {
-      await api.delete(`${endpoint}/${row.id}`);
+      await api.delete(`${delBase}/${row.id}`);
       onChanged?.();
       fetchRows();
     } catch {
@@ -119,9 +141,9 @@ export function MasterCrudPage<Row extends { id: string }>({
     try {
       const payload = buildPayload(values, editing ? 'edit' : 'create', editing);
       if (editing) {
-        await api.patch(`${endpoint}/${editing.id}`, payload);
+        await api.patch(`${patchBase}/${editing.id}${patchPathSuffix ?? ''}`, payload);
       } else {
-        await api.post(endpoint, payload);
+        await api.post(postUrl, payload);
       }
       onChanged?.();
       setOpen(false);
@@ -192,7 +214,8 @@ export function MasterCrudPage<Row extends { id: string }>({
                     </td>
                   ))}
                   <td style={{ padding: '14px 16px' }}>
-                    <div style={{ display: 'flex', gap: 10 }}>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                      {extraActions?.(row)}
                       <button
                         type="button"
                         aria-label="Edit"

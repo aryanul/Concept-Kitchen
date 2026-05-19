@@ -11,6 +11,7 @@ import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { ApplicationsTab } from '../../components/hiring/ApplicationsTab';
+import { ScreeningTab, InterviewsTab, OffersTab, HireTab, ActivitiesTab } from '../../components/hiring/FunnelTabs';
 
 type JobListing = {
   id: string; listing_no: string; sr_no: number | string;
@@ -164,11 +165,11 @@ export function ListingDetailPage() {
           </div>
           <div style={{ padding: 24, minHeight: 240 }}>
             {tab === 'applications' && <ApplicationsTab listingId={listing.id} />}
-            {tab === 'screening'    && <TabPlaceholder title="Screening"    hint="Eligibility analysis using the Screening template." icon={ListChecks} />}
-            {tab === 'interviews'   && <TabPlaceholder title="Interviews"   hint="Scheduling, modes and performance scoring." icon={Mic} />}
-            {tab === 'offers'       && <TabPlaceholder title="Offers"       hint="Offer letter draft, share, accept/decline tracking." icon={FileText} />}
-            {tab === 'hire'         && <TabPlaceholder title="Hire"         hint="Hired candidates ready for onboarding handoff." icon={UserCheck} />}
-            {tab === 'activities'   && <TabPlaceholder title="Activities"   hint="Audit log of all actions on this listing." icon={Activity} />}
+            {tab === 'screening'    && <ScreeningTab   listingId={listing.id} />}
+            {tab === 'interviews'   && <InterviewsTab  listingId={listing.id} />}
+            {tab === 'offers'       && <OffersTab      listingId={listing.id} />}
+            {tab === 'hire'         && <HireTab        listingId={listing.id} />}
+            {tab === 'activities'   && <ActivitiesTab  listingId={listing.id} />}
           </div>
         </Card>
       </div>
@@ -200,15 +201,3 @@ function DetailTabBtn({ active, icon: Icon, onClick, children }: { active: boole
   );
 }
 
-function TabPlaceholder({ title, hint, icon: Icon, count }: { title: string; hint: string; icon: typeof Briefcase; count?: number }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', textAlign: 'center', color: 'var(--ck-muted)' }}>
-      <Icon size={48} strokeWidth={1.4} style={{ marginBottom: 12 }} />
-      <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ck-ink)', marginBottom: 4 }}>
-        {title}{count != null ? ` · ${count}` : ''}
-      </div>
-      <div style={{ fontSize: 12.5, maxWidth: 360 }}>{hint}</div>
-      <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--ck-faint)' }}>Coming in the next phase.</div>
-    </div>
-  );
-}
