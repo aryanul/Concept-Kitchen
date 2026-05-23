@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  Home, Briefcase, Users, LogOut, Settings,
+  Home, Briefcase, Users, LogOut, Settings, Trash2 as Trash2Icon,
   ChevronDown, ChevronRight,
   Clock, CalendarDays, ClipboardCheck, Wallet, FileText, Banknote,
   TrendingUp, CalendarClock, Plane, Gift,
@@ -38,6 +38,7 @@ const NAV: Item[] = [
       { id: 'masters-giveaways', path: '/masters/giveaways', label: 'Giveaways', icon: Gift },
       { id: 'masters-users', path: '/masters/users', label: 'User Console', icon: Shield },
       { id: 'masters-holidays', path: '/masters/holidays', label: 'Holiday Master', icon: CalendarDays },
+      { id: 'masters-attendance-rules', path: '/masters/attendance-rules', label: 'Attendance Rules', icon: ClipboardCheck },
     ],
   },
   {
@@ -54,6 +55,7 @@ const NAV: Item[] = [
       { id: 'holidays',      path: '/holidays',      label: 'Holidays',                 icon: CalendarDays },
       { id: 'attendance',    path: '/attendance',    label: 'Attendance & Exceptions',  icon: ClipboardCheck },
       { id: 'salary-master', path: '/salary-master', label: 'Salary Struc. & Compo.',   icon: Wallet },
+      { id: 'compensations', path: '/compensations', label: 'Compensation Master',      icon: Wallet },
       { id: 'payroll',       path: '/payroll',       label: 'Payroll Runs & Pay-slips', icon: FileText },
       { id: 'loans',         path: '/loans',         label: 'Advances & Loans',         icon: Banknote },
       { id: 'increments',    path: '/increments',    label: 'Increments & Appraisals',  icon: TrendingUp },
@@ -69,6 +71,7 @@ const NAV: Item[] = [
     ],
   },
   { id: 'settings', path: '/settings', label: 'Settings', icon: Settings },
+  { id: 'dev-wipe', path: '/dev/wipe',  label: 'DB Wipe (Dev)', icon: Trash2Icon },
 ];
 
 const isGroup = (i: Item): i is Group => 'children' in i;

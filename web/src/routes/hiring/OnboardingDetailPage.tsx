@@ -9,6 +9,26 @@ import { Card } from '../../components/ui/Card';
 import { Modal } from '../../components/ui/Modal';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
+type Address = {
+  line1?: string; line2?: string; city?: string; state?: string; country?: string; pin?: string;
+};
+type ApplicantEmergencyContact = {
+  id?: string;
+  name: string;
+  relation: string | null;
+  phone: string | null;
+  phone_country_code: string | null;
+  address: string | null;
+};
+type ApplicantDependent = {
+  id?: string;
+  relation: string;
+  name: string;
+  phone: string | null;
+  phone_country_code: string | null;
+  email: string | null;
+  dob: string | null;
+};
 type AOParent = Record<string, unknown> & {
   id: string;
   applicant_id: string;
@@ -31,6 +51,23 @@ type AOParent = Record<string, unknown> & {
   induction_notes: string | null;
   onboarding_notes: string | null;
   training_notes: string | null;
+  // Personal / Info-tab capture (Phase 2.G)
+  gender: string | null;
+  marital_status: string | null;
+  nationality: string | null;
+  religion: string | null;
+  languages_known: string[] | string | null;
+  caste_category: string | null;
+  alternate_phone: string | null;
+  alternate_phone_country_code: string | null;
+  probation_from: string | null;
+  probation_to: string | null;
+  employment_type: string | null;
+  work_mode: string | null;
+  present_address: Address | string | null;
+  permanent_address: Address | string | null;
+  pan: string | null;
+  aadhaar: string | null;
 };
 
 type Applicant = {
@@ -50,6 +87,8 @@ type FullData = {
   docs?: Array<{ id: string; doc_id: string; title: string; category: string | null; sub_category: string | null; thumbnail_url: string | null; file_url: string | null; requires_signature: number; status: string }>;
   items?: Array<{ id: string; item_id: string; kind: string; title: string; category: string | null; sub_category: string | null; thumbnail_url: string | null; status: string }>;
   trainings?: Array<{ id: string; training_module_id: string; code: string; name: string; description: string | null; cover_image_url: string | null; duration_hours: string | null; chapter_count: number | string; status: string; due_at: string | null }>;
+  emergency_contacts?: ApplicantEmergencyContact[];
+  dependents?: ApplicantDependent[];
 };
 
 type GiveawayTemplate = { id: string; name: string; category: string | null; occasion: string | null; thumbnail_url: string | null };
@@ -207,9 +246,16 @@ function CloseArchiveModal({ applicantId, applicantName, grades, onClose, onSave
         `/applicants/${applicantId}/onboarding/close`,
         { createEmployee, gradeId: gradeId || null }
       );
-      if (r.data.data?.warning) toast.message(r.data.data.warning);
-      else if (r.data.data?.employeeCode) toast.success(`Onboarding closed. Employee: ${r.data.data.employeeCode}`);
-      else toast.success('Onboarding closed');
+      if (r.data.data?.warning) {
+        // Required fields were missing — the onboarding got archived but no
+        // Employee Master row was created. Make this very visible so HR doesn't
+        // mistake the silence for success.
+        toast.error(r.data.data.warning, { duration: 8000 });
+      } else if (r.data.data?.employeeCode) {
+        toast.success(`Onboarding closed. Employee: ${r.data.data.employeeCode}`);
+      } else {
+        toast.success('Onboarding closed');
+      }
       onSaved();
     } catch { toast.error('Failed to close'); }
     finally { setSaving(false); }
@@ -344,6 +390,10 @@ function PreOnboardingTab({ applicantId, data, onRefresh }: { applicantId: strin
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
       <HeaderInfoSection applicantId={applicantId} parent={data.parent} onRefresh={onRefresh} />
+      <PersonalDetailsSection applicantId={applicantId} parent={data.parent} onRefresh={onRefresh} />
+      <AddressesSection applicantId={applicantId} parent={data.parent} onRefresh={onRefresh} />
+      <EmergencyContactsSection applicantId={applicantId} items={data.emergency_contacts ?? []} onRefresh={onRefresh} />
+      <DependentsSection applicantId={applicantId} items={data.dependents ?? []} onRefresh={onRefresh} />
       <GiveawaysSection applicantId={applicantId} items={data.giveaways ?? []} onRefresh={onRefresh} />
       <EmailPhoneSection applicantId={applicantId} parent={data.parent} onRefresh={onRefresh} />
       <ErpSection applicantId={applicantId} items={data.erp ?? []} designationId={data.parent?.designation_id ?? null} onRefresh={onRefresh} />
@@ -449,6 +499,302 @@ function HeaderInfoSection({ applicantId, parent, onRefresh }: { applicantId: st
           </select>
         </Field>
       </div>
+    </Section>
+  );
+}
+
+// ─── Personal Details (Phase 2.G) ─────────────────────────────────────────
+const GENDER_OPTS    = ['Male', 'Female', 'Other', 'Prefer not to say'];
+const MARITAL_OPTS   = ['Single', 'Married', 'Divorced', 'Widowed', 'Separated'];
+const CASTE_OPTS     = ['General', 'OBC', 'SC', 'ST', 'Other'];
+const EMP_TYPE_OPTS  = ['Permanent', 'Contract', 'Intern', 'Consultant', 'Temporary'];
+const WORK_MODE_OPTS = ['Onsite', 'Hybrid', 'Remote'];
+const COUNTRY_CODES  = ['+91', '+1', '+44', '+61', '+65', '+971'];
+
+function parseLangs(v: string[] | string | null | undefined): string[] {
+  if (!v) return [];
+  if (Array.isArray(v)) return v;
+  try { const j = JSON.parse(v); return Array.isArray(j) ? j : []; } catch { return []; }
+}
+function parseAddr(v: Address | string | null | undefined): Address {
+  if (!v) return {};
+  if (typeof v === 'string') { try { return JSON.parse(v) as Address; } catch { return {}; } }
+  return v;
+}
+
+function PersonalDetailsSection({ applicantId, parent, onRefresh }: {
+  applicantId: string; parent: AOParent | null; onRefresh: () => void;
+}) {
+  const [gender,            setGender]            = useState(parent?.gender ?? '');
+  const [maritalStatus,     setMaritalStatus]     = useState(parent?.marital_status ?? '');
+  const [nationality,       setNationality]       = useState(parent?.nationality ?? '');
+  const [religion,          setReligion]          = useState(parent?.religion ?? '');
+  const [languages,         setLanguages]         = useState<string>(parseLangs(parent?.languages_known).join(', '));
+  const [casteCategory,     setCasteCategory]     = useState(parent?.caste_category ?? '');
+  const [alternatePhone,    setAlternatePhone]    = useState(parent?.alternate_phone ?? '');
+  const [altCountryCode,    setAltCountryCode]    = useState(parent?.alternate_phone_country_code ?? '+91');
+  const [employmentType,    setEmploymentType]    = useState(parent?.employment_type ?? 'Permanent');
+  const [workMode,          setWorkMode]          = useState(parent?.work_mode ?? 'Onsite');
+  const [probationFrom,     setProbationFrom]     = useState(parent?.probation_from ?? '');
+  const [probationTo,       setProbationTo]       = useState(parent?.probation_to ?? '');
+  const [pan,               setPan]               = useState(parent?.pan ?? '');
+  const [aadhaar,           setAadhaar]           = useState(parent?.aadhaar ?? '');
+
+  useEffect(() => {
+    setGender(parent?.gender ?? '');
+    setMaritalStatus(parent?.marital_status ?? '');
+    setNationality(parent?.nationality ?? '');
+    setReligion(parent?.religion ?? '');
+    setLanguages(parseLangs(parent?.languages_known).join(', '));
+    setCasteCategory(parent?.caste_category ?? '');
+    setAlternatePhone(parent?.alternate_phone ?? '');
+    setAltCountryCode(parent?.alternate_phone_country_code ?? '+91');
+    setEmploymentType(parent?.employment_type ?? 'Permanent');
+    setWorkMode(parent?.work_mode ?? 'Onsite');
+    setProbationFrom(parent?.probation_from ?? '');
+    setProbationTo(parent?.probation_to ?? '');
+    setPan(parent?.pan ?? '');
+    setAadhaar(parent?.aadhaar ?? '');
+  }, [parent?.id, parent?.gender, parent?.marital_status, parent?.nationality, parent?.religion,
+      parent?.languages_known, parent?.caste_category, parent?.alternate_phone, parent?.alternate_phone_country_code,
+      parent?.employment_type, parent?.work_mode, parent?.probation_from, parent?.probation_to, parent?.pan, parent?.aadhaar]);
+
+  const save = async () => {
+    try {
+      await api.patch(`/applicants/${applicantId}/onboarding/header`, {
+        gender: gender || null,
+        maritalStatus: maritalStatus || null,
+        nationality: nationality || null,
+        religion: religion || null,
+        languagesKnown: languages.split(',').map((s) => s.trim()).filter(Boolean),
+        casteCategory: casteCategory || null,
+        alternatePhone: alternatePhone || null,
+        alternatePhoneCountryCode: altCountryCode || null,
+        employmentType: employmentType || null,
+        workMode: workMode || null,
+        probationFrom: probationFrom || null,
+        probationTo: probationTo || null,
+        pan: pan || null,
+        aadhaar: aadhaar || null,
+      });
+      toast.success('Personal details saved');
+      onRefresh();
+    } catch { toast.error('Save failed'); }
+  };
+
+  return (
+    <Section title="Personal Details" right={<Button size="sm" variant="primary" onClick={save}>Save</Button>}>
+      <div style={fourColGrid}>
+        <Field label="Gender">
+          <select value={gender} onChange={(e) => setGender(e.target.value)} style={inp}>
+            <option value="">—</option>
+            {GENDER_OPTS.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </Field>
+        <Field label="Marital Status">
+          <select value={maritalStatus} onChange={(e) => setMaritalStatus(e.target.value)} style={inp}>
+            <option value="">—</option>
+            {MARITAL_OPTS.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </Field>
+        <Field label="Nationality">
+          <input value={nationality} onChange={(e) => setNationality(e.target.value)} placeholder="Indian" style={inp} />
+        </Field>
+        <Field label="Religion">
+          <input value={religion} onChange={(e) => setReligion(e.target.value)} style={inp} />
+        </Field>
+        <Field label="Caste Category">
+          <select value={casteCategory} onChange={(e) => setCasteCategory(e.target.value)} style={inp}>
+            <option value="">—</option>
+            {CASTE_OPTS.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Field>
+        <Field label="Languages Known (comma-separated)">
+          <input value={languages} onChange={(e) => setLanguages(e.target.value)} placeholder="English, Hindi" style={inp} />
+        </Field>
+        <Field label="Alternate Phone">
+          <div style={{ display: 'flex', gap: 6 }}>
+            <select value={altCountryCode} onChange={(e) => setAltCountryCode(e.target.value)} style={{ ...inp, width: 80 }}>
+              {COUNTRY_CODES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input value={alternatePhone} onChange={(e) => setAlternatePhone(e.target.value)} placeholder="9XXXXXXXXX" style={inp} />
+          </div>
+        </Field>
+        <Field label="Employment Type">
+          <select value={employmentType} onChange={(e) => setEmploymentType(e.target.value)} style={inp}>
+            {EMP_TYPE_OPTS.map((e) => <option key={e} value={e}>{e}</option>)}
+          </select>
+        </Field>
+        <Field label="Work Mode">
+          <select value={workMode} onChange={(e) => setWorkMode(e.target.value)} style={inp}>
+            {WORK_MODE_OPTS.map((w) => <option key={w} value={w}>{w}</option>)}
+          </select>
+        </Field>
+        <Field label="Probation From">
+          <input type="date" value={probationFrom ?? ''} onChange={(e) => setProbationFrom(e.target.value)} style={inp} />
+        </Field>
+        <Field label="Probation To">
+          <input type="date" value={probationTo ?? ''} onChange={(e) => setProbationTo(e.target.value)} style={inp} />
+        </Field>
+        <Field label="PAN">
+          <input value={pan} onChange={(e) => setPan(e.target.value)} placeholder="ABCDE1234F" style={inp} />
+        </Field>
+        <Field label="Aadhaar">
+          <input value={aadhaar} onChange={(e) => setAadhaar(e.target.value)} placeholder="XXXXXXXXXXXX" style={inp} />
+        </Field>
+      </div>
+    </Section>
+  );
+}
+
+function AddressesSection({ applicantId, parent, onRefresh }: {
+  applicantId: string; parent: AOParent | null; onRefresh: () => void;
+}) {
+  const [present,   setPresent]   = useState<Address>(parseAddr(parent?.present_address));
+  const [permanent, setPermanent] = useState<Address>(parseAddr(parent?.permanent_address));
+
+  useEffect(() => {
+    setPresent(parseAddr(parent?.present_address));
+    setPermanent(parseAddr(parent?.permanent_address));
+  }, [parent?.id, parent?.present_address, parent?.permanent_address]);
+
+  const save = async () => {
+    try {
+      await api.patch(`/applicants/${applicantId}/onboarding/header`, {
+        presentAddress: present,
+        permanentAddress: permanent,
+      });
+      toast.success('Addresses saved');
+      onRefresh();
+    } catch { toast.error('Save failed'); }
+  };
+
+  return (
+    <Section title="Addresses" right={
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Button size="sm" onClick={() => setPermanent({ ...present })}>Copy present → permanent</Button>
+        <Button size="sm" variant="primary" onClick={save}>Save</Button>
+      </div>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <AddressBlock title="Present Address"   value={present}   onChange={setPresent} />
+        <AddressBlock title="Permanent Address" value={permanent} onChange={setPermanent} />
+      </div>
+    </Section>
+  );
+}
+
+function AddressBlock({ title, value, onChange }: { title: string; value: Address; onChange: (a: Address) => void }) {
+  const upd = (patch: Partial<Address>) => onChange({ ...value, ...patch });
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>{title}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <Field label="Line 1"><input value={value.line1 ?? ''} onChange={(e) => upd({ line1: e.target.value })} style={inp} /></Field>
+        <Field label="Line 2"><input value={value.line2 ?? ''} onChange={(e) => upd({ line2: e.target.value })} style={inp} /></Field>
+        <Field label="City"><input value={value.city ?? ''} onChange={(e) => upd({ city: e.target.value })} style={inp} /></Field>
+        <Field label="State"><input value={value.state ?? ''} onChange={(e) => upd({ state: e.target.value })} style={inp} /></Field>
+        <Field label="Country"><input value={value.country ?? ''} onChange={(e) => upd({ country: e.target.value })} placeholder="India" style={inp} /></Field>
+        <Field label="PIN / ZIP"><input value={value.pin ?? ''} onChange={(e) => upd({ pin: e.target.value })} style={inp} /></Field>
+      </div>
+    </div>
+  );
+}
+
+function EmergencyContactsSection({ applicantId, items, onRefresh }: {
+  applicantId: string; items: ApplicantEmergencyContact[]; onRefresh: () => void;
+}) {
+  const [rows, setRows] = useState<ApplicantEmergencyContact[]>(items);
+  useEffect(() => { setRows(items); }, [items]);
+  const save = async () => {
+    try {
+      await api.put(`/applicants/${applicantId}/onboarding/emergency-contacts`, { items: rows });
+      toast.success('Emergency contacts saved');
+      onRefresh();
+    } catch { toast.error('Save failed'); }
+  };
+  const add = () => setRows([...rows, { name: '', relation: '', phone: '', phone_country_code: '+91', address: '' }]);
+  const del = (i: number) => setRows(rows.filter((_, j) => j !== i));
+  const upd = (i: number, patch: Partial<ApplicantEmergencyContact>) => {
+    const next = [...rows]; next[i] = { ...next[i], ...patch }; setRows(next);
+  };
+  return (
+    <Section title="Emergency Contacts" right={
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Button size="sm" icon={Plus} onClick={add}>Add</Button>
+        <Button size="sm" variant="primary" onClick={save}>Save</Button>
+      </div>}>
+      {rows.length === 0 ? (
+        <div style={{ fontSize: 13, color: 'var(--ck-muted)', fontStyle: 'italic' }}>No emergency contacts captured.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {rows.map((r, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1.2fr 2fr 40px', gap: 10, alignItems: 'center' }}>
+              <input value={r.name} onChange={(e) => upd(i, { name: e.target.value })} placeholder="Name" style={inp} />
+              <input value={r.relation ?? ''} onChange={(e) => upd(i, { relation: e.target.value })} placeholder="Relation" style={inp} />
+              <div style={{ display: 'flex', gap: 4 }}>
+                <select value={r.phone_country_code ?? '+91'} onChange={(e) => upd(i, { phone_country_code: e.target.value })} style={{ ...inp, width: 80 }}>
+                  {COUNTRY_CODES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <input value={r.phone ?? ''} onChange={(e) => upd(i, { phone: e.target.value })} placeholder="Phone" style={inp} />
+              </div>
+              <input value={r.address ?? ''} onChange={(e) => upd(i, { address: e.target.value })} placeholder="Address" style={inp} />
+              <button onClick={() => del(i)} aria-label="Delete" style={{ background: 'none', border: '1px solid var(--ck-line)', borderRadius: 6, padding: '6px 8px', cursor: 'pointer', color: 'var(--ck-ink-soft)' }}>
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+function DependentsSection({ applicantId, items, onRefresh }: {
+  applicantId: string; items: ApplicantDependent[]; onRefresh: () => void;
+}) {
+  const [rows, setRows] = useState<ApplicantDependent[]>(items);
+  useEffect(() => { setRows(items); }, [items]);
+  const save = async () => {
+    try {
+      await api.put(`/applicants/${applicantId}/onboarding/dependents`, { items: rows });
+      toast.success('Dependents saved');
+      onRefresh();
+    } catch { toast.error('Save failed'); }
+  };
+  const add = () => setRows([...rows, { relation: '', name: '', phone: '', phone_country_code: '+91', email: '', dob: '' }]);
+  const del = (i: number) => setRows(rows.filter((_, j) => j !== i));
+  const upd = (i: number, patch: Partial<ApplicantDependent>) => {
+    const next = [...rows]; next[i] = { ...next[i], ...patch }; setRows(next);
+  };
+  return (
+    <Section title="Dependents & Family" right={
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Button size="sm" icon={Plus} onClick={add}>Add</Button>
+        <Button size="sm" variant="primary" onClick={save}>Save</Button>
+      </div>}>
+      {rows.length === 0 ? (
+        <div style={{ fontSize: 13, color: 'var(--ck-muted)', fontStyle: 'italic' }}>No dependents captured.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {rows.map((r, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr 1.2fr 1.5fr 1fr 40px', gap: 10, alignItems: 'center' }}>
+              <input value={r.relation} onChange={(e) => upd(i, { relation: e.target.value })} placeholder="Relation" style={inp} />
+              <input value={r.name} onChange={(e) => upd(i, { name: e.target.value })} placeholder="Name" style={inp} />
+              <div style={{ display: 'flex', gap: 4 }}>
+                <select value={r.phone_country_code ?? '+91'} onChange={(e) => upd(i, { phone_country_code: e.target.value })} style={{ ...inp, width: 80 }}>
+                  {COUNTRY_CODES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <input value={r.phone ?? ''} onChange={(e) => upd(i, { phone: e.target.value })} placeholder="Phone" style={inp} />
+              </div>
+              <input value={r.email ?? ''} onChange={(e) => upd(i, { email: e.target.value })} placeholder="email@example.com" style={inp} />
+              <input type="date" value={r.dob ?? ''} onChange={(e) => upd(i, { dob: e.target.value })} style={inp} />
+              <button onClick={() => del(i)} aria-label="Delete" style={{ background: 'none', border: '1px solid var(--ck-line)', borderRadius: 6, padding: '6px 8px', cursor: 'pointer', color: 'var(--ck-ink-soft)' }}>
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </Section>
   );
 }

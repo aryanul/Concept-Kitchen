@@ -2,6 +2,9 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { LoginPage } from './routes/login/LoginPage';
 import { DashboardPage } from './routes/dashboard/DashboardPage';
 import { EmployeesPage } from './routes/employees/EmployeesPage';
+import { EmployeeDetailPage } from './routes/employees/EmployeeDetailPage';
+import { CompensationsListPage } from './routes/compensations/CompensationsListPage';
+import { CompensationDetailPage } from './routes/compensations/CompensationDetailPage';
 import { HolidaysPage } from './routes/holidays/HolidaysPage';
 import { ShiftsPage } from './routes/shifts/ShiftsPage';
 import { SalaryMasterPage } from './routes/salary-master/SalaryMasterPage';
@@ -34,6 +37,7 @@ import {
   GiveawayTemplateMasterPage,
   UserConsolePage,
   HolidayMasterPage,
+  AttendanceRuleMasterPage,
   LookupMasterPage,
   TagMasterPage,
   PhonePoolMasterPage,
@@ -45,6 +49,7 @@ import {
   OnboardingItemMasterPage,
 } from './routes/masters/MasterPages';
 import { StubPage } from './routes/StubPage';
+import { WipePage } from './routes/dev/WipePage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AppLayout } from './components/shell/AppLayout';
 
@@ -71,6 +76,7 @@ export default function App() {
             <Route path="/masters/giveaways" element={<GiveawayTemplateMasterPage />} />
             <Route path="/masters/users" element={<UserConsolePage />} />
             <Route path="/masters/holidays" element={<HolidayMasterPage />} />
+            <Route path="/masters/attendance-rules" element={<AttendanceRuleMasterPage />} />
             <Route path="/masters/lookups" element={<LookupMasterPage />} />
             <Route path="/masters/tags" element={<TagMasterPage />} />
             <Route path="/masters/phone-pool" element={<PhonePoolMasterPage />} />
@@ -83,6 +89,10 @@ export default function App() {
 
             {/* Phase 1 — placeholders until each module is built */}
             <Route path="/employees"     element={<EmployeesPage />} />
+            <Route path="/employees/:id" element={<EmployeeDetailPage />} />
+            <Route path="/compensations"      element={<CompensationsListPage />} />
+            <Route path="/compensations/new"  element={<CompensationDetailPage />} />
+            <Route path="/compensations/:id"  element={<CompensationDetailPage />} />
             <Route path="/shifts"        element={<ShiftsPage />} />
             <Route path="/holidays"      element={<HolidaysPage />} />
             <Route path="/attendance"    element={<AttendancePage />} />
@@ -107,6 +117,9 @@ export default function App() {
             <Route path="/fnf"            element={<StubPage title="Full & Final Settlement" phase="Phase 3" />} />
 
             <Route path="/settings"      element={<StubPage title="Settings" phase="a later step" />} />
+
+            {/* Dev-only DB wipe utility (HR_ADMIN gated server-side) */}
+            <Route path="/dev/wipe"      element={<WipePage />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

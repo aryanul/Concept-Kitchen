@@ -1,35 +1,39 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { Search, Plus } from 'lucide-react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Eye, Pencil } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
-import { Avatar } from '../../components/ui/Avatar';
-import { StatusPill } from '../../components/ui/StatusPill';
-import { EmployeeDrawer } from '../../components/employees/EmployeeDrawer';
-import { AddEmployeeModal } from '../../components/employees/AddEmployeeModal';
 
 type Employee = {
   id: string; code: string; first_name: string; last_name: string;
   designation: string; status: string; joining_date: string; email: string; phone: string;
-  ctc: number | string; branch_id: string; branch_code: string; branch_name: string;
-  department_id: string; department_name: string; grade_id: string; grade_code: string;
+  ctc: number | string;
+  branch_id: string; branch_code: string; branch_name: string;
+  department_id: string; department_name: string;
+  grade_id: string; grade_code: string;
+  company_id: string | null; company_name: string | null;
+  division_id: string | null; division_name: string | null;
+  location_id: string | null; location_name: string | null;
 };
-type Branch = { id: string; code: string; name: string; city: string; kind: string };
+type Branch = { id: string; code: string; name: string; city: string; kind: string; company_id: string | null; company_name: string | null };
 type Department = { id: string; name: string };
-type Grade = { id: string; code: string; kind: string };
+type Division = { id: string; name: string };
+type Company = { id: string; name: string; lc_no: string };
+type Location = { id: string; name: string; branch_id: string | null };
 type ListResp = { data: Employee[]; meta: { page: number; pageSize: number; total: number } };
 type RefResp<T> = { data: T[] };
 
-const STATUS_LABELS: Record<string, string> = {
-  ACTIVE: 'Active', PROBATION: 'Probation', ON_LEAVE: 'On Leave', EXITED: 'Exited',
-};
-
 export function EmployeesPage() {
-  const [search, setSearch] = useState('');
+  const navigate = useNavigate();
+  const [companyId, setCompanyId] = useState('');
   const [branchId, setBranchId] = useState('');
+  const [locationId, setLocationId] = useState('');
   const [departmentId, setDepartmentId] = useState('');
-  const [status, setStatus] = useState('');
+  const [divisionId, setDivisionId] = useState('');
+  const [designation, setDesignation] = useState('');
+  const [code, setCode] = useState('');
   const [page, setPage] = useState(1);
   const pageSize = 14;
 
@@ -40,42 +44,58 @@ export function EmployeesPage() {
 
   const [branches, setBranches] = useState<Branch[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [grades, setGrades] = useState<Grade[]>([]);
-
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
+  const [divisions, setDivisions] = useState<Division[]>([]);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
 
   useEffect(() => {
     Promise.all([
       api.get<RefResp<Branch>>('/branches'),
       api.get<RefResp<Department>>('/departments'),
-      api.get<RefResp<Grade>>('/salary-grades'),
-    ]).then(([b, d, g]) => {
+      api.get<RefResp<Division>>('/divisions'),
+      api.get<{ data: Company[] }>('/hiring/companies', { params: { pageSize: 1000 } }),
+      api.get<RefResp<Location>>('/locations'),
+    ]).then(([b, d, dv, c, l]) => {
       setBranches(b.data.data);
       setDepartments(d.data.data);
-      setGrades(g.data.data);
+      setDivisions(dv.data.data);
+      setCompanies(c.data.data);
+      setLocations(l.data.data);
     }).catch(() => {});
   }, []);
 
-  useEffect(() => { setPage(1); }, [search, branchId, departmentId, status]);
+  useEffect(() => { setPage(1); }, [companyId, branchId, locationId, departmentId, divisionId, designation, code]);
 
-  const fetchEmployees = () => {
+  // Narrow the Branch + Location dropdowns based on Company / Branch selection so
+  // the picker stays internally consistent (e.g. picking Company A only shows A's branches).
+  const visibleBranches = useMemo(() =>
+    companyId ? branches.filter((b) => b.company_id === companyId) : branches,
+    [branches, companyId]);
+  const visibleLocations = useMemo(() => {
+    const branchPool = branchId
+      ? new Set([branchId])
+      : new Set(visibleBranches.map((b) => b.id));
+    return locations.filter((l) => l.branch_id && branchPool.has(l.branch_id));
+  }, [locations, branchId, visibleBranches]);
+
+  useEffect(() => {
     const ctrl = new AbortController();
     setLoading(true);
     setError(null);
     const params: Record<string, string | number> = { page, pageSize };
-    if (search) params.search = search;
-    if (branchId) params.branchId = branchId;
+    if (companyId)    params.companyId    = companyId;
+    if (branchId)     params.branchId     = branchId;
+    if (locationId)   params.locationId   = locationId;
     if (departmentId) params.departmentId = departmentId;
-    if (status) params.status = status;
+    if (divisionId)   params.divisionId   = divisionId;
+    if (designation)  params.designation  = designation;
+    if (code)         params.code         = code;
     api.get<ListResp>('/employees', { params, signal: ctrl.signal })
       .then((r) => { setEmployees(r.data.data); setTotal(r.data.meta.total); })
       .catch((e: unknown) => { if ((e as { name?: string }).name !== 'CanceledError') setError('Failed to load employees.'); })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
-  };
-
-  useEffect(fetchEmployees, [search, branchId, departmentId, status, page]);
+  }, [companyId, branchId, locationId, departmentId, divisionId, designation, code, page]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -83,30 +103,29 @@ export function EmployeesPage() {
     <div>
       <PageHeader
         title="Employee Master"
-        subtitle="Browse and manage employees across all branches."
-        actions={<Button icon={Plus} variant="primary" onClick={() => setAddOpen(true)}>Add Employee</Button>}
+        subtitle="Employee records are created when a vacancy is filled. Use this list to view and edit existing employees."
       />
 
       <Card padding={0}>
-        <div style={{ display: 'flex', gap: 12, padding: 16, borderBottom: '1px solid var(--ck-line)', flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ position: 'relative', width: 320 }}>
-            <Search size={16} style={{ position: 'absolute', left: 12, top: 12, color: 'var(--ck-muted)', pointerEvents: 'none' }} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, code, email…"
-              style={{ width: '100%', height: 40, padding: '0 12px 0 36px', border: '1px solid var(--ck-line)', borderRadius: 8, fontSize: 13, background: 'var(--ck-surface)' }} />
-          </div>
-          <FilterSelect value={branchId} onChange={setBranchId} placeholder="All branches">
-            {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(180px, 1fr))', gap: 12, padding: 16, borderBottom: '1px solid var(--ck-line)' }}>
+          <FilterSelect label="Company" value={companyId} onChange={(v) => { setCompanyId(v); setBranchId(''); setLocationId(''); }} placeholder="All companies">
+            {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </FilterSelect>
-          <FilterSelect value={departmentId} onChange={setDepartmentId} placeholder="All departments">
+          <FilterSelect label="Branch" value={branchId} onChange={(v) => { setBranchId(v); setLocationId(''); }} placeholder="All branches">
+            {visibleBranches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+          </FilterSelect>
+          <FilterSelect label="Location" value={locationId} onChange={setLocationId} placeholder="All locations">
+            {visibleLocations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </FilterSelect>
+          <FilterSelect label="Department" value={departmentId} onChange={setDepartmentId} placeholder="All departments">
             {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </FilterSelect>
-          <FilterSelect value={status} onChange={setStatus} placeholder="All status">
-            <option value="ACTIVE">Active</option>
-            <option value="PROBATION">Probation</option>
-            <option value="ON_LEAVE">On Leave</option>
-            <option value="EXITED">Exited</option>
+          <FilterSelect label="Division" value={divisionId} onChange={setDivisionId} placeholder="All divisions">
+            {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </FilterSelect>
-          <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>
+          <FilterText label="Designation" value={designation} onChange={setDesignation} placeholder="e.g. Supervisor" />
+          <FilterText label="Employee Code" value={code} onChange={setCode} placeholder="e.g. CK-EMP-001" />
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', fontSize: 12.5, color: 'var(--ck-muted)' }}>
             {loading ? 'Loading…' : `${total.toLocaleString('en-IN')} result${total === 1 ? '' : 's'}`}
           </div>
         </div>
@@ -118,19 +137,19 @@ export function EmployeesPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
               <thead>
                 <tr style={{ background: 'var(--ck-bg)', textAlign: 'left' }}>
-                  {['Employee', 'Designation', 'Department', 'Branch', 'Grade', 'Joined', 'Status'].map((h) => (
-                    <th key={h} style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
+                  {['Department', 'Division', 'Designation', 'Employee Code', 'Employee Name', 'Company', 'Branch', 'Location', 'Actions'].map((h) => (
+                    <th key={h} style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {!loading && employees.length === 0 && (
-                  <tr><td colSpan={7} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>No employees found.</td></tr>
+                  <tr><td colSpan={9} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>No employees found.</td></tr>
                 )}
-                {employees.map((e, i) => (
-                  <Row key={e.id} emp={e} hue={(i * 47 + 12) % 360}
-                    onClick={() => setSelectedId(e.id)}
-                    statusLabel={STATUS_LABELS[e.status] ?? e.status} />
+                {employees.map((e) => (
+                  <Row key={e.id} emp={e}
+                    onView={() => navigate(`/employees/${e.id}`)}
+                    onEdit={() => navigate(`/employees/${e.id}?mode=edit`)} />
                 ))}
               </tbody>
             </table>
@@ -145,47 +164,41 @@ export function EmployeesPage() {
           </div>
         </div>
       </Card>
-
-      <EmployeeDrawer
-        employeeId={selectedId}
-        onClose={() => setSelectedId(null)}
-        onChanged={fetchEmployees}
-        branches={branches}
-        departments={departments}
-        grades={grades}
-      />
-      <AddEmployeeModal
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-        onCreated={fetchEmployees}
-        branches={branches}
-        departments={departments}
-        grades={grades}
-      />
     </div>
   );
 }
 
-function Row({ emp, hue, onClick, statusLabel }: { emp: Employee; hue: number; onClick: () => void; statusLabel: string }) {
+function Row({ emp, onView, onEdit }: { emp: Employee; onView: () => void; onEdit: () => void }) {
   const [hover, setHover] = useState(false);
   return (
-    <tr style={{ borderTop: '1px solid var(--ck-line)', background: hover ? 'var(--ck-surface-alt)' : 'transparent', cursor: 'pointer', transition: 'background 100ms' }}
-      onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+    <tr
+      style={{ borderTop: '1px solid var(--ck-line)', background: hover ? 'var(--ck-surface-alt)' : 'transparent', transition: 'background 100ms' }}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      <Td>{emp.department_name || '—'}</Td>
+      <Td>{emp.division_name || '—'}</Td>
+      <Td>{emp.designation || '—'}</Td>
+      <Td><span style={{ fontFamily: 'var(--ck-font-mono)', fontSize: 12.5, color: 'var(--ck-ink-soft)' }}>{emp.code}</span></Td>
       <Td>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Avatar name={`${emp.first_name} ${emp.last_name}`} hue={hue} size={36} />
-          <div>
-            <div style={{ fontWeight: 600, color: 'var(--ck-ink)' }}>{emp.first_name} {emp.last_name}</div>
-            <div style={{ fontSize: 12, color: 'var(--ck-muted)' }}>{emp.code} · {emp.email}</div>
-          </div>
+        <Link to={`/employees/${emp.id}`}
+          style={{ color: 'var(--ck-accent)', fontWeight: 600, fontSize: 13, textDecoration: 'none' }}>
+          {emp.first_name} {emp.last_name}
+        </Link>
+      </Td>
+      <Td>{emp.company_name || '—'}</Td>
+      <Td>{emp.branch_name || '—'}</Td>
+      <Td>{emp.location_name || '—'}</Td>
+      <Td>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={onView} title="View" aria-label="View"
+            style={{ background: 'none', border: '1px solid var(--ck-line)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', color: 'var(--ck-ink-soft)' }}>
+            <Eye size={14} />
+          </button>
+          <button onClick={onEdit} title="Edit" aria-label="Edit"
+            style={{ background: 'none', border: '1px solid var(--ck-line)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', color: 'var(--ck-ink-soft)' }}>
+            <Pencil size={14} />
+          </button>
         </div>
       </Td>
-      <Td>{emp.designation}</Td>
-      <Td>{emp.department_name}</Td>
-      <Td>{emp.branch_name}</Td>
-      <Td>{emp.grade_code}</Td>
-      <Td>{formatDate(emp.joining_date)}</Td>
-      <Td><StatusPill status={statusLabel} /></Td>
     </tr>
   );
 }
@@ -194,16 +207,25 @@ function Td({ children }: { children: ReactNode }) {
   return <td style={{ padding: '12px 16px', verticalAlign: 'middle' }}>{children}</td>;
 }
 
-function FilterSelect({ value, onChange, placeholder, children }: { value: string; onChange: (v: string) => void; placeholder: string; children: ReactNode }) {
+function FilterSelect({ label, value, onChange, placeholder, children }: { label: string; value: string; onChange: (v: string) => void; placeholder: string; children: ReactNode }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)}
-      style={{ height: 40, padding: '0 12px', border: '1px solid var(--ck-line)', borderRadius: 8, background: 'var(--ck-surface)', fontSize: 13, minWidth: 180, color: value ? 'var(--ck-ink)' : 'var(--ck-muted)' }}>
-      <option value="">{placeholder}</option>
-      {children}
-    </select>
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)}
+        style={{ height: 36, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, background: 'var(--ck-surface)', fontSize: 13, color: value ? 'var(--ck-ink)' : 'var(--ck-muted)' }}>
+        <option value="">{placeholder}</option>
+        {children}
+      </select>
+    </label>
   );
 }
 
-function formatDate(s: string) {
-  try { return new Date(s).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return s; }
+function FilterText({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder: string }) {
+  return (
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</span>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+        style={{ height: 36, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, background: 'var(--ck-surface)', fontSize: 13 }} />
+    </label>
+  );
 }

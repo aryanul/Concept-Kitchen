@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import bcrypt from 'bcryptjs';
 import { ulid } from 'ulid';
 import { query } from './db';
-import { signAccessToken, authRequired, type Role } from './auth';
+import { signAccessToken, authRequired, requireRole, type Role } from './auth';
 import { registerMasterRoutes } from './masters';
 
 const app = express();
@@ -142,7 +142,11 @@ app.get('/api/v1/auth/me', authRequired, async (req, res, next) => {
 app.get('/api/v1/branches', authRequired, async (_req, res, next) => {
   try {
     const rows = await query(
-      'SELECT id, code, name, city, kind FROM branches ORDER BY code'
+      `SELECT b.id, b.code, b.name, b.city, b.kind, b.company_id,
+              c.name AS company_name, c.lc_no AS company_lc_no
+       FROM branches b
+       LEFT JOIN hiring_companies c ON c.id = b.company_id
+       ORDER BY b.code`
     );
     res.json({ data: rows });
   } catch (err) {
@@ -300,8 +304,13 @@ const ALLOWED_STATUSES = new Set(['ACTIVE', 'PROBATION', 'ON_LEAVE', 'EXITED']);
 app.get('/api/v1/employees', authRequired, async (req, res, next) => {
   try {
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const code = typeof req.query.code === 'string' ? req.query.code.trim() : '';
+    const designation = typeof req.query.designation === 'string' ? req.query.designation.trim() : '';
+    const companyId = typeof req.query.companyId === 'string' ? req.query.companyId : undefined;
     const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
+    const locationId = typeof req.query.locationId === 'string' ? req.query.locationId : undefined;
     const departmentId = typeof req.query.departmentId === 'string' ? req.query.departmentId : undefined;
+    const divisionId = typeof req.query.divisionId === 'string' ? req.query.divisionId : undefined;
     const status = typeof req.query.status === 'string' && ALLOWED_STATUSES.has(req.query.status)
       ? req.query.status
       : undefined;
@@ -318,13 +327,33 @@ app.get('/api/v1/employees', authRequired, async (req, res, next) => {
       const like = `%${search}%`;
       params.push(like, like, like, like);
     }
+    if (code) {
+      where.push('e.code LIKE ?');
+      params.push(`%${code}%`);
+    }
+    if (designation) {
+      where.push('e.designation LIKE ?');
+      params.push(`%${designation}%`);
+    }
+    if (companyId) {
+      where.push('e.company_id = ?');
+      params.push(companyId);
+    }
     if (branchId) {
       where.push('e.branch_id = ?');
       params.push(branchId);
     }
+    if (locationId) {
+      where.push('EXISTS (SELECT 1 FROM locations lx WHERE lx.branch_id = e.branch_id AND lx.id = ?)');
+      params.push(locationId);
+    }
     if (departmentId) {
       where.push('e.department_id = ?');
       params.push(departmentId);
+    }
+    if (divisionId) {
+      where.push('e.division_id = ?');
+      params.push(divisionId);
     }
     if (status) {
       where.push('e.status = ?');
@@ -332,17 +361,27 @@ app.get('/api/v1/employees', authRequired, async (req, res, next) => {
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const rows = await query<EmployeeListRow>(
+    const rows = await query<EmployeeListRow & {
+      company_id: string | null; company_name: string | null;
+      division_id: string | null; division_name: string | null;
+      location_id: string | null; location_name: string | null;
+    }>(
       `SELECT
          e.id, e.code, e.first_name, e.last_name, e.designation, e.status,
          e.joining_date, e.email, e.phone, e.ctc,
          b.id AS branch_id, b.code AS branch_code, b.name AS branch_name,
          d.id AS department_id, d.name AS department_name,
-         g.id AS grade_id, g.code AS grade_code
+         g.id AS grade_id, g.code AS grade_code,
+         c.id AS company_id, c.name AS company_name,
+         dv.id AS division_id, dv.name AS division_name,
+         (SELECT id   FROM locations WHERE branch_id = e.branch_id AND is_active = 1 ORDER BY name LIMIT 1) AS location_id,
+         (SELECT name FROM locations WHERE branch_id = e.branch_id AND is_active = 1 ORDER BY name LIMIT 1) AS location_name
        FROM employees e
        JOIN branches b ON b.id = e.branch_id
        JOIN departments d ON d.id = e.department_id
        JOIN salary_grades g ON g.id = e.grade_id
+       LEFT JOIN hiring_companies c ON c.id = e.company_id
+       LEFT JOIN divisions dv ON dv.id = e.division_id
        ${whereSql}
        ORDER BY e.code
        LIMIT ? OFFSET ?`,
@@ -363,29 +402,34 @@ app.get('/api/v1/employees', authRequired, async (req, res, next) => {
 
 app.get('/api/v1/employees/:id', authRequired, async (req, res, next) => {
   try {
-    const rows = await query<
-      EmployeeListRow & {
-        bank_name: string | null;
-        bank_account: string | null;
-        ifsc: string | null;
-        pan: string | null;
-        aadhaar: string | null;
-        pf: string | null;
-        esic: string | null;
-        uan: string | null;
-      }
-    >(
+    const rows = await query<Record<string, unknown>>(
       `SELECT
-         e.id, e.code, e.first_name, e.last_name, e.designation, e.status,
-         e.joining_date, e.email, e.phone, e.ctc,
-         e.bank_name, e.bank_account, e.ifsc, e.pan, e.aadhaar, e.pf, e.esic, e.uan,
-         b.id AS branch_id, b.code AS branch_code, b.name AS branch_name,
-         d.id AS department_id, d.name AS department_name,
-         g.id AS grade_id, g.code AS grade_code
+         e.*,
+         b.code AS branch_code, b.name AS branch_name,
+         d.name AS department_name,
+         g.code AS grade_code,
+         c.name AS company_name,
+         dv.name AS division_name,
+         pn.number AS office_contact_phone_number,
+         jp.jp_no AS jp_no,
+         jp.title AS jp_title,
+         jp.alternate_title AS jp_alternate_title,
+         jp.description AS jp_description,
+         jp.requirements AS jp_requirements,
+         jp.division AS jp_division,
+         jp.designation AS jp_designation,
+         jp.location_applicable AS jp_location_applicable,
+         jp.work_shift AS jp_work_shift,
+         (SELECT id   FROM locations WHERE branch_id = e.branch_id AND is_active = 1 ORDER BY name LIMIT 1) AS location_id,
+         (SELECT name FROM locations WHERE branch_id = e.branch_id AND is_active = 1 ORDER BY name LIMIT 1) AS location_name
        FROM employees e
        JOIN branches b ON b.id = e.branch_id
        JOIN departments d ON d.id = e.department_id
        JOIN salary_grades g ON g.id = e.grade_id
+       LEFT JOIN hiring_companies c ON c.id = e.company_id
+       LEFT JOIN divisions dv ON dv.id = e.division_id
+       LEFT JOIN phone_number_pool pn ON pn.id = e.office_contact_phone_id
+       LEFT JOIN job_profiles jp ON jp.id = e.job_profile_id
        WHERE e.id = ?`,
       [req.params.id]
     );
@@ -395,7 +439,122 @@ app.get('/api/v1/employees/:id', authRequired, async (req, res, next) => {
         .status(404)
         .json({ error: { code: 'NOT_FOUND', message: 'Employee not found' } });
     }
-    res.json({ data: emp });
+    // Fetch side-table data + derived summaries for all Info-through-Other tabs in parallel.
+    const id = req.params.id;
+    const currentYear = new Date().getFullYear();
+    const [
+      emergencyContacts, dependents, documents, education, workExperience, skills,
+      lastAttendance, leaveByType, openLeaveCount,
+      lastIncrement, pendingIncrementCount,
+      advancesOutstanding, loansOutstanding, lastAdvance, lastLoanPayment,
+      assetsSummary,
+    ] = await Promise.all([
+      query('SELECT * FROM employee_emergency_contacts WHERE employee_id = ? ORDER BY sort_order, created_at', [id]),
+      query('SELECT * FROM employee_dependents          WHERE employee_id = ? ORDER BY sort_order, created_at', [id]),
+      query('SELECT * FROM employee_documents           WHERE employee_id = ? ORDER BY sort_order, created_at', [id]),
+      query('SELECT * FROM employee_education           WHERE employee_id = ? ORDER BY sort_order, created_at', [id]),
+      query('SELECT * FROM employee_work_experience     WHERE employee_id = ? ORDER BY sort_order, created_at', [id]),
+      query(
+        `SELECT es.id, es.skill_id, es.rating, es.notes, es.sort_order,
+                s.code AS skill_code, s.name AS skill_name, s.category AS skill_category
+         FROM employee_skills es
+         JOIN skills s ON s.id = es.skill_id
+         WHERE es.employee_id = ?
+         ORDER BY es.sort_order, es.created_at`,
+        [id]
+      ),
+      // Attendance & Leaves tab summaries.
+      query(
+        `SELECT date, in_at, out_at, source, is_late
+         FROM attendance WHERE employee_id = ?
+         ORDER BY date DESC, in_at DESC LIMIT 1`,
+        [id]
+      ),
+      query(
+        `SELECT type,
+                COALESCE(opening,  0) AS opening,
+                COALESCE(consumed, 0) AS consumed,
+                COALESCE(closing,  0) AS closing
+         FROM leave_balances WHERE employee_id = ? AND year = ?`,
+        [id, currentYear]
+      ),
+      query<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM leaves WHERE employee_id = ? AND status = 'PENDING'`,
+        [id]
+      ),
+      // Increment tab.
+      query(
+        `SELECT effective, hike_pct, current_ctc, proposed_ctc, rating
+         FROM increments
+         WHERE employee_id = ? AND effective IS NOT NULL
+         ORDER BY effective DESC LIMIT 1`,
+        [id]
+      ),
+      query<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM increments WHERE employee_id = ? AND stage <> 'done'`,
+        [id]
+      ),
+      // Ledger tab — paise → rupees converted client-side via inrPaiseToRupeesShort.
+      query<{ total: number | null }>(
+        `SELECT COALESCE(SUM(outstanding), 0) AS total FROM loans WHERE employee_id = ? AND kind = 'ADVANCE' AND status = 'ACTIVE'`,
+        [id]
+      ),
+      query<{ total: number | null }>(
+        `SELECT COALESCE(SUM(outstanding), 0) AS total FROM loans WHERE employee_id = ? AND kind = 'LOAN'    AND status = 'ACTIVE'`,
+        [id]
+      ),
+      query(
+        `SELECT kind, principal, outstanding, started_at FROM loans
+         WHERE employee_id = ? AND kind = 'ADVANCE'
+         ORDER BY started_at DESC LIMIT 1`,
+        [id]
+      ),
+      query(
+        `SELECT lp.amount, lp.paid_at, l.kind
+         FROM loan_payments lp
+         JOIN loans l ON l.id = lp.loan_id
+         WHERE l.employee_id = ?
+         ORDER BY lp.paid_at DESC LIMIT 1`,
+        [id]
+      ),
+      // Other tab — assets summary.
+      query<{ count: number; last_at: string | null }>(
+        `SELECT COUNT(*) AS count, MAX(updated_at) AS last_at
+         FROM assets WHERE current_employee_id = ?`,
+        [id]
+      ),
+    ]);
+
+    res.json({
+      data: {
+        ...emp,
+        emergency_contacts: emergencyContacts,
+        dependents,
+        documents,
+        education,
+        work_experience: workExperience,
+        skills,
+        attendance_summary: {
+          last_attendance: (lastAttendance as unknown[])[0] ?? null,
+          leave_by_type: leaveByType,
+          open_leave_requests: Number((openLeaveCount as { n?: number }[])[0]?.n ?? 0),
+        },
+        increment_summary: {
+          last: (lastIncrement as unknown[])[0] ?? null,
+          pending_count: Number((pendingIncrementCount as { n?: number }[])[0]?.n ?? 0),
+        },
+        ledger_summary: {
+          advances_outstanding: Number((advancesOutstanding as { total?: number }[])[0]?.total ?? 0),
+          loans_outstanding: Number((loansOutstanding as { total?: number }[])[0]?.total ?? 0),
+          last_advance: (lastAdvance as unknown[])[0] ?? null,
+          last_payment: (lastLoanPayment as unknown[])[0] ?? null,
+        },
+        assets_summary: {
+          count: Number((assetsSummary as { count?: number }[])[0]?.count ?? 0),
+          last_at: (assetsSummary as { last_at?: string | null }[])[0]?.last_at ?? null,
+        },
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -1552,7 +1711,18 @@ app.get('/api/v1/applicants/:id/onboarding/full', authRequired, async (req, res,
         [aoId]
       ),
     ]);
-    res.json({ data: { parent, giveaways, erp, assets, presentations, docs, items, trainings } });
+    // Personal Info-tab side tables (Phase 2.G).
+    const [emergencyContacts, dependents] = await Promise.all([
+      query('SELECT * FROM applicant_emergency_contacts WHERE ao_id = ? ORDER BY sort_order, created_at', [aoId]),
+      query('SELECT * FROM applicant_dependents          WHERE ao_id = ? ORDER BY sort_order, created_at', [aoId]),
+    ]);
+    res.json({
+      data: {
+        parent, giveaways, erp, assets, presentations, docs, items, trainings,
+        emergency_contacts: emergencyContacts,
+        dependents,
+      },
+    });
   } catch (err) { next(err); }
 });
 
@@ -1589,13 +1759,39 @@ app.patch('/api/v1/applicants/:id/onboarding/header', authRequired, async (req, 
       ['onboardingNotes', 'onboarding_notes'],
       ['trainingNotes', 'training_notes'],
       ['status', 'status'],
+      // Personal / contact / addresses (Phase 2.G) — feed straight into employees
+      // when the applicant is promoted on Close & Archive.
+      ['gender',                     'gender'],
+      ['maritalStatus',              'marital_status'],
+      ['nationality',                'nationality'],
+      ['religion',                   'religion'],
+      ['languagesKnown',             'languages_known'],
+      ['casteCategory',              'caste_category'],
+      ['alternatePhone',             'alternate_phone'],
+      ['alternatePhoneCountryCode',  'alternate_phone_country_code'],
+      ['probationFrom',              'probation_from'],
+      ['probationTo',                'probation_to'],
+      ['employmentType',             'employment_type'],
+      ['workMode',                   'work_mode'],
+      ['presentAddress',             'present_address'],
+      ['permanentAddress',           'permanent_address'],
+      ['pan',                        'pan'],
+      ['aadhaar',                    'aadhaar'],
     ];
+    const jsonCols = new Set(['languages_known', 'present_address', 'permanent_address']);
     const sets: string[] = []; const vals: unknown[] = [];
     for (const [key, col] of map) {
       if (body[key] !== undefined) {
         sets.push(`${col} = ?`);
-        if (key === 'setupEmailAccount') vals.push(body[key] ? 1 : 0);
-        else vals.push(body[key] === '' ? null : body[key]);
+        const raw = body[key];
+        if (key === 'setupEmailAccount') {
+          vals.push(raw ? 1 : 0);
+        } else if (jsonCols.has(col)) {
+          // mysql2 doesn't auto-stringify objects/arrays for JSON columns.
+          vals.push(raw == null ? null : (typeof raw === 'string' ? raw : JSON.stringify(raw)));
+        } else {
+          vals.push(raw === '' ? null : raw);
+        }
       }
     }
     if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
@@ -1606,6 +1802,59 @@ app.patch('/api/v1/applicants/:id/onboarding/header', authRequired, async (req, 
       section: sectionFromKeys(keys), meta: Object.fromEntries(keys.map((k) => [k, body[k]])),
     });
     res.json({ data: { id: aoId } });
+  } catch (err) { next(err); }
+});
+
+// Emergency contacts + dependents captured during onboarding (Phase 2.G).
+// Bulk-replace: client PUTs the full array, we wipe and re-insert.
+type ApplicantEmergencyContactInput = {
+  id?: string; name?: string; relation?: string | null;
+  phone?: string | null; phone_country_code?: string | null;
+  address?: string | null; sort_order?: number;
+};
+app.put('/api/v1/applicants/:id/onboarding/emergency-contacts', authRequired, async (req, res, next) => {
+  try {
+    const aoId = await ensureOnboardingRow(req.params.id);
+    const items: ApplicantEmergencyContactInput[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    await query('DELETE FROM applicant_emergency_contacts WHERE ao_id = ?', [aoId]);
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it?.name) continue;
+      await query(
+        `INSERT INTO applicant_emergency_contacts (id, ao_id, name, relation, phone, phone_country_code, address, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ulid(), aoId, it.name, it.relation ?? null, it.phone ?? null,
+         it.phone_country_code ?? null, it.address ?? null, it.sort_order ?? i]
+      );
+    }
+    const rows = await query('SELECT * FROM applicant_emergency_contacts WHERE ao_id = ? ORDER BY sort_order, created_at', [aoId]);
+    res.json({ data: rows });
+  } catch (err) { next(err); }
+});
+
+type ApplicantDependentInput = {
+  id?: string; relation?: string; name?: string;
+  phone?: string | null; phone_country_code?: string | null;
+  email?: string | null; dob?: string | null; sort_order?: number;
+};
+app.put('/api/v1/applicants/:id/onboarding/dependents', authRequired, async (req, res, next) => {
+  try {
+    const aoId = await ensureOnboardingRow(req.params.id);
+    const items: ApplicantDependentInput[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    await query('DELETE FROM applicant_dependents WHERE ao_id = ?', [aoId]);
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it?.relation || !it?.name) continue;
+      await query(
+        `INSERT INTO applicant_dependents (id, ao_id, relation, name, phone, phone_country_code, email, dob, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ulid(), aoId, it.relation, it.name, it.phone ?? null,
+         it.phone_country_code ?? null, it.email ?? null,
+         it.dob ? it.dob : null, it.sort_order ?? i]
+      );
+    }
+    const rows = await query('SELECT * FROM applicant_dependents WHERE ao_id = ? ORDER BY sort_order, created_at', [aoId]);
+    res.json({ data: rows });
   } catch (err) { next(err); }
 });
 
@@ -1932,28 +2181,64 @@ app.post('/api/v1/applicants/:id/onboarding/close', authRequired, async (req, re
     const gradeId = typeof body.gradeId === 'string' && body.gradeId ? body.gradeId : null;
 
     // Pull everything we need for promotion in one shot.
+    // We also pull data for the Info-tab columns so the new employee lands
+    // fully populated instead of forcing HR to retype known data.
     const ctx = await query<{
       ao_id: string; promoted_employee_id: string | null;
       branch_id: string | null; department_id: string | null;
       designation_id: string | null; designation_name: string | null;
-      dob: string | null; email_assigned: string | null; phone_assigned: string | null;
+      designation_division_id: string | null;
+      ao_division_id: string | null;
+      branch_company_id: string | null;
+      dob: string | null; blood_group: string | null;
+      biometric_mapped_at: string | null;
+      email_assigned: string | null; phone_assigned: string | null;
+      assigned_phone_pool_id: string | null;
       full_name: string; applicant_email: string; applicant_phone: string | null;
+      applicant_image_url: string | null;
       offer_ctc: string | null; offer_joining: string | null; offer_designation: string | null;
       jp_designation: string | null;
+      job_profile_id: string | null;
+      // Phase 2.G — onboarding-captured personal fields.
+      gender: string | null; marital_status: string | null;
+      nationality: string | null; religion: string | null;
+      languages_known: unknown;
+      caste_category: string | null;
+      alternate_phone: string | null; alternate_phone_country_code: string | null;
+      probation_from: string | null; probation_to: string | null;
+      employment_type: string | null; work_mode: string | null;
+      present_address: unknown; permanent_address: unknown;
+      ao_pan: string | null; ao_aadhaar: string | null;
     }>(
       `SELECT ao.id AS ao_id, ao.promoted_employee_id,
               ao.branch_id, ao.department_id, ao.designation_id,
               d.name AS designation_name,
-              ao.dob, ao.email_assigned, ao.phone_assigned,
+              d.division_id AS designation_division_id,
+              ao.division_id AS ao_division_id,
+              b.company_id AS branch_company_id,
+              ao.dob, ao.blood_group, ao.biometric_mapped_at,
+              ao.email_assigned, ao.phone_assigned,
+              pn.id AS assigned_phone_pool_id,
               a.full_name, a.email AS applicant_email, a.phone AS applicant_phone,
+              a.image_url AS applicant_image_url,
               o.ctc AS offer_ctc, o.joining_date AS offer_joining, o.designation AS offer_designation,
-              jp.designation AS jp_designation
+              jp.designation AS jp_designation,
+              jp.id AS job_profile_id,
+              ao.gender, ao.marital_status, ao.nationality, ao.religion,
+              ao.languages_known, ao.caste_category,
+              ao.alternate_phone, ao.alternate_phone_country_code,
+              ao.probation_from, ao.probation_to,
+              ao.employment_type, ao.work_mode,
+              ao.present_address, ao.permanent_address,
+              ao.pan AS ao_pan, ao.aadhaar AS ao_aadhaar
        FROM applicant_onboarding ao
        JOIN applicants a ON a.id = ao.applicant_id
        LEFT JOIN designations d ON d.id = ao.designation_id
        LEFT JOIN applicant_offers o ON o.applicant_id = ao.applicant_id
        LEFT JOIN job_listings jl ON jl.id = a.job_listing_id
        LEFT JOIN job_profiles jp ON jp.id = jl.job_profile_id
+       LEFT JOIN branches b ON b.id = ao.branch_id
+       LEFT JOIN phone_number_pool pn ON pn.number = ao.phone_assigned
        WHERE ao.id = ?`,
       [aoId]
     );
@@ -1971,8 +2256,20 @@ app.post('/api/v1/applicants/:id/onboarding/close', authRequired, async (req, re
       const ctc = row.offer_ctc != null ? Number(row.offer_ctc) : null;
       const email = row.email_assigned || row.applicant_email;
       const phone = row.phone_assigned || row.applicant_phone;
-      const [first, ...rest] = (row.full_name || '').trim().split(/\s+/);
-      const last = rest.join(' ') || first;
+
+      // Proper first / middle / last split. "Rohan K. Patel" → first=Rohan,
+      // middle=K., last=Patel. "Rohan Patel" → first=Rohan, last=Patel.
+      const parts = (row.full_name || '').trim().split(/\s+/).filter(Boolean);
+      const first = parts[0] || '';
+      const last  = parts.length >= 2 ? parts[parts.length - 1] : first;
+      const middle = parts.length >= 3 ? parts.slice(1, -1).join(' ') : null;
+      const displayName = (row.full_name || '').trim() || null;
+
+      // Division: prefer the explicit ao.division_id, else derive from
+      // the chosen designation's division.
+      const divisionId = row.ao_division_id || row.designation_division_id || null;
+      const companyId  = row.branch_company_id || null;
+
       const missing: string[] = [];
       if (!row.branch_id)     missing.push('branch');
       if (!row.department_id) missing.push('department');
@@ -1984,20 +2281,80 @@ app.post('/api/v1/applicants/:id/onboarding/close', authRequired, async (req, re
       if (!phone)             missing.push('phone');
       if (!first)             missing.push('first_name');
 
+      // Pre-flight: employees.email is UNIQUE. If the email we're about to
+      // use already exists on another employee, INSERT will throw mid-flow
+      // and leave the onboarding marked archived with no employee created.
+      // Catching it here lets us return a clear, actionable warning instead.
+      let conflictMsg: string | null = null;
+      if (!missing.length && email) {
+        const dup = await query<{ id: string; code: string }>(
+          'SELECT id, code FROM employees WHERE email = ? LIMIT 1',
+          [email]
+        );
+        if (dup[0]) {
+          conflictMsg = `Email "${email}" is already used by employee ${dup[0].code}. Assign a different Official Email in the Email & Phone section (or relieve the existing employee first) before closing.`;
+        }
+      }
+
       if (missing.length) {
         warning = `Employee row not created — missing: ${missing.join(', ')}. Onboarding closed without promotion.`;
+      } else if (conflictMsg) {
+        warning = conflictMsg;
       } else {
         employeeId = ulid();
-        employeeCode = `EMP${String(Date.now()).slice(-6)}`;
+        // Match the manual-create format so the Employee Master list shows
+        // a consistent CK-EMP-NNNN scheme regardless of which path created
+        // the row. The MAX(...) lookup uses SUBSTRING(code, 8) to read the
+        // numeric tail of existing codes (also handles legacy EMP123456).
+        const [emaxRow] = await query<{ n: number | string | null }>(
+          "SELECT COALESCE(MAX(CAST(SUBSTRING(code, 8) AS UNSIGNED)), 0) AS n FROM employees WHERE code LIKE 'CK-EMP-%'"
+        );
+        employeeCode = `CK-EMP-${String(Number(emaxRow?.n ?? 0) + 1).padStart(4, '0')}`;
         try {
+          // JSON columns come back from mysql2 either as parsed objects (newer
+          // driver) or as strings — normalise to a serialised string for INSERT
+          // so the column actually accepts the value.
+          const toJsonParam = (v: unknown): string | null => {
+            if (v == null) return null;
+            return typeof v === 'string' ? v : JSON.stringify(v);
+          };
           await query(
             `INSERT INTO employees
-               (id, code, first_name, last_name, designation, status,
-                joining_date, email, phone, branch_id, department_id, grade_id, ctc)
-             VALUES (?, ?, ?, ?, ?, 'PROBATION', ?, ?, ?, ?, ?, ?, ?)`,
-            [employeeId, employeeCode, first, last, designation!,
-             joiningDate, email, phone, row.branch_id, row.department_id, gradeId,
-             Math.round((ctc as number) * 100)]
+               (id, code, first_name, middle_name, last_name, display_name,
+                designation, status, joining_date, email, phone,
+                personal_phone_country_code, personal_email,
+                branch_id, company_id, department_id, division_id, grade_id, ctc,
+                job_profile_id,
+                dob, blood_group, photo_url,
+                office_contact_phone_id,
+                biometric_mapped,
+                gender, marital_status, nationality, religion,
+                languages_known, caste_category,
+                alternate_phone, alternate_phone_country_code,
+                probation_from, probation_to,
+                present_address, permanent_address,
+                pan, aadhaar,
+                employment_type, work_mode)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'PROBATION', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              employeeId, employeeCode,
+              first, middle, last, displayName,
+              designation!, joiningDate, email, phone,
+              '+91', row.applicant_email || null,
+              row.branch_id, companyId, row.department_id, divisionId, gradeId,
+              Math.round((ctc as number) * 100),
+              row.job_profile_id,
+              row.dob, row.blood_group, row.applicant_image_url,
+              row.assigned_phone_pool_id,
+              row.biometric_mapped_at ? 1 : 0,
+              row.gender, row.marital_status, row.nationality, row.religion,
+              toJsonParam(row.languages_known), row.caste_category,
+              row.alternate_phone, row.alternate_phone_country_code,
+              row.probation_from, row.probation_to,
+              toJsonParam(row.present_address), toJsonParam(row.permanent_address),
+              row.ao_pan, row.ao_aadhaar,
+              row.employment_type || 'Permanent', row.work_mode || 'Onsite',
+            ]
           );
           // Re-point any onboarding-allocated assets to the new employee.
           await query(
@@ -2014,6 +2371,35 @@ app.post('/api/v1/applicants/:id/onboarding/close', authRequired, async (req, re
               [employeeId, row.phone_assigned]
             );
           }
+          // Copy onboarding-captured emergency contacts and dependents to the
+          // employee's own tables. Each gets a fresh ULID; ao_id is replaced
+          // with the new employee_id. We delete-then-insert in case a previous
+          // promotion attempt left stale rows.
+          await query('DELETE FROM employee_emergency_contacts WHERE employee_id = ?', [employeeId]);
+          const aec = await query<{
+            name: string; relation: string | null; phone: string | null;
+            phone_country_code: string | null; address: string | null; sort_order: number;
+          }>('SELECT name, relation, phone, phone_country_code, address, sort_order FROM applicant_emergency_contacts WHERE ao_id = ? ORDER BY sort_order, created_at', [aoId]);
+          for (const r of aec) {
+            await query(
+              `INSERT INTO employee_emergency_contacts (id, employee_id, name, relation, phone, phone_country_code, address, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+              [ulid(), employeeId, r.name, r.relation, r.phone, r.phone_country_code, r.address, r.sort_order]
+            );
+          }
+          await query('DELETE FROM employee_dependents WHERE employee_id = ?', [employeeId]);
+          const adep = await query<{
+            relation: string; name: string; phone: string | null;
+            phone_country_code: string | null; email: string | null;
+            dob: string | null; sort_order: number;
+          }>('SELECT relation, name, phone, phone_country_code, email, dob, sort_order FROM applicant_dependents WHERE ao_id = ? ORDER BY sort_order, created_at', [aoId]);
+          for (const r of adep) {
+            await query(
+              `INSERT INTO employee_dependents (id, employee_id, relation, name, phone, phone_country_code, email, dob, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [ulid(), employeeId, r.relation, r.name, r.phone, r.phone_country_code, r.email, r.dob, r.sort_order]
+            );
+          }
         } catch (e) {
           console.error('[onboarding-close] employee creation failed', e);
           employeeId = null;
@@ -2023,10 +2409,18 @@ app.post('/api/v1/applicants/:id/onboarding/close', authRequired, async (req, re
       }
     }
 
-    await query(
-      "UPDATE applicant_onboarding SET status = 'onboarded', closed_at = ?, promoted_employee_id = COALESCE(?, promoted_employee_id) WHERE id = ?",
-      [new Date(), employeeId, aoId]
-    );
+    // Only mark the onboarding 'onboarded' when:
+    //   - HR opted out of employee creation (createEmployee=false), OR
+    //   - we successfully created (or already had) an employee row.
+    // If createEmployee was on but creation failed (warning set), leave the
+    // onboarding in its current state so HR can fix the issue and retry.
+    const archiveNow = !createEmployee || !!employeeId;
+    if (archiveNow) {
+      await query(
+        "UPDATE applicant_onboarding SET status = 'onboarded', closed_at = ?, promoted_employee_id = COALESCE(?, promoted_employee_id) WHERE id = ?",
+        [new Date(), employeeId, aoId]
+      );
+    }
 
     await writeOnboardingActivity(aoId, req.params.id, req.user?.id ?? null, 'close_and_archive', {
       section: 'close', meta: { employeeId, employeeCode, warning },
@@ -2661,26 +3055,28 @@ app.post('/api/v1/onboarding/employees/:employeeId/complete/:taskId', authRequir
 app.post('/api/v1/employees', authRequired, async (req, res, next) => {
   try {
     const { firstName, lastName, email, phone, designation, branchId, departmentId,
-      gradeId, ctcRupees, joiningDate, bankName, bankAccount, ifsc, pan, aadhaar } = req.body ?? {};
+      gradeId, ctcRupees, joiningDate, bankName, bankAccount, ifsc, pan, aadhaar,
+      companyId, divisionId } = req.body ?? {};
     if (!firstName || !lastName || !email || !phone || !designation || !branchId || !departmentId || !gradeId || !ctcRupees || !joiningDate) {
       return res.status(400).json({ error: { code: 'VALIDATION', message: 'Required fields missing' } });
     }
     const [maxRow] = await query<{ n: number | string | null }>(
-      'SELECT COALESCE(MAX(CAST(SUBSTRING(code, 8) AS UNSIGNED)), 0) AS n FROM employees'
+      "SELECT COALESCE(MAX(CAST(SUBSTRING(code, 8) AS UNSIGNED)), 0) AS n FROM employees WHERE code LIKE 'CK-EMP-%'"
     );
-    const code = `CK-EMP-${String(Number(maxRow?.n ?? 0) + 1).padStart(3, '0')}`;
+    const code = `CK-EMP-${String(Number(maxRow?.n ?? 0) + 1).padStart(4, '0')}`;
     const id = ulid();
     await query(
       `INSERT INTO employees (id, code, first_name, last_name, designation, status, joining_date, email, phone,
-       branch_id, department_id, grade_id, ctc, bank_name, bank_account, ifsc, pan, aadhaar)
-       VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       branch_id, company_id, department_id, division_id, grade_id, ctc, bank_name, bank_account, ifsc, pan, aadhaar)
+       VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, code, firstName, lastName, designation, joiningDate, email, phone,
-       branchId, departmentId, gradeId, Math.round(Number(ctcRupees) * 100),
+       branchId, companyId || null, departmentId, divisionId || null, gradeId,
+       Math.round(Number(ctcRupees) * 100),
        bankName || null, bankAccount || null, ifsc || null, pan || null, aadhaar || null]
     );
     await writeAudit(req.user!.id, 'create', 'employee', id, null, {
       id, code, firstName, lastName, designation, joiningDate, email, phone,
-      branchId, departmentId, gradeId, ctcRupees,
+      branchId, companyId, departmentId, divisionId, gradeId, ctcRupees,
     });
     res.status(201).json({ data: { id, code } });
   } catch (err) { next(err); }
@@ -2689,12 +3085,63 @@ app.post('/api/v1/employees', authRequired, async (req, res, next) => {
 // Update employee
 app.patch('/api/v1/employees/:id', authRequired, async (req, res, next) => {
   try {
-    const allowed = ['first_name','last_name','designation','status','phone','bank_name','bank_account','ifsc','pan','aadhaar','branch_id','department_id','grade_id'];
+    const allowed = [
+      // existing core fields
+      'first_name','last_name','designation','status','phone','email',
+      'bank_name','bank_account','ifsc','pan','aadhaar','pf','esic','uan',
+      'branch_id','company_id','department_id','division_id','grade_id','job_profile_id','current_compensation_id',
+      // Info tab — identity / personal / employment (migration 0025)
+      'middle_name','display_name','photo_url','gender','dob','marital_status',
+      'blood_group','nationality','religion','languages_known','caste_category',
+      'joining_date','date_of_confirmation','employment_type','work_mode',
+      'probation_from','probation_to','contract_period','contract_from',
+      'contract_to','contract_attachment_url',
+      // Info tab — contact / addresses
+      'personal_phone_country_code','alternate_phone','alternate_phone_country_code',
+      'office_contact_phone_id','personal_email','present_address','permanent_address',
+      // Salary/ESIC/PF tab (migration 0029)
+      'bank_branch','account_type','pf_applicable','esi_applicable','pt_state','form16_url',
+      // Attendance & Leaves tab
+      'biometric_mapped','annual_leave_entitlement','attendance_rule_id','default_shift_id',
+      // Increment tab
+      'next_review_due','increment_notes',
+      // Other tab
+      'nda_signed','background_verification','policy_acknowledgements',
+      'linkedin_url','hobbies','willing_to_relocate','willing_to_travel','driving_license',
+      'medical_insurance_provider','medical_policy_number','medical_nominee','vaccination_status',
+      'bond_signed','visa_work_permit','legal_case_declaration',
+      'digital_signature_id','esignature_url','workflow_approver_roles',
+      'preferred_career_path','training_interests','open_to_mentorship','self_assessed_strengths',
+    ];
+    const jsonCols = new Set([
+      'languages_known','present_address','permanent_address',
+      'policy_acknowledgements','vaccination_status','workflow_approver_roles','training_interests',
+    ]);
+    const boolCols = new Set([
+      'contract_period',
+      'pf_applicable','esi_applicable','biometric_mapped',
+      'nda_signed','driving_license','bond_signed','open_to_mentorship',
+    ]);
+    const dateCols = new Set([
+      'dob','joining_date','date_of_confirmation','probation_from','probation_to','contract_from','contract_to',
+      'next_review_due',
+    ]);
     const updates: string[] = [];
     const values: unknown[] = [];
     const before = await query('SELECT * FROM employees WHERE id = ? LIMIT 1', [req.params.id]);
-    for (const [k, v] of Object.entries(req.body ?? {})) {
-      if (allowed.includes(k)) { updates.push(`${k} = ?`); values.push(v); }
+    for (const [k, raw] of Object.entries(req.body ?? {})) {
+      if (!allowed.includes(k)) continue;
+      let v: unknown = raw;
+      if (jsonCols.has(k)) {
+        // mysql2 doesn't auto-stringify objects/arrays into JSON columns.
+        v = raw == null ? null : (typeof raw === 'string' ? raw : JSON.stringify(raw));
+      } else if (boolCols.has(k)) {
+        v = raw ? 1 : 0;
+      } else if (dateCols.has(k)) {
+        v = raw === '' ? null : raw;
+      }
+      updates.push(`${k} = ?`);
+      values.push(v);
     }
     if (!updates.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields to update' } });
     values.push(req.params.id);
@@ -2713,6 +3160,211 @@ app.delete('/api/v1/employees/:id', authRequired, async (req, res, next) => {
     const after = await query('SELECT * FROM employees WHERE id = ? LIMIT 1', [req.params.id]);
     await writeAudit(req.user!.id, 'exit', 'employee', req.params.id, before[0] ?? null, after[0] ?? null);
     res.json({ data: { id: req.params.id, status: 'EXITED' } });
+  } catch (err) { next(err); }
+});
+
+// ─── Employee Info tab side tables ──────────────────────────────────────────
+// Emergency contacts and dependents are small multi-row grids edited inline
+// on the Info tab. We use bulk-replace semantics: PUT a full array, server
+// wipes and re-inserts, so the client doesn't have to track per-row diffs.
+
+type EmergencyContactInput = {
+  id?: string;
+  name?: string;
+  relation?: string | null;
+  phone?: string | null;
+  phone_country_code?: string | null;
+  address?: string | null;
+  sort_order?: number;
+};
+app.put('/api/v1/employees/:id/emergency-contacts', authRequired, async (req, res, next) => {
+  try {
+    const items: EmergencyContactInput[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    await query('DELETE FROM employee_emergency_contacts WHERE employee_id = ?', [req.params.id]);
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it?.name) continue;
+      await query(
+        `INSERT INTO employee_emergency_contacts (id, employee_id, name, relation, phone, phone_country_code, address, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ulid(), req.params.id, it.name, it.relation ?? null, it.phone ?? null,
+         it.phone_country_code ?? null, it.address ?? null, it.sort_order ?? i]
+      );
+    }
+    const rows = await query('SELECT * FROM employee_emergency_contacts WHERE employee_id = ? ORDER BY sort_order, created_at', [req.params.id]);
+    res.json({ data: rows });
+  } catch (err) { next(err); }
+});
+
+type DependentInput = {
+  id?: string;
+  relation?: string;
+  name?: string;
+  phone?: string | null;
+  phone_country_code?: string | null;
+  email?: string | null;
+  dob?: string | null;
+  sort_order?: number;
+};
+app.put('/api/v1/employees/:id/dependents', authRequired, async (req, res, next) => {
+  try {
+    const items: DependentInput[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    await query('DELETE FROM employee_dependents WHERE employee_id = ?', [req.params.id]);
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it?.relation || !it?.name) continue;
+      await query(
+        `INSERT INTO employee_dependents (id, employee_id, relation, name, phone, phone_country_code, email, dob, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ulid(), req.params.id, it.relation, it.name, it.phone ?? null,
+         it.phone_country_code ?? null, it.email ?? null,
+         it.dob ? it.dob : null, it.sort_order ?? i]
+      );
+    }
+    const rows = await query('SELECT * FROM employee_dependents WHERE employee_id = ? ORDER BY sort_order, created_at', [req.params.id]);
+    res.json({ data: rows });
+  } catch (err) { next(err); }
+});
+
+// ─── Employee Documents & Experience tab side tables (Phase 2.B) ───────────
+
+type DocumentInput = {
+  id?: string;
+  doc_type?: string;
+  doc_number?: string | null;
+  description?: string | null;
+  file_url?: string | null;
+  sort_order?: number;
+};
+app.put('/api/v1/employees/:id/documents', authRequired, async (req, res, next) => {
+  try {
+    const items: DocumentInput[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    await query('DELETE FROM employee_documents WHERE employee_id = ?', [req.params.id]);
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it?.doc_type) continue;
+      await query(
+        `INSERT INTO employee_documents (id, employee_id, doc_type, doc_number, description, file_url, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [ulid(), req.params.id, it.doc_type, it.doc_number ?? null,
+         it.description ?? null, it.file_url ?? null, it.sort_order ?? i]
+      );
+    }
+    const rows = await query('SELECT * FROM employee_documents WHERE employee_id = ? ORDER BY sort_order, created_at', [req.params.id]);
+    res.json({ data: rows });
+  } catch (err) { next(err); }
+});
+
+type EducationInput = {
+  id?: string;
+  level?: string | null;
+  course_name?: string | null;
+  board_university?: string | null;
+  institute?: string | null;
+  specialization?: string | null;
+  passing_year?: string | null;
+  percentage_cgpa?: string | null;
+  sort_order?: number;
+};
+app.put('/api/v1/employees/:id/education', authRequired, async (req, res, next) => {
+  try {
+    const items: EducationInput[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    await query('DELETE FROM employee_education WHERE employee_id = ?', [req.params.id]);
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      // Skip rows that have no meaningful data at all.
+      if (!it?.level && !it?.course_name && !it?.institute) continue;
+      await query(
+        `INSERT INTO employee_education
+           (id, employee_id, level, course_name, board_university, institute, specialization, passing_year, percentage_cgpa, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ulid(), req.params.id, it.level ?? null, it.course_name ?? null,
+         it.board_university ?? null, it.institute ?? null, it.specialization ?? null,
+         it.passing_year ? it.passing_year : null, it.percentage_cgpa ?? null, it.sort_order ?? i]
+      );
+    }
+    const rows = await query('SELECT * FROM employee_education WHERE employee_id = ? ORDER BY sort_order, created_at', [req.params.id]);
+    res.json({ data: rows });
+  } catch (err) { next(err); }
+});
+
+type WorkExperienceInput = {
+  id?: string;
+  company_name?: string | null;
+  designation?: string | null;
+  from_date?: string | null;
+  to_date?: string | null;
+  reporting_manager_name?: string | null;
+  reporting_manager_phone?: string | null;
+  last_drawn_salary?: string | null;
+  reason_for_leaving?: string | null;
+  experience_letter_url?: string | null;
+  sort_order?: number;
+};
+app.put('/api/v1/employees/:id/work-experience', authRequired, async (req, res, next) => {
+  try {
+    const items: WorkExperienceInput[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    await query('DELETE FROM employee_work_experience WHERE employee_id = ?', [req.params.id]);
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it?.company_name && !it?.designation) continue;
+      await query(
+        `INSERT INTO employee_work_experience
+           (id, employee_id, company_name, designation, from_date, to_date,
+            reporting_manager_name, reporting_manager_phone, last_drawn_salary,
+            reason_for_leaving, experience_letter_url, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ulid(), req.params.id,
+         it.company_name ?? null, it.designation ?? null,
+         it.from_date ? it.from_date : null, it.to_date ? it.to_date : null,
+         it.reporting_manager_name ?? null, it.reporting_manager_phone ?? null,
+         it.last_drawn_salary ?? null, it.reason_for_leaving ?? null,
+         it.experience_letter_url ?? null, it.sort_order ?? i]
+      );
+    }
+    const rows = await query('SELECT * FROM employee_work_experience WHERE employee_id = ? ORDER BY sort_order, created_at', [req.params.id]);
+    res.json({ data: rows });
+  } catch (err) { next(err); }
+});
+
+// ─── Employee Skills (Phase 2.C — Job Profile tab) ─────────────────────────
+type SkillInput = {
+  id?: string;
+  skill_id?: string;
+  rating?: number | string;
+  notes?: string | null;
+  sort_order?: number;
+};
+app.put('/api/v1/employees/:id/skills', authRequired, async (req, res, next) => {
+  try {
+    const items: SkillInput[] = Array.isArray(req.body?.items) ? req.body.items : [];
+    await query('DELETE FROM employee_skills WHERE employee_id = ?', [req.params.id]);
+    // De-dupe by skill_id within the same payload — the table has a UNIQUE
+    // (employee_id, skill_id), so a duplicate would fail the INSERT and
+    // leave the row half-saved.
+    const seen = new Set<string>();
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it?.skill_id || seen.has(it.skill_id)) continue;
+      seen.add(it.skill_id);
+      const rawRating = typeof it.rating === 'string' ? Number(it.rating) : it.rating;
+      const rating = Math.max(1, Math.min(5, Number.isFinite(rawRating) ? Math.round(rawRating as number) : 3));
+      await query(
+        `INSERT INTO employee_skills (id, employee_id, skill_id, rating, notes, sort_order)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [ulid(), req.params.id, it.skill_id, rating, it.notes ?? null, it.sort_order ?? i]
+      );
+    }
+    const rows = await query(
+      `SELECT es.id, es.skill_id, es.rating, es.notes, es.sort_order,
+              s.code AS skill_code, s.name AS skill_name, s.category AS skill_category
+       FROM employee_skills es
+       JOIN skills s ON s.id = es.skill_id
+       WHERE es.employee_id = ?
+       ORDER BY es.sort_order, es.created_at`,
+      [req.params.id]
+    );
+    res.json({ data: rows });
   } catch (err) { next(err); }
 });
 
@@ -2997,6 +3649,449 @@ app.post('/api/v1/tours/:id/settle', authRequired, async (req, res, next) => {
     await writeAudit(req.user!.id, 'settle', 'tour', req.params.id, before[0] ?? null, after[0] ?? null);
     res.json({ data: { id: req.params.id, status: 'settled' } });
   } catch (err) { next(err); }
+});
+
+// ─── COMPENSATION MASTER (02) ───────────────────────────────────────────────
+// Standalone module that owns the full compensation history for each
+// employee, plus reusable Templates and Offer/Increment/One-time records.
+// The Employee Master keeps only `ctc` (snapshot) + `current_compensation_id`
+// (pointer to the active row) — see migration 0031.
+
+const COMP_STATUSES = ['Draft', 'Approved', 'Active', 'Archived'] as const;
+const COMP_RECORD_TYPES = ['Template', 'Offer', 'Joining', 'Increment', 'One-time'] as const;
+
+type CompensationInput = {
+  recordType?: string;
+  employeeId?: string | null;
+  templateId?: string | null;
+  effectiveFrom?: string;
+  effectiveTo?: string | null;
+  annualCtc?: number | string;            // RUPEES on the wire — converted to paise here
+  basic?: number | string | null;
+  hra?: number | string | null;
+  conveyance?: number | string | null;
+  medicalAllowance?: number | string | null;
+  otherAllowances?: Array<{ name: string; amount: number }> | string | null;
+  variablePay?: number | string | null;
+  variablePayPct?: number | string | null;
+  pfApplicable?: unknown;
+  esiApplicable?: unknown;
+  payrollCode?: string | null;
+  attachmentUrl?: string | null;
+  reasonForChange?: string | null;
+  notes?: string | null;
+};
+
+function toPaise(v: unknown): number | null {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 100);
+}
+function toPct(v: unknown): number | null {
+  if (v === '' || v == null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function toJsonOrNull(v: unknown): string | null {
+  if (v == null || v === '') return null;
+  if (typeof v === 'string') {
+    try { JSON.parse(v); return v; } catch { return null; }
+  }
+  return JSON.stringify(v);
+}
+
+async function nextCompCode(): Promise<string> {
+  const rows = await query<{ n: number | string | null }>(
+    "SELECT COALESCE(MAX(CAST(SUBSTRING(code, 5) AS UNSIGNED)), 0) AS n FROM compensations WHERE code LIKE 'CMP-%'"
+  );
+  return `CMP-${String(Number(rows[0]?.n ?? 0) + 1).padStart(6, '0')}`;
+}
+
+// LIST — supports filtering by employee, record_type, status, search.
+app.get('/api/v1/compensations', authRequired, async (req, res, next) => {
+  try {
+    const employeeId = typeof req.query.employeeId === 'string' ? req.query.employeeId : undefined;
+    const recordType = typeof req.query.recordType === 'string' ? req.query.recordType : undefined;
+    const status     = typeof req.query.status     === 'string' ? req.query.status     : undefined;
+    const search     = typeof req.query.search     === 'string' ? req.query.search.trim() : '';
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(200, Math.max(1, Number(req.query.pageSize) || 25));
+    const offset = (page - 1) * pageSize;
+
+    const where: string[] = []; const params: unknown[] = [];
+    if (employeeId) { where.push('c.employee_id = ?'); params.push(employeeId); }
+    if (recordType) { where.push('c.record_type = ?'); params.push(recordType); }
+    if (status)     { where.push('c.status = ?');      params.push(status); }
+    if (search) {
+      where.push('(c.code LIKE ? OR e.code LIKE ? OR e.first_name LIKE ? OR e.last_name LIKE ?)');
+      const like = `%${search}%`;
+      params.push(like, like, like, like);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const rows = await query(
+      `SELECT
+         c.id, c.code, c.record_type, c.employee_id, c.template_id,
+         c.effective_from, c.effective_to, c.annual_ctc, c.status,
+         c.approved_at, c.created_at, c.updated_at,
+         e.code AS employee_code,
+         CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
+         tpl.code AS template_code
+       FROM compensations c
+       LEFT JOIN employees e ON e.id = c.employee_id
+       LEFT JOIN compensations tpl ON tpl.id = c.template_id
+       ${whereSql}
+       ORDER BY c.created_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+
+    const [cnt] = await query<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM compensations c LEFT JOIN employees e ON e.id = c.employee_id ${whereSql}`,
+      params
+    );
+    res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
+  } catch (err) { next(err); }
+});
+
+app.get('/api/v1/compensations/:id', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query<Record<string, unknown>>(
+      `SELECT c.*,
+              e.code AS employee_code,
+              CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
+              tpl.code AS template_code,
+              u.email AS approved_by_email
+       FROM compensations c
+       LEFT JOIN employees e        ON e.id   = c.employee_id
+       LEFT JOIN compensations tpl  ON tpl.id = c.template_id
+       LEFT JOIN users u            ON u.id   = c.approved_by_user_id
+       WHERE c.id = ?`,
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Compensation not found' } });
+    res.json({ data: rows[0] });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/compensations', authRequired, async (req, res, next) => {
+  try {
+    const body: CompensationInput = req.body ?? {};
+    if (!body.recordType || !COMP_RECORD_TYPES.includes(body.recordType as typeof COMP_RECORD_TYPES[number])) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: `recordType must be one of ${COMP_RECORD_TYPES.join(', ')}` } });
+    }
+    if (!body.effectiveFrom) return res.status(400).json({ error: { code: 'VALIDATION', message: 'effectiveFrom required' } });
+    if (body.annualCtc == null || Number(body.annualCtc) <= 0) return res.status(400).json({ error: { code: 'VALIDATION', message: 'annualCtc (rupees) required' } });
+    // Templates have no employee; everything else does.
+    if (body.recordType !== 'Template' && !body.employeeId) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'employeeId required for non-Template records' } });
+    }
+
+    const id = ulid();
+    const code = await nextCompCode();
+    const annualPaise = toPaise(body.annualCtc) ?? 0;
+    await query(
+      `INSERT INTO compensations
+         (id, code, record_type, employee_id, template_id,
+          effective_from, effective_to, annual_ctc,
+          basic, hra, conveyance, medical_allowance, other_allowances,
+          variable_pay, variable_pay_pct,
+          pf_applicable, esi_applicable, payroll_code,
+          status, attachment_url, reason_for_change, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Draft', ?, ?, ?)`,
+      [
+        id, code, body.recordType,
+        body.recordType === 'Template' ? null : (body.employeeId || null),
+        body.templateId || null,
+        body.effectiveFrom, body.effectiveTo || null, annualPaise,
+        toPaise(body.basic), toPaise(body.hra), toPaise(body.conveyance),
+        toPaise(body.medicalAllowance), toJsonOrNull(body.otherAllowances),
+        toPaise(body.variablePay), toPct(body.variablePayPct),
+        body.pfApplicable ? 1 : 0, body.esiApplicable ? 1 : 0,
+        body.payrollCode || null,
+        body.attachmentUrl || null, body.reasonForChange || null, body.notes || null,
+      ]
+    );
+    await writeAudit(req.user!.id, 'create', 'compensation', id, null, { code, ...body });
+    res.status(201).json({ data: { id, code } });
+  } catch (err) { next(err); }
+});
+
+app.patch('/api/v1/compensations/:id', authRequired, async (req, res, next) => {
+  try {
+    const before = await query<Record<string, unknown>>('SELECT * FROM compensations WHERE id = ?', [req.params.id]);
+    const row = before[0];
+    if (!row) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Compensation not found' } });
+    // Only Draft can be freely edited. Archived is immutable. Approved/Active
+    // require an explicit unarchive/draft step before changes — we just allow
+    // Active edits to fields that are operational (notes, attachment, reason)
+    // and block the rest. Keep this strict to avoid silent history rewrites.
+    const status = String(row.status);
+    if (!['Draft', 'Approved'].includes(status)) {
+      return res.status(409).json({ error: { code: 'CONFLICT', message: `Only Draft / Approved records can be edited (current: ${status}).` } });
+    }
+    const body: CompensationInput = req.body ?? {};
+    const sets: string[] = []; const vals: unknown[] = [];
+    const push = (col: string, v: unknown) => { sets.push(`${col} = ?`); vals.push(v); };
+    if (body.recordType !== undefined) push('record_type', body.recordType);
+    if (body.employeeId !== undefined) push('employee_id', body.employeeId || null);
+    if (body.templateId !== undefined) push('template_id', body.templateId || null);
+    if (body.effectiveFrom !== undefined) push('effective_from', body.effectiveFrom);
+    if (body.effectiveTo   !== undefined) push('effective_to',   body.effectiveTo || null);
+    if (body.annualCtc     !== undefined) push('annual_ctc',     toPaise(body.annualCtc) ?? 0);
+    if (body.basic            !== undefined) push('basic',             toPaise(body.basic));
+    if (body.hra              !== undefined) push('hra',               toPaise(body.hra));
+    if (body.conveyance       !== undefined) push('conveyance',        toPaise(body.conveyance));
+    if (body.medicalAllowance !== undefined) push('medical_allowance', toPaise(body.medicalAllowance));
+    if (body.otherAllowances  !== undefined) push('other_allowances',  toJsonOrNull(body.otherAllowances));
+    if (body.variablePay      !== undefined) push('variable_pay',      toPaise(body.variablePay));
+    if (body.variablePayPct   !== undefined) push('variable_pay_pct',  toPct(body.variablePayPct));
+    if (body.pfApplicable  !== undefined) push('pf_applicable',  body.pfApplicable  ? 1 : 0);
+    if (body.esiApplicable !== undefined) push('esi_applicable', body.esiApplicable ? 1 : 0);
+    if (body.payrollCode      !== undefined) push('payroll_code',      body.payrollCode || null);
+    if (body.attachmentUrl    !== undefined) push('attachment_url',    body.attachmentUrl || null);
+    if (body.reasonForChange  !== undefined) push('reason_for_change', body.reasonForChange || null);
+    if (body.notes            !== undefined) push('notes',             body.notes || null);
+    if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+    vals.push(req.params.id);
+    await query(`UPDATE compensations SET ${sets.join(', ')} WHERE id = ?`, vals);
+    const after = await query<Record<string, unknown>>('SELECT * FROM compensations WHERE id = ?', [req.params.id]);
+    await writeAudit(req.user!.id, 'update', 'compensation', req.params.id, row, after[0] ?? null);
+    res.json({ data: { id: req.params.id } });
+  } catch (err) { next(err); }
+});
+
+app.delete('/api/v1/compensations/:id', authRequired, async (req, res, next) => {
+  try {
+    const before = await query<Record<string, unknown>>('SELECT * FROM compensations WHERE id = ?', [req.params.id]);
+    const row = before[0];
+    if (!row) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Compensation not found' } });
+    if (String(row.status) !== 'Draft') {
+      return res.status(409).json({ error: { code: 'CONFLICT', message: 'Only Draft records can be deleted. Use Archive instead.' } });
+    }
+    await query('DELETE FROM compensations WHERE id = ?', [req.params.id]);
+    await writeAudit(req.user!.id, 'delete', 'compensation', req.params.id, row, null);
+    res.json({ data: { id: req.params.id } });
+  } catch (err) { next(err); }
+});
+
+// Status transitions ────────────────────────────────────────────────────────
+// Draft → Approved
+app.post('/api/v1/compensations/:id/approve', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query<{ status: string }>('SELECT status FROM compensations WHERE id = ?', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Compensation not found' } });
+    if (rows[0].status !== 'Draft') return res.status(409).json({ error: { code: 'CONFLICT', message: `Cannot approve from status ${rows[0].status}` } });
+    await query(
+      "UPDATE compensations SET status = 'Approved', approved_by_user_id = ?, approved_at = NOW(3) WHERE id = ?",
+      [req.user!.id, req.params.id]
+    );
+    await writeAudit(req.user!.id, 'approve', 'compensation', req.params.id, { status: 'Draft' }, { status: 'Approved' });
+    res.json({ data: { id: req.params.id, status: 'Approved' } });
+  } catch (err) { next(err); }
+});
+
+// Approved → Active (archives previous Active for the same employee, syncs employees snapshot).
+app.post('/api/v1/compensations/:id/activate', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query<{ status: string; employee_id: string | null; annual_ctc: number | string }>(
+      'SELECT status, employee_id, annual_ctc FROM compensations WHERE id = ?',
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Compensation not found' } });
+    if (rows[0].status !== 'Approved') return res.status(409).json({ error: { code: 'CONFLICT', message: `Activate requires status Approved (current: ${rows[0].status})` } });
+    if (!rows[0].employee_id) return res.status(400).json({ error: { code: 'VALIDATION', message: 'Cannot activate a Template — only employee-linked comps go Active.' } });
+
+    const employeeId = rows[0].employee_id;
+    const newCtc = Number(rows[0].annual_ctc);
+    // Demote any previously Active comp for this employee to Archived.
+    await query(
+      "UPDATE compensations SET status = 'Archived' WHERE employee_id = ? AND status = 'Active' AND id != ?",
+      [employeeId, req.params.id]
+    );
+    await query("UPDATE compensations SET status = 'Active' WHERE id = ?", [req.params.id]);
+    // Sync the Employee Master snapshot.
+    await query(
+      'UPDATE employees SET current_compensation_id = ?, ctc = ? WHERE id = ?',
+      [req.params.id, newCtc, employeeId]
+    );
+    await writeAudit(req.user!.id, 'activate', 'compensation', req.params.id, { status: 'Approved' }, { status: 'Active', employeeId, newCtcPaise: newCtc });
+    res.json({ data: { id: req.params.id, status: 'Active' } });
+  } catch (err) { next(err); }
+});
+
+// Approved / Active → Archived
+app.post('/api/v1/compensations/:id/archive', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query<{ status: string; employee_id: string | null }>(
+      'SELECT status, employee_id FROM compensations WHERE id = ?', [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Compensation not found' } });
+    if (rows[0].status === 'Archived') return res.json({ data: { id: req.params.id, status: 'Archived' } });
+    if (!['Approved', 'Active', 'Draft'].includes(rows[0].status)) {
+      return res.status(409).json({ error: { code: 'CONFLICT', message: `Cannot archive from status ${rows[0].status}` } });
+    }
+    await query("UPDATE compensations SET status = 'Archived' WHERE id = ?", [req.params.id]);
+    // If this was the employee's active comp, clear the FK on the employee.
+    if (rows[0].status === 'Active' && rows[0].employee_id) {
+      await query('UPDATE employees SET current_compensation_id = NULL WHERE id = ? AND current_compensation_id = ?',
+        [rows[0].employee_id, req.params.id]);
+    }
+    await writeAudit(req.user!.id, 'archive', 'compensation', req.params.id, { status: rows[0].status }, { status: 'Archived' });
+    res.json({ data: { id: req.params.id, status: 'Archived' } });
+  } catch (err) { next(err); }
+});
+
+// Reference: list users for the Approved By picker.
+app.get('/api/v1/compensations/lookups/approvers', authRequired, async (_req, res, next) => {
+  try {
+    const rows = await query(
+      `SELECT u.id, u.email, u.role,
+              CONCAT_WS(' ', e.first_name, e.last_name) AS name
+       FROM users u
+       LEFT JOIN employees e ON e.id = u.employee_id
+       WHERE u.role IN ('HR_ADMIN','FINANCE')
+       ORDER BY u.email`
+    );
+    res.json({ data: rows });
+  } catch (err) { next(err); }
+});
+
+// ─── DEV WIPE TOOL ──────────────────────────────────────────────────────────
+// Admin-only utility for clearing test data. Gated to HR_ADMIN. Each table is
+// allow-listed by category so a typo in the URL can't blow away `users` or
+// `migrations`. Deletes are best-effort: any FK constraint violation comes
+// back to the caller with a 409 + the SQL message so the caller knows which
+// child table is blocking.
+
+type WipeTable = {
+  name: string;        // actual SQL table name
+  label: string;       // friendly label
+  group: string;       // UI grouping
+  pk?: string;         // PK column (default 'id')
+  hint?: string;       // optional caveat shown in UI
+};
+
+const WIPE_TABLES: WipeTable[] = [
+  // Hiring funnel
+  { name: 'applicants',                  label: 'Applicants',                 group: 'Hiring' },
+  { name: 'applicant_onboarding',        label: 'Applicant Onboarding',       group: 'Hiring',
+    hint: 'Cascades to ERP/asset/doc/training/giveaway/item links + emergency/dependent rows.' },
+  { name: 'applicant_offers',            label: 'Applicant Offers',           group: 'Hiring' },
+  { name: 'applicant_screenings',        label: 'Applicant Screenings',       group: 'Hiring' },
+  { name: 'applicant_interviews',        label: 'Applicant Interviews',       group: 'Hiring' },
+  { name: 'applicant_activities',        label: 'Applicant Activities (log)', group: 'Hiring' },
+  { name: 'onboarding_activities',       label: 'Onboarding Activities (log)', group: 'Hiring' },
+  { name: 'applicant_giveaways',         label: 'Applicant Giveaways',        group: 'Hiring' },
+  { name: 'applicant_erp_modules',       label: 'Applicant ERP Modules',      group: 'Hiring' },
+  { name: 'applicant_asset_allocations', label: 'Applicant Asset Allocations', group: 'Hiring' },
+  { name: 'applicant_presentations',     label: 'Applicant Presentations',    group: 'Hiring' },
+  { name: 'applicant_documents',         label: 'Applicant Documents',        group: 'Hiring' },
+  { name: 'applicant_onboarding_items',  label: 'Applicant Onboarding Items', group: 'Hiring' },
+  { name: 'applicant_trainings',         label: 'Applicant Trainings',        group: 'Hiring' },
+  { name: 'applicant_tags',              label: 'Applicant Tags',             group: 'Hiring' },
+  { name: 'applicant_emergency_contacts',label: 'Applicant Emergency Contacts', group: 'Hiring' },
+  { name: 'applicant_dependents',        label: 'Applicant Dependents',       group: 'Hiring' },
+  { name: 'vacancies',                   label: 'Vacancies',                  group: 'Hiring' },
+  { name: 'job_listings',                label: 'Job Listings',               group: 'Hiring' },
+  { name: 'job_profiles',                label: 'Job Profiles',               group: 'Hiring' },
+
+  // Employment
+  { name: 'employees',                       label: 'Employees',              group: 'Employment',
+    hint: 'Will fail if employees still own loans / payroll / leaves / assets / users. Delete those first.' },
+  { name: 'employee_emergency_contacts',     label: 'Employee Emergency Contacts', group: 'Employment' },
+  { name: 'employee_dependents',             label: 'Employee Dependents',    group: 'Employment' },
+  { name: 'employee_documents',              label: 'Employee Documents',     group: 'Employment' },
+  { name: 'employee_education',              label: 'Employee Education',     group: 'Employment' },
+  { name: 'employee_work_experience',        label: 'Employee Work Experience', group: 'Employment' },
+  { name: 'employee_skills',                 label: 'Employee Skills',        group: 'Employment' },
+  { name: 'employee_onboarding',             label: 'Employee Onboarding Tasks', group: 'Employment' },
+  { name: 'attendance',                      label: 'Attendance',             group: 'Employment' },
+  { name: 'leaves',                          label: 'Leaves',                 group: 'Employment' },
+  { name: 'leave_balances',                  label: 'Leave Balances',         group: 'Employment' },
+  { name: 'increments',                      label: 'Increments',             group: 'Employment' },
+  { name: 'tours',                           label: 'Tours',                  group: 'Employment' },
+  { name: 'incentives',                      label: 'Incentives',             group: 'Employment' },
+  { name: 'loans',                           label: 'Loans / Advances',       group: 'Employment' },
+  { name: 'loan_payments',                   label: 'Loan Payments',          group: 'Employment' },
+  { name: 'payroll_periods',                 label: 'Payroll Periods',        group: 'Employment' },
+  { name: 'payroll_items',                   label: 'Payroll Items',          group: 'Employment' },
+  { name: 'roster_entries',                  label: 'Roster Entries',         group: 'Employment' },
+
+  // Masters (be careful)
+  { name: 'designations',     label: 'Designations',  group: 'Masters' },
+  { name: 'divisions',        label: 'Divisions',     group: 'Masters' },
+  { name: 'locations',        label: 'Locations',     group: 'Masters' },
+  { name: 'skills',           label: 'Skills',        group: 'Masters' },
+  { name: 'training_modules', label: 'Training Modules', group: 'Masters' },
+  { name: 'attendance_rules', label: 'Attendance Rules', group: 'Masters' },
+  { name: 'holidays',         label: 'Holidays',      group: 'Masters' },
+  { name: 'assets',           label: 'Assets',        group: 'Masters' },
+  { name: 'asset_categories', label: 'Asset Categories', group: 'Masters' },
+  { name: 'phone_number_pool',label: 'Phone Number Pool', group: 'Masters' },
+  { name: 'lookups',          label: 'Lookup Values', group: 'Masters' },
+  { name: 'tags',             label: 'Tags',          group: 'Masters' },
+];
+
+const WIPE_TABLE_BY_NAME = new Map(WIPE_TABLES.map((t) => [t.name, t]));
+
+function escapeIdent(name: string): string {
+  // Defence in depth — every caller already validates against the allowlist,
+  // but escape the identifier too so the query is impossible to abuse via a
+  // missed validation later.
+  return '`' + name.replace(/`/g, '``') + '`';
+}
+
+app.get('/api/v1/dev/wipe/tables', authRequired, requireRole('HR_ADMIN'), (_req, res) => {
+  res.json({ data: WIPE_TABLES });
+});
+
+app.get('/api/v1/dev/wipe/rows', authRequired, requireRole('HR_ADMIN'), async (req, res, next) => {
+  try {
+    const name = typeof req.query.table === 'string' ? req.query.table : '';
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
+    const t = WIPE_TABLE_BY_NAME.get(name);
+    if (!t) return res.status(400).json({ error: { code: 'BAD_TABLE', message: 'Unknown or non-wipeable table' } });
+    const pk = t.pk ?? 'id';
+    const ident = escapeIdent(t.name);
+    const [columns, rows, count] = await Promise.all([
+      query<{ Field: string; Type: string }>(`SHOW COLUMNS FROM ${ident}`),
+      query<Record<string, unknown>>(`SELECT * FROM ${ident} ORDER BY ${escapeIdent(pk)} DESC LIMIT ?`, [limit]),
+      query<{ n: number | string }>(`SELECT COUNT(*) AS n FROM ${ident}`),
+    ]);
+    res.json({
+      data: {
+        table: t,
+        pk,
+        columns: columns.map((c) => ({ name: c.Field, type: c.Type })),
+        rows,
+        total: Number(count[0]?.n ?? 0),
+        limit,
+      },
+    });
+  } catch (err) { next(err); }
+});
+
+app.post('/api/v1/dev/wipe/delete', authRequired, requireRole('HR_ADMIN'), async (req, res) => {
+  const name = typeof req.body?.table === 'string' ? req.body.table : '';
+  const ids: unknown[] = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const t = WIPE_TABLE_BY_NAME.get(name);
+  if (!t)          return res.status(400).json({ error: { code: 'BAD_TABLE', message: 'Unknown or non-wipeable table' } });
+  if (!ids.length) return res.status(400).json({ error: { code: 'NO_IDS', message: 'Provide ids[] to delete' } });
+  const ident = escapeIdent(t.name);
+  const pk = escapeIdent(t.pk ?? 'id');
+  const placeholders = ids.map(() => '?').join(',');
+  try {
+    const result = await query<unknown>(`DELETE FROM ${ident} WHERE ${pk} IN (${placeholders})`, ids);
+    const affected = (result as unknown as { affectedRows?: number }).affectedRows ?? null;
+    await writeAudit(req.user!.id, 'wipe', t.name, ids.map(String).join(','), null, { ids, affected });
+    res.json({ data: { table: t.name, requested: ids.length, deleted: affected } });
+  } catch (err) {
+    const msg = (err as { sqlMessage?: string; code?: string }).sqlMessage ?? (err as Error).message;
+    const code = (err as { code?: string }).code ?? 'DELETE_FAILED';
+    res.status(409).json({ error: { code, message: msg } });
+  }
 });
 
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {

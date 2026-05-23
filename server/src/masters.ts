@@ -36,13 +36,16 @@ export function registerMasterRoutes(app: Application) {
   // Branches
   app.post('/api/v1/branches', authRequired, async (req, res, next) => {
     try {
-      const { name, city, kind, code } = req.body ?? {};
+      const { name, city, kind, code, companyId } = req.body ?? {};
       if (!name || !city || !kind) {
         return res.status(400).json({ error: { code: 'VALIDATION', message: 'name, city and kind required' } });
       }
       const id = ulid();
       const branchCode = typeof code === 'string' && code.trim() ? code.trim() : await nextCode('branches', 'code', 'BR');
-      await query('INSERT INTO branches (id, code, name, city, kind) VALUES (?, ?, ?, ?, ?)', [id, branchCode, name, city, kind]);
+      await query(
+        'INSERT INTO branches (id, code, name, city, kind, company_id) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, branchCode, name, city, kind, companyId || null]
+      );
       res.status(201).json({ data: { id, code: branchCode } });
     } catch (err) {
       next(err);
@@ -56,6 +59,7 @@ export function registerMasterRoutes(app: Application) {
         { key: 'name', column: 'name' },
         { key: 'city', column: 'city' },
         { key: 'kind', column: 'kind' },
+        { key: 'companyId', column: 'company_id' },
       ]);
       if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
       values.push(req.params.id);
@@ -1531,6 +1535,54 @@ export function registerMasterRoutes(app: Application) {
       }
       values.push(req.params.id);
       await query(`UPDATE onboarding_giveaway_templates SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // Attendance Rules master (referenced by Employee Master → Attendance & Leaves tab)
+  app.get('/api/v1/attendance-rules', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query('SELECT * FROM attendance_rules ORDER BY name');
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/attendance-rules', authRequired, async (req, res, next) => {
+    try {
+      const { code, name, description, isActive } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
+      const id = ulid();
+      const ruleCode = typeof code === 'string' && code.trim() ? code.trim() : await nextCode('attendance_rules', 'code', 'AR');
+      await query(
+        'INSERT INTO attendance_rules (id, code, name, description, is_active) VALUES (?, ?, ?, ?, ?)',
+        [id, ruleCode, name, description || null, parseBool(isActive)]
+      );
+      res.status(201).json({ data: { id, code: ruleCode } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/attendance-rules/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'code', column: 'code' },
+        { key: 'name', column: 'name' },
+        { key: 'description', column: 'description' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      values.push(req.params.id);
+      await query(`UPDATE attendance_rules SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/attendance-rules/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM attendance_rules WHERE id = ?', [req.params.id]);
       res.json({ data: { id: req.params.id } });
     } catch (err) { next(err); }
   });

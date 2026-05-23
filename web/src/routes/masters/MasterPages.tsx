@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Building2, LayoutGrid, LocateFixed, Shield, Sparkles, Wallet, CalendarDays, ClipboardList, BookOpen, ListChecks, Tag, Plus, Phone, Package, Presentation as PresentationIcon, FileText, MapPin, Cpu } from 'lucide-react';
+import { Building2, LayoutGrid, LocateFixed, Shield, Sparkles, Wallet, CalendarDays, ClipboardList, BookOpen, ListChecks, Tag, Plus, Phone, Package, Presentation as PresentationIcon, FileText, MapPin, Cpu, ClipboardCheck } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
@@ -12,7 +12,9 @@ import { MasterCrudPage } from '../../components/masters/MasterCrudPage';
 import { HolidaysPage } from '../holidays/HolidaysPage';
 import { ShiftsPage } from '../shifts/ShiftsPage';
 
-type Branch = { id: string; code: string; name: string; city: string; kind: string };
+type Branch = { id: string; code: string; name: string; city: string; kind: string; company_id: string | null; company_name: string | null };
+type AttendanceRule = { id: string; code: string | null; name: string; description: string | null; is_active: number | boolean };
+type CompanyOption = { id: string; name: string };
 type SalaryGrade = { id: string; code: string; kind: string; min_gross: number | string; max_gross: number | string; employee_count?: number | string };
 type Division = { id: string; code: string | null; name: string; description: string | null; is_active: number | boolean };
 type Designation = {
@@ -53,6 +55,7 @@ export function MastersHomePage() {
     { title: 'Offer Templates', desc: 'Offer letter bodies + merge tokens', to: '/masters/offer-templates', icon: FileText },
     { title: 'Giveaways', desc: 'Onboarding giveaway templates', to: '/masters/giveaways', icon: GiftIcon },
     { title: 'Holidays', desc: 'Holiday master', to: '/holidays', icon: CalendarDays },
+    { title: 'Attendance Rules', desc: 'Standard / Flexi / Field-staff attendance rules', to: '/masters/attendance-rules', icon: ClipboardCheck },
     { title: 'Lookups', desc: 'Hiring statuses, sources, modes etc.', to: '/masters/lookups', icon: ListChecks },
     { title: 'Tags', desc: 'Applicant tag library', to: '/masters/tags', icon: Tag },
     { title: 'Phone Pool', desc: 'Company phone numbers for onboarding', to: '/masters/phone-pool', icon: Phone },
@@ -84,31 +87,74 @@ export function MastersHomePage() {
 }
 
 export function BranchMasterPage() {
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
+  useEffect(() => {
+    api.get('/hiring/companies', { params: { pageSize: 1000 } })
+      .then((r) => setCompanies(Array.isArray(r.data?.data) ? r.data.data : []))
+      .catch(() => setCompanies([]));
+  }, []);
   return (
     <MasterCrudPage<Branch>
       title="Branch Master"
-      subtitle="Manage branch codes, cities and branch kinds."
+      subtitle="Branches sit under a parent Company. Manage codes, cities and branch kinds here."
       endpoint="/branches"
       columns={[
         { header: 'Code', render: (row) => <Mono>{row.code}</Mono> },
         { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Company', render: (row) => row.company_name ?? '—' },
         { header: 'City', render: (row) => row.city },
         { header: 'Kind', render: (row) => row.kind },
       ]}
       buildFields={() => [
         { name: 'code', label: 'Code', type: 'text', placeholder: 'BR001' },
         { name: 'name', label: 'Name', type: 'text', placeholder: 'Mumbai Head Office', required: true },
+        { name: 'companyId', label: 'Company', type: 'select', options: companies.map((c) => ({ label: c.name, value: c.id })) },
         { name: 'city', label: 'City', type: 'text', placeholder: 'Mumbai', required: true },
         { name: 'kind', label: 'Kind', type: 'text', placeholder: 'HQ / Plant / Office', required: true },
       ]}
-      rowToValues={(row) => row ? { code: row.code, name: row.name, city: row.city, kind: row.kind } : { code: '', name: '', city: '', kind: '' }}
+      rowToValues={(row) => row
+        ? { code: row.code, name: row.name, companyId: row.company_id ?? '', city: row.city, kind: row.kind }
+        : { code: '', name: '', companyId: '', city: '', kind: '' }}
       buildPayload={(values) => ({
         code: values.code || undefined,
         name: values.name,
+        companyId: values.companyId || null,
         city: values.city,
         kind: values.kind,
       })}
       searchKeys={['code', 'name', 'city', 'kind']}
+    />
+  );
+}
+
+export function AttendanceRuleMasterPage() {
+  return (
+    <MasterCrudPage<AttendanceRule>
+      title="Attendance Rule Master"
+      subtitle="Attendance rules referenced from Employee Master → Attendance & Leaves (e.g. Standard, Flexi, Field-staff)."
+      endpoint="/attendance-rules"
+      columns={[
+        { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Description', render: (row) => row.description ?? '—' },
+        { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+      ]}
+      buildFields={() => [
+        { name: 'code', label: 'Code', type: 'text', placeholder: 'AR001' },
+        { name: 'name', label: 'Name', type: 'text', placeholder: 'Standard', required: true },
+        { name: 'description', label: 'Description', type: 'textarea', span: true },
+        { name: 'isActive', label: 'Active', type: 'checkbox', span: true },
+      ]}
+      rowToValues={(row) => row
+        ? { code: row.code ?? '', name: row.name, description: row.description ?? '', isActive: Boolean(row.is_active) }
+        : { code: '', name: '', description: '', isActive: true }}
+      buildPayload={(values) => ({
+        code: values.code || undefined,
+        name: values.name,
+        description: values.description || undefined,
+        isActive: Boolean(values.isActive),
+      })}
+      searchKeys={['code', 'name', 'description']}
     />
   );
 }
