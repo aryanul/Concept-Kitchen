@@ -202,10 +202,8 @@ const STATUS_LABELS: Record<string, string> = {
   ACTIVE: 'Active', PROBATION: 'Probation', ON_LEAVE: 'On Leave', EXITED: 'Exited',
 };
 
-const GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say'];
-const MARITAL = ['Single', 'Married', 'Divorced', 'Widowed', 'Separated'];
-const BLOOD = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
-const CASTE_CATEGORIES = ['General', 'OBC', 'SC', 'ST', 'Other'];
+// Gender / Marital / Blood Group / Caste are now fed by lookup masters
+// (categories: gender, marital_status, blood_group, caste_category).
 const EMPLOYMENT_TYPES = ['Permanent', 'Contract', 'Intern', 'Consultant', 'Temporary'];
 const WORK_MODES = ['Onsite', 'Hybrid', 'Remote'];
 const COUNTRY_CODES = ['+91', '+1', '+44', '+61', '+65', '+971'];
@@ -507,6 +505,34 @@ function InfoTab({ form, setForm, emp, editing, departments, divisions, phonePoo
   const permanentAddress = parseAddress(form.permanent_address);
   const languages = parseLanguages(form.languages_known);
 
+  // Personal-detail lookup masters (editable from /masters/lookups).
+  type LookupOpt = { code: string; label: string };
+  const [genderOpts, setGenderOpts] = useState<LookupOpt[]>([]);
+  const [maritalOpts, setMaritalOpts] = useState<LookupOpt[]>([]);
+  const [bloodOpts, setBloodOpts] = useState<LookupOpt[]>([]);
+  const [nationalityOpts, setNationalityOpts] = useState<LookupOpt[]>([]);
+  const [religionOpts, setReligionOpts] = useState<LookupOpt[]>([]);
+  const [casteOpts, setCasteOpts] = useState<LookupOpt[]>([]);
+  const opt = (rows: LookupOpt[]) => rows.map((r) => ({ value: r.code, label: r.label }));
+
+  useEffect(() => {
+    Promise.all([
+      api.get<{ data: LookupOpt[] }>('/lookups', { params: { category: 'gender' } }),
+      api.get<{ data: LookupOpt[] }>('/lookups', { params: { category: 'marital_status' } }),
+      api.get<{ data: LookupOpt[] }>('/lookups', { params: { category: 'blood_group' } }),
+      api.get<{ data: LookupOpt[] }>('/lookups', { params: { category: 'nationality' } }),
+      api.get<{ data: LookupOpt[] }>('/lookups', { params: { category: 'religion' } }),
+      api.get<{ data: LookupOpt[] }>('/lookups', { params: { category: 'caste_category' } }),
+    ]).then(([g, m, b, n, r, c]) => {
+      setGenderOpts(g.data.data ?? []);
+      setMaritalOpts(m.data.data ?? []);
+      setBloodOpts(b.data.data ?? []);
+      setNationalityOpts(n.data.data ?? []);
+      setReligionOpts(r.data.data ?? []);
+      setCasteOpts(c.data.data ?? []);
+    }).catch(() => {});
+  }, []);
+
   const updatePresent = (patch: Partial<Address>) => set('present_address', { ...presentAddress, ...patch });
   const updatePermanent = (patch: Partial<Address>) => set('permanent_address', { ...permanentAddress, ...patch });
 
@@ -564,26 +590,28 @@ function InfoTab({ form, setForm, emp, editing, departments, divisions, phonePoo
         <Grid3>
           <Field label="Gender">
             <Select value={form.gender ?? ''} editing={editing} onChange={(v) => set('gender', v || null)}
-              options={GENDERS.map((g) => ({ value: g, label: g }))} allowEmpty />
+              options={opt(genderOpts)} allowEmpty />
           </Field>
           <Field label="Date of Birth">
             <DateInput value={form.dob ?? ''} editing={editing} onChange={(v) => set('dob', v || null)} />
           </Field>
           <Field label="Marital Status">
             <Select value={form.marital_status ?? ''} editing={editing} onChange={(v) => set('marital_status', v || null)}
-              options={MARITAL.map((m) => ({ value: m, label: m }))} allowEmpty />
+              options={opt(maritalOpts)} allowEmpty />
           </Field>
         </Grid3>
         <Grid3>
           <Field label="Blood Group">
             <Select value={form.blood_group ?? ''} editing={editing} onChange={(v) => set('blood_group', v || null)}
-              options={BLOOD.map((b) => ({ value: b, label: b }))} allowEmpty />
+              options={opt(bloodOpts)} allowEmpty />
           </Field>
           <Field label="Nationality">
-            <Input value={form.nationality ?? ''} editing={editing} onChange={(v) => set('nationality', v)} placeholder="Indian" />
+            <Select value={form.nationality ?? ''} editing={editing} onChange={(v) => set('nationality', v || null)}
+              options={opt(nationalityOpts)} allowEmpty />
           </Field>
           <Field label="Religion">
-            <Input value={form.religion ?? ''} editing={editing} onChange={(v) => set('religion', v)} />
+            <Select value={form.religion ?? ''} editing={editing} onChange={(v) => set('religion', v || null)}
+              options={opt(religionOpts)} allowEmpty />
           </Field>
         </Grid3>
         <Grid2>
@@ -597,7 +625,7 @@ function InfoTab({ form, setForm, emp, editing, departments, divisions, phonePoo
           </Field>
           <Field label="Caste Category">
             <Select value={form.caste_category ?? ''} editing={editing} onChange={(v) => set('caste_category', v || null)}
-              options={CASTE_CATEGORIES.map((c) => ({ value: c, label: c }))} allowEmpty />
+              options={opt(casteOpts)} allowEmpty />
           </Field>
         </Grid2>
       </Section>

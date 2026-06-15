@@ -504,9 +504,9 @@ function HeaderInfoSection({ applicantId, parent, onRefresh }: { applicantId: st
 }
 
 // ─── Personal Details (Phase 2.G) ─────────────────────────────────────────
-const GENDER_OPTS    = ['Male', 'Female', 'Other', 'Prefer not to say'];
-const MARITAL_OPTS   = ['Single', 'Married', 'Divorced', 'Widowed', 'Separated'];
-const CASTE_OPTS     = ['General', 'OBC', 'SC', 'ST', 'Other'];
+// Gender / Marital Status / Nationality / Religion / Caste / Languages are now
+// fed by lookup masters (categories: gender, marital_status, nationality,
+// religion, caste_category, language) instead of hard-coded arrays.
 const EMP_TYPE_OPTS  = ['Permanent', 'Contract', 'Intern', 'Consultant', 'Temporary'];
 const WORK_MODE_OPTS = ['Onsite', 'Hybrid', 'Remote'];
 const COUNTRY_CODES  = ['+91', '+1', '+44', '+61', '+65', '+971'];
@@ -529,7 +529,7 @@ function PersonalDetailsSection({ applicantId, parent, onRefresh }: {
   const [maritalStatus,     setMaritalStatus]     = useState(parent?.marital_status ?? '');
   const [nationality,       setNationality]       = useState(parent?.nationality ?? '');
   const [religion,          setReligion]          = useState(parent?.religion ?? '');
-  const [languages,         setLanguages]         = useState<string>(parseLangs(parent?.languages_known).join(', '));
+  const [languages,         setLanguages]         = useState<string[]>(parseLangs(parent?.languages_known));
   const [casteCategory,     setCasteCategory]     = useState(parent?.caste_category ?? '');
   const [alternatePhone,    setAlternatePhone]    = useState(parent?.alternate_phone ?? '');
   const [altCountryCode,    setAltCountryCode]    = useState(parent?.alternate_phone_country_code ?? '+91');
@@ -545,7 +545,7 @@ function PersonalDetailsSection({ applicantId, parent, onRefresh }: {
     setMaritalStatus(parent?.marital_status ?? '');
     setNationality(parent?.nationality ?? '');
     setReligion(parent?.religion ?? '');
-    setLanguages(parseLangs(parent?.languages_known).join(', '));
+    setLanguages(parseLangs(parent?.languages_known));
     setCasteCategory(parent?.caste_category ?? '');
     setAlternatePhone(parent?.alternate_phone ?? '');
     setAltCountryCode(parent?.alternate_phone_country_code ?? '+91');
@@ -559,6 +559,36 @@ function PersonalDetailsSection({ applicantId, parent, onRefresh }: {
       parent?.languages_known, parent?.caste_category, parent?.alternate_phone, parent?.alternate_phone_country_code,
       parent?.employment_type, parent?.work_mode, parent?.probation_from, parent?.probation_to, parent?.pan, parent?.aadhaar]);
 
+  // Lookup-master option sets (editable from /masters/lookups).
+  type Opt = { code: string; label: string };
+  const [genderOpts,      setGenderOpts]      = useState<Opt[]>([]);
+  const [maritalOpts,     setMaritalOpts]     = useState<Opt[]>([]);
+  const [nationalityOpts, setNationalityOpts] = useState<Opt[]>([]);
+  const [religionOpts,    setReligionOpts]    = useState<Opt[]>([]);
+  const [casteOpts,       setCasteOpts]       = useState<Opt[]>([]);
+  const [langOpts,        setLangOpts]        = useState<Opt[]>([]);
+
+  useEffect(() => {
+    Promise.all([
+      api.get('/lookups', { params: { category: 'gender' } }),
+      api.get('/lookups', { params: { category: 'marital_status' } }),
+      api.get('/lookups', { params: { category: 'nationality' } }),
+      api.get('/lookups', { params: { category: 'religion' } }),
+      api.get('/lookups', { params: { category: 'caste_category' } }),
+      api.get('/lookups', { params: { category: 'language' } }),
+    ]).then(([g, m, n, r, c, l]) => {
+      setGenderOpts(g.data?.data ?? []);
+      setMaritalOpts(m.data?.data ?? []);
+      setNationalityOpts(n.data?.data ?? []);
+      setReligionOpts(r.data?.data ?? []);
+      setCasteOpts(c.data?.data ?? []);
+      setLangOpts(l.data?.data ?? []);
+    }).catch(() => {});
+  }, []);
+
+  // Union master codes with any already-saved values so legacy entries stay visible.
+  const langChoices = Array.from(new Set([...langOpts.map((o) => o.code), ...languages]));
+
   const save = async () => {
     try {
       await api.patch(`/applicants/${applicantId}/onboarding/header`, {
@@ -566,7 +596,7 @@ function PersonalDetailsSection({ applicantId, parent, onRefresh }: {
         maritalStatus: maritalStatus || null,
         nationality: nationality || null,
         religion: religion || null,
-        languagesKnown: languages.split(',').map((s) => s.trim()).filter(Boolean),
+        languagesKnown: languages,
         casteCategory: casteCategory || null,
         alternatePhone: alternatePhone || null,
         alternatePhoneCountryCode: altCountryCode || null,
@@ -588,29 +618,32 @@ function PersonalDetailsSection({ applicantId, parent, onRefresh }: {
         <Field label="Gender">
           <select value={gender} onChange={(e) => setGender(e.target.value)} style={inp}>
             <option value="">—</option>
-            {GENDER_OPTS.map((g) => <option key={g} value={g}>{g}</option>)}
+            {genderOpts.map((g) => <option key={g.code} value={g.code}>{g.label}</option>)}
           </select>
         </Field>
         <Field label="Marital Status">
           <select value={maritalStatus} onChange={(e) => setMaritalStatus(e.target.value)} style={inp}>
             <option value="">—</option>
-            {MARITAL_OPTS.map((m) => <option key={m} value={m}>{m}</option>)}
+            {maritalOpts.map((m) => <option key={m.code} value={m.code}>{m.label}</option>)}
           </select>
         </Field>
         <Field label="Nationality">
-          <input value={nationality} onChange={(e) => setNationality(e.target.value)} placeholder="Indian" style={inp} />
+          <select value={nationality ?? ''} onChange={(e) => setNationality(e.target.value)} style={inp}>
+            <option value="">—</option>
+            {nationalityOpts.map((n) => <option key={n.code} value={n.code}>{n.label}</option>)}
+          </select>
         </Field>
         <Field label="Religion">
-          <input value={religion} onChange={(e) => setReligion(e.target.value)} style={inp} />
+          <select value={religion ?? ''} onChange={(e) => setReligion(e.target.value)} style={inp}>
+            <option value="">—</option>
+            {religionOpts.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
+          </select>
         </Field>
         <Field label="Caste Category">
           <select value={casteCategory} onChange={(e) => setCasteCategory(e.target.value)} style={inp}>
             <option value="">—</option>
-            {CASTE_OPTS.map((c) => <option key={c} value={c}>{c}</option>)}
+            {casteOpts.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
           </select>
-        </Field>
-        <Field label="Languages Known (comma-separated)">
-          <input value={languages} onChange={(e) => setLanguages(e.target.value)} placeholder="English, Hindi" style={inp} />
         </Field>
         <Field label="Alternate Phone">
           <div style={{ display: 'flex', gap: 6 }}>
@@ -642,6 +675,26 @@ function PersonalDetailsSection({ applicantId, parent, onRefresh }: {
         <Field label="Aadhaar">
           <input value={aadhaar} onChange={(e) => setAadhaar(e.target.value)} placeholder="XXXXXXXXXXXX" style={inp} />
         </Field>
+      </div>
+      <div style={{ marginTop: 14 }}>
+        <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--ck-ink-soft)' }}>Languages Known</span>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 6 }}>
+          {langChoices.length === 0 && <span style={{ fontSize: 13, color: 'var(--ck-muted)' }}>No language options — add them in the Lookup Master.</span>}
+          {langChoices.map((code) => {
+            const label = langOpts.find((o) => o.code === code)?.label ?? code;
+            const checked = languages.includes(code);
+            return (
+              <label key={code} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 13, cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => setLanguages((prev) => (e.target.checked ? [...prev, code] : prev.filter((x) => x !== code)))}
+                />
+                {label}
+              </label>
+            );
+          })}
+        </div>
       </div>
     </Section>
   );
