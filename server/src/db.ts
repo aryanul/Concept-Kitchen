@@ -24,13 +24,41 @@ export const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
+  // TiDB (serverless) drops idle connections; keepalive pings hold them open.
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 10_000,
 });
+
+// Don't let a fatal error on an idle pooled connection crash the process.
+pool.on('connection', (conn) => {
+  conn.on('error', (err) => {
+    console.error('[db] pool connection error (will be recycled):', err.code ?? err);
+  });
+});
+
+// Transient errors that mean "the connection died" — safe to retry on a fresh one.
+const RETRYABLE = new Set([
+  'ECONNRESET',
+  'PROTOCOL_CONNECTION_LOST',
+  'EPIPE',
+  'ETIMEDOUT',
+]);
 
 export async function query<T = unknown>(
   sql: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   params: any[] = []
 ): Promise<T[]> {
-  const [rows] = await pool.query<RowDataPacket[]>(sql, params);
-  return rows as unknown as T[];
+  try {
+    const [rows] = await pool.query<RowDataPacket[]>(sql, params);
+    return rows as unknown as T[];
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code && RETRYABLE.has(code)) {
+      // The pool has already discarded the dead connection; retry once on a fresh one.
+      const [rows] = await pool.query<RowDataPacket[]>(sql, params);
+      return rows as unknown as T[];
+    }
+    throw err;
+  }
 }
