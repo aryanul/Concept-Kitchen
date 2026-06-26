@@ -8,6 +8,8 @@ import { toast } from 'sonner';
 import { api } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
+import { IconAction } from '../../components/ui/IconAction';
+import { Combobox } from '../../components/ui/Combobox';
 import { LocationApplicableEditor, type JpLocation } from '../../components/hiring/jp/LocationApplicableEditor';
 import { WorkShiftsEditor } from '../../components/hiring/jp/WorkShiftsEditor';
 import { SkillPickerModal } from '../../components/hiring/jp/SkillPickerModal';
@@ -30,9 +32,10 @@ export interface StepData {
   locations: JpLocation[];     // Replaces single locationApplicable string
   reportingDept: string; reportingDivision: string; reportingDesignation: string;
   workShifts: string[];        // Replaces single workShift string
-  // Step 2
-  shortDescRole: string; shortDescTeam: string; shortDescFocus: string;
-  detailedResponsibilities: string; detailedTools: string; detailedCollaboration: string;
+  // Step 2 — Role (Designation master) / Team (Division master) names; Key Focus picked from Skill Master
+  shortDescRole: string; shortDescTeam: string; shortDescFocus: string[];
+  // Picked from the Skill Master (stored as skill names) — Department Functions / Tools & Software / Cross-Department Interaction
+  detailedResponsibilities: string[]; detailedTools: string[]; detailedCollaboration: string[];
   jobPurposeObjective: string; jobPurposeImpact: string;
   contributionToOrg: string;
   // Step 3
@@ -62,8 +65,8 @@ const DEFAULT_STEP_DATA: StepData = {
   locations: [],
   reportingDept: '', reportingDivision: '', reportingDesignation: '',
   workShifts: [],
-  shortDescRole: '', shortDescTeam: '', shortDescFocus: '',
-  detailedResponsibilities: '', detailedTools: '', detailedCollaboration: '',
+  shortDescRole: '', shortDescTeam: '', shortDescFocus: [],
+  detailedResponsibilities: [], detailedTools: [], detailedCollaboration: [],
   jobPurposeObjective: '', jobPurposeImpact: '',
   contributionToOrg: '',
   minExperience: '', preferredExperience: '', skills: [],
@@ -82,6 +85,26 @@ const DEFAULT_STEP_DATA: StepData = {
   prospects: [],
   interviewTemplateIds: [],
 };
+
+// Coerce a value that may be a legacy comma-separated string OR an array into a clean string[].
+function toNameArray(v: unknown): string[] {
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((x) => x.trim());
+  if (typeof v === 'string') return v.split(',').map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+
+// Hydrate saved form_data, upgrading the three Step-2 fields from their legacy
+// free-text string form to the chip array the Skill Master pickers expect.
+function normalizeStepData(p?: Partial<StepData>): Partial<StepData> {
+  if (!p) return {};
+  return {
+    ...p,
+    shortDescFocus: toNameArray(p.shortDescFocus),
+    detailedResponsibilities: toNameArray(p.detailedResponsibilities),
+    detailedTools: toNameArray(p.detailedTools),
+    detailedCollaboration: toNameArray(p.detailedCollaboration),
+  };
+}
 
 const STEPS = [
   { num: 1,  label: 'Basic Job Information',       Icon: FileText },
@@ -109,8 +132,8 @@ function computeJpStatus(d: StepData): 'Pending' | 'Partially Done' | 'Done' {
     filled(d.reportingDept), filled(d.reportingDivision), filled(d.reportingDesignation),
     d.workShifts.length > 0,
     // Step 2 — description
-    filled(d.shortDescRole), filled(d.shortDescTeam), filled(d.shortDescFocus),
-    filled(d.detailedResponsibilities), filled(d.detailedTools), filled(d.detailedCollaboration),
+    filled(d.shortDescRole), filled(d.shortDescTeam), d.shortDescFocus.length > 0,
+    d.detailedResponsibilities.length > 0, d.detailedTools.length > 0, d.detailedCollaboration.length > 0,
     filled(d.jobPurposeObjective), filled(d.jobPurposeImpact),
     filled(d.contributionToOrg),
     // Step 3 — requirements
@@ -149,7 +172,7 @@ export function JobProfileForm({
   onCancel: () => void;
 }) {
   const [activeStep, setActiveStep] = useState(1);
-  const [data, setData] = useState<StepData>({ ...DEFAULT_STEP_DATA, ...initialData });
+  const [data, setData] = useState<StepData>({ ...DEFAULT_STEP_DATA, ...normalizeStepData(initialData) });
   const [saving, setSaving] = useState(false);
   const [divisions, setDivisions] = useState<Division[]>([]);
   const [allDesignations, setAllDesignations] = useState<DesignationOpt[]>([]);
@@ -157,7 +180,7 @@ export function JobProfileForm({
   const upd = (patch: Partial<StepData>) => setData((d) => ({ ...d, ...patch }));
 
   useEffect(() => {
-    setData({ ...DEFAULT_STEP_DATA, ...initialData });
+    setData({ ...DEFAULT_STEP_DATA, ...normalizeStepData(initialData) });
     setActiveStep(1);
   }, [editId, initialData]);
 
@@ -205,6 +228,12 @@ export function JobProfileForm({
     api.get<{ data: Division[] }>('/divisions').then((r) => setDivisions(r.data.data)).catch(() => {});
     api.get<{ data: DesignationOpt[] }>('/designations').then((r) => setAllDesignations(r.data.data)).catch(() => {});
   }, []);
+
+  // Prefill Job Title from the linked Designation when it's still blank (editable thereafter).
+  useEffect(() => {
+    if (data.designation && !data.jobTitle.trim()) upd({ jobTitle: data.designation });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.designation]);
 
   return (
     <div style={{ display: 'flex', height: '100%', minHeight: 600 }}>
@@ -255,7 +284,7 @@ export function JobProfileForm({
         {/* Step content */}
         <div style={{ padding: 24, flex: 1 }}>
           {activeStep === 1 && <Step1 data={data} upd={upd} depts={depts} divisions={divisions} allDesignations={allDesignations} />}
-          {activeStep === 2 && <Step2 data={data} upd={upd} />}
+          {activeStep === 2 && <Step2 data={data} upd={upd} divisions={divisions} allDesignations={allDesignations} />}
           {activeStep === 3 && <Step3 data={data} upd={upd} />}
           {activeStep === 4 && <Step4 data={data} upd={upd} />}
           {activeStep === 5 && <Step5 data={data} upd={upd} />}
@@ -394,21 +423,22 @@ function ReadOnlyField({ value }: { value: string }) {
 }
 
 // ─── Step 2 — Job Description ─────────────────────────────────────────────────
-function Step2({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => void }) {
+function Step2({ data, upd, divisions, allDesignations }: { data: StepData; upd: (p: Partial<StepData>) => void; divisions: Division[]; allDesignations: DesignationOpt[] }) {
+  const comboStyle: React.CSSProperties = { ...inp, border: 'none', background: 'transparent', color: 'var(--ck-ink)' };
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
       <SectionTitle>Short Description</SectionTitle>
       <DescTable rows={[
-        ['Role',      <input key="role" value={data.shortDescRole} onChange={(e) => upd({ shortDescRole: e.target.value })} style={{ ...inp, border: 'none', background: 'transparent' }} placeholder="e.g. Senior UI Designer" />],
-        ['Team',      <input key="team" value={data.shortDescTeam} onChange={(e) => upd({ shortDescTeam: e.target.value })} style={{ ...inp, border: 'none', background: 'transparent' }} placeholder="e.g. Product Design" />],
-        ['Key Focus', <input key="focus" value={data.shortDescFocus} onChange={(e) => upd({ shortDescFocus: e.target.value })} style={{ ...inp, border: 'none', background: 'transparent' }} placeholder="e.g. Dashboard Prototypes" />],
+        ['Role',      <Combobox key="role" value={data.shortDescRole} onChange={(v) => upd({ shortDescRole: v })} options={allDesignations.map((d) => d.name)} placeholder="Type or pick a role…" style={comboStyle} />],
+        ['Team',      <Combobox key="team" value={data.shortDescTeam} onChange={(v) => upd({ shortDescTeam: v })} options={divisions.map((d) => d.name)} placeholder="Type or pick a team…" style={comboStyle} />],
+        ['Key Focus', <SkillCell key="focus" values={data.shortDescFocus} onChange={(v) => upd({ shortDescFocus: v })} category="Hard Skills" extraCategories={['Department Functions']} label="Key Focus" />],
       ]} />
 
       <SectionTitle>Detailed Job Description</SectionTitle>
       <DescTable rows={[
-        ['Responsibilities', <textarea key="resp" value={data.detailedResponsibilities} onChange={(e) => upd({ detailedResponsibilities: e.target.value })} rows={3} placeholder="List key responsibilities…" style={{ width: '100%', border: 'none', background: 'transparent', fontSize: 13, resize: 'vertical', padding: '4px 0' }} />],
-        ['Design Tools',     <input key="tools" value={data.detailedTools} onChange={(e) => upd({ detailedTools: e.target.value })} style={{ ...inp, border: 'none', background: 'transparent' }} placeholder="e.g. Figma, UXPin, Antetype" />],
-        ['Collaboration',    <input key="collab" value={data.detailedCollaboration} onChange={(e) => upd({ detailedCollaboration: e.target.value })} style={{ ...inp, border: 'none', background: 'transparent' }} placeholder="e.g. Work with product, dev…" />],
+        ['Responsibilities', <SkillCell key="resp" values={data.detailedResponsibilities} onChange={(v) => upd({ detailedResponsibilities: v })} category="Department Functions" label="Responsibilities" />],
+        ['Design Tools',     <SkillCell key="tools" values={data.detailedTools} onChange={(v) => upd({ detailedTools: v })} category="Tools & Software" label="Design Tools" />],
+        ['Collaboration',    <SkillCell key="collab" values={data.detailedCollaboration} onChange={(v) => upd({ detailedCollaboration: v })} category="Cross-Department Interaction" label="Collaboration" />],
       ]} />
 
       <SectionTitle>Job Purpose</SectionTitle>
@@ -421,6 +451,39 @@ function Step2({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => v
       <DescTable rows={[
         ['Contribution', <textarea key="contrib" value={data.contributionToOrg} onChange={(e) => upd({ contributionToOrg: e.target.value })} rows={3} placeholder="How does this role contribute to the organization's goals?" style={{ width: '100%', border: 'none', background: 'transparent', fontSize: 13, resize: 'vertical', padding: '4px 0' }} />],
       ]} />
+    </div>
+  );
+}
+
+// Inline chip picker for a single Skill Master category — used by Step 2's
+// detailed rows so values are chosen from the master rather than free-typed.
+function SkillCell({ values, onChange, category, extraCategories, label }: { values: string[]; onChange: (v: string[]) => void; category: string; extraCategories?: string[]; label: string }) {
+  const [open, setOpen] = useState(false);
+  const categories = [category, ...(extraCategories ?? [])];
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '4px 0' }}>
+      {values.length === 0 && (
+        <span style={{ fontSize: 12.5, color: 'var(--ck-muted)' }}>None selected — click + to pick from {category}</span>
+      )}
+      {values.map((s) => (
+        <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 999, background: '#222', color: '#fff', fontSize: 12, fontWeight: 600 }}>
+          {s}
+          <button type="button" onClick={() => onChange(values.filter((x) => x !== s))} aria-label={`Remove ${s}`} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#aaa', padding: 0, display: 'flex', alignItems: 'center' }}><X size={11} /></button>
+        </span>
+      ))}
+      <button type="button" onClick={() => setOpen(true)} aria-label={`Add ${label}`}
+        style={{ width: 28, height: 28, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <Plus size={14} />
+      </button>
+      <SkillPickerModal
+        open={open}
+        onClose={() => setOpen(false)}
+        selected={values}
+        onSave={(v) => onChange(v)}
+        allowCategories={categories}
+        title={`Pick ${label}`}
+        subtitle={`From Skill Master · ${categories.join(' / ')}`}
+      />
     </div>
   );
 }
@@ -1145,9 +1208,9 @@ function Step10({ data: _data, upd: _upd }: { data: StepData; upd: (p: Partial<S
                 </td>
                 {/* Actions */}
                 <td style={{ padding: '11px 12px' }}>
-                  <div style={{ display: 'flex', gap: 10 }}>
-                    <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Eye size={15} /></button>
-                    <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Pencil size={15} /></button>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <IconAction icon={Eye} label="View" hint="View prospect" iconSize={15} />
+                    <IconAction icon={Pencil} label="Edit" hint="Edit prospect" iconSize={15} />
                   </div>
                 </td>
               </tr>

@@ -4,6 +4,7 @@ import { api } from '../../lib/api';
 import { Card } from '../ui/Card';
 import { PageHeader } from '../ui/PageHeader';
 import { Button } from '../ui/Button';
+import { IconAction } from '../ui/IconAction';
 import { Modal } from '../ui/Modal';
 
 type RowValue = string | number | boolean;
@@ -214,24 +215,21 @@ export function MasterCrudPage<Row extends { id: string }>({
                     </td>
                   ))}
                   <td style={{ padding: '14px 16px' }}>
-                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                       {extraActions?.(row)}
-                      <button
-                        type="button"
-                        aria-label="Edit"
+                      <IconAction
+                        icon={Pencil}
+                        label="Edit"
+                        hint={`Edit this ${title.toLowerCase()}`}
                         onClick={() => openEdit(row)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}
-                      >
-                        <Pencil size={16} />
-                      </button>
-                      <button
-                        type="button"
-                        aria-label="Delete"
+                      />
+                      <IconAction
+                        icon={Trash2}
+                        label="Delete"
+                        hint={`Delete this ${title.toLowerCase()}`}
+                        tone="danger"
                         onClick={() => onDelete(row)}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}
-                      >
-                        <Trash2 size={16} />
-                      </button>
+                      />
                     </div>
                   </td>
                 </tr>

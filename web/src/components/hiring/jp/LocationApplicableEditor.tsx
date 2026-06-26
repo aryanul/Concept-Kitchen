@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Modal } from '../../ui/Modal';
 import { Button } from '../../ui/Button';
+import { IconAction } from '../../ui/IconAction';
 import { api } from '../../../lib/api';
 
 export type JpLocation = {
@@ -74,10 +75,7 @@ export function LocationApplicableEditor({
             ? 'No locations added yet. Click + to add a branch/location with positions.'
             : `${value.length} location${value.length === 1 ? '' : 's'} configured`}
         </div>
-        <button onClick={() => setModalOpen(true)} type="button"
-          style={{ width: 36, height: 38, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Plus size={16} />
-        </button>
+        <IconAction icon={Plus} label="Add" hint="Add a branch/location with positions" iconSize={16} onClick={() => setModalOpen(true)} />
       </div>
 
       {value.length > 0 && (
@@ -97,9 +95,7 @@ export function LocationApplicableEditor({
                 <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>{l.locationName ?? (l.locationId ? l.locationId : '—')}</td>
                 <td style={{ ...td, fontWeight: 700 }}>{l.positions}</td>
                 <td style={td}>
-                  <button type="button" onClick={() => remove(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-danger-fg, #b00)' }}>
-                    <Trash2 size={14} />
-                  </button>
+                  <IconAction icon={Trash2} label="Remove" hint="Remove this location" tone="danger" variant="plain" onClick={() => remove(i)} />
                 </td>
               </tr>
             ))}

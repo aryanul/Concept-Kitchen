@@ -7,6 +7,7 @@ import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { StatusPill } from '../../components/ui/StatusPill';
+import { IconAction } from '../../components/ui/IconAction';
 
 type ShiftBreak = {
   id?: string;
@@ -352,13 +353,9 @@ export function ShiftsPage() {
                       <StatusPill status={s.status === 'ACTIVE' ? 'Active' : 'Inactive'} />
                     </td>
                     <td style={{ padding: '16px 22px', verticalAlign: 'middle' }}>
-                      <div style={{ display: 'flex', gap: 10 }}>
-                        <button type="button" aria-label="Edit" onClick={() => openEdit(s)} style={iconBtn}>
-                          <Pencil size={15} />
-                        </button>
-                        <button type="button" aria-label="Delete" onClick={() => onDelete(s)} style={iconBtn}>
-                          <Trash2 size={15} />
-                        </button>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <IconAction icon={Pencil} label="Edit" hint="Edit shift" onClick={() => openEdit(s)} />
+                        <IconAction icon={Trash2} label="Delete" hint="Delete shift" tone="danger" onClick={() => onDelete(s)} />
                       </div>
                     </td>
                   </tr>
@@ -472,9 +469,7 @@ export function ShiftsPage() {
               <div style={{ fontSize: 12, color: 'var(--ck-muted)' }}>{b.duration_min} mins</div>
               <Chip>{Number(b.is_paid) ? 'Paid' : 'Unpaid'}</Chip>
               {Number(b.is_mandatory) ? <Chip>Mandatory</Chip> : null}
-              <button type="button" aria-label="Remove break" onClick={() => removeBreak(idx)} style={iconBtn}>
-                <Trash2 size={15} />
-              </button>
+              <IconAction icon={Trash2} label="Remove" hint="Remove break" tone="danger" onClick={() => removeBreak(idx)} />
             </div>
           ))}
         </Section>
@@ -668,13 +663,6 @@ function PagerButton({ children, onClick, disabled, active }: { children: ReactN
     </button>
   );
 }
-
-const iconBtn: React.CSSProperties = {
-  width: 32, height: 32, borderRadius: 8,
-  border: '1px solid var(--ck-line)', background: 'var(--ck-surface)',
-  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-  color: 'var(--ck-muted)', cursor: 'pointer',
-};
 
 function CompanyGlyph() {
   return (

@@ -26,7 +26,7 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: '8mb' })); // headroom for base64 photo data URLs in request bodies
 
 // Master routes registered AFTER global middleware so req.body / CORS headers are available
 registerMasterRoutes(app);
@@ -1249,8 +1249,10 @@ app.get('/api/v1/job-listings/:id/applicants', authRequired, async (req, res, ne
               a.experience_years, a.salary_min, a.salary_max, a.salary_currency,
               a.education_level, a.institution, a.match_ratio,
               a.match_score, a.screen_score, a.interview_score,
-              a.source, a.status, a.stage, a.notes, a.applied_at, a.updated_at
+              a.source, a.status, a.stage, a.notes, a.applied_at, a.updated_at,
+              o.status AS offer_status
        FROM applicants a
+       LEFT JOIN applicant_offers o ON o.applicant_id = a.id
        WHERE ${filters.join(' AND ')}
        ORDER BY a.applied_at DESC`,
       params

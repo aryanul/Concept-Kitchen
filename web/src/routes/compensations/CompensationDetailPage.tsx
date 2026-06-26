@@ -14,6 +14,7 @@ import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
+import { IconAction } from '../../components/ui/IconAction';
 import { StatusPill } from '../../components/ui/StatusPill';
 
 const RECORD_TYPES = ['Template', 'Offer', 'Joining', 'Increment', 'One-time'];
@@ -318,10 +319,7 @@ export function CompensationDetailPage() {
                   <input type="number" value={a.amount || ''} onChange={(e) => { const next = [...allowances]; next[i] = { ...a, amount: Number(e.target.value) }; setAllowances(next); }}
                     placeholder="₹ per year" style={inp} disabled={!editable} />
                   {editable && (
-                    <button onClick={() => setAllowances(allowances.filter((_, j) => j !== i))}
-                      style={{ background: 'none', border: '1px solid var(--ck-line)', borderRadius: 6, padding: '6px 8px', cursor: 'pointer', color: 'var(--ck-ink-soft)' }}>
-                      <Trash2 size={14} />
-                    </button>
+                    <IconAction icon={Trash2} label="Remove" hint="Remove this allowance" tone="danger" iconOnly onClick={() => setAllowances(allowances.filter((_, j) => j !== i))} />
                   )}
                 </div>
               ))}

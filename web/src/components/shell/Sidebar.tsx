@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronRight,
   Clock, CalendarDays, ClipboardCheck, Wallet, FileText, Banknote,
   TrendingUp, CalendarClock, Plane, Gift,
-  Building2, LocateFixed, ClipboardList, Sparkles, BookOpen,
+  Building2, LocateFixed, ClipboardList, Sparkles, BookOpen, Tag,
   type LucideIcon,
 } from 'lucide-react';
 import { Avatar } from '../ui/Avatar';
@@ -64,6 +64,7 @@ const NAV: Item[] = [
       { id: 'masters-holidays', path: '/masters/holidays', label: 'Holiday Master', icon: CalendarDays },
       { id: 'masters-attendance-rules', path: '/masters/attendance-rules', label: 'Attendance Rules', icon: ClipboardCheck },
       { id: 'masters-training-modules', path: '/masters/training-modules', label: 'Training Modules', icon: BookOpen },
+      { id: 'masters-tags', path: '/masters/tags', label: 'Tag Master', icon: Tag },
       { id: 'masters-giveaways', path: '/masters/giveaways', label: 'Give Aways', icon: Gift },
     ],
   },

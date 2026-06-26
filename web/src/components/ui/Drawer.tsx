@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { X } from 'lucide-react';
+import { Tooltip } from './Tooltip';
 
 type Props = {
   open: boolean;
@@ -41,18 +42,20 @@ export function Drawer({ open, onClose, children }: Props) {
           overflowY: 'auto',
         }}
       >
-        <button
-          onClick={onClose}
-          aria-label="Close drawer"
-          style={{
-            position: 'absolute', top: 16, right: 20, width: 36, height: 36,
-            border: '1px solid var(--ck-line)', borderRadius: 10, background: 'var(--ck-surface)',
-            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: 'var(--ck-muted)', zIndex: 1,
-          }}
-        >
-          <X size={18} />
-        </button>
+        <Tooltip label="Close" placement="bottom">
+          <button
+            onClick={onClose}
+            aria-label="Close drawer"
+            style={{
+              position: 'absolute', top: 16, right: 20, width: 36, height: 36,
+              border: '1px solid var(--ck-line)', borderRadius: 10, background: 'var(--ck-surface)',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: 'var(--ck-muted)', zIndex: 1,
+            }}
+          >
+            <X size={18} />
+          </button>
+        </Tooltip>
         {children}
       </div>
     </>

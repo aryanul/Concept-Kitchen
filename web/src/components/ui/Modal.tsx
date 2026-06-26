@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { IconAction } from './IconAction';
 
 type Props = {
   open: boolean;
@@ -48,12 +49,7 @@ export function Modal({ open, onClose, title, subtitle, width = 520, children, f
             <h2 style={{ margin: 0, fontSize: 17, fontWeight: 600, color: 'var(--ck-ink)' }}>{title}</h2>
             {subtitle && <p style={{ margin: '3px 0 0', fontSize: 13, color: 'var(--ck-muted)' }}>{subtitle}</p>}
           </div>
-          <button onClick={onClose} aria-label="Close"
-            style={{ width: 32, height: 32, border: 'none', background: 'transparent', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: 'var(--ck-muted)', borderRadius: 8 }}>
-            <X size={18} />
-          </button>
+          <IconAction icon={X} label="Close" iconOnly variant="plain" onClick={onClose} iconSize={18} tipPlacement="bottom" />
         </div>
         <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1 }}>{children}</div>
         {footer && (

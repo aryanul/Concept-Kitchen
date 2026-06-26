@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Search, Eye, Pencil, Plus, SlidersHorizontal } from 'lucide-react';
+import { IconAction } from '../../components/ui/IconAction';
 import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
@@ -189,9 +190,9 @@ export function JobProfilePage() {
                           <span style={{ ...pillStyle, padding: '5px 16px', borderRadius: 6, fontSize: 12.5, display: 'inline-block' }}>{p.jp_status}</span>
                         </td>
                         <td style={{ padding: '14px 16px' }}>
-                          <div style={{ display: 'flex', gap: 10 }}>
-                            <button aria-label="View" onClick={() => setViewId(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Eye size={17} /></button>
-                            <button aria-label="Edit" onClick={() => startEdit(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}><Pencil size={17} /></button>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <IconAction icon={Eye} label="View" hint="View job profile" onClick={() => setViewId(p.id)} />
+                            <IconAction icon={Pencil} label="Edit" hint="Edit job profile" onClick={() => startEdit(p.id)} />
                           </div>
                         </td>
                       </tr>

@@ -17,6 +17,8 @@ import { api } from '../../lib/api';
 import { Avatar } from '../ui/Avatar';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
+import { IconAction } from '../ui/IconAction';
+import { ActionBar } from '../ui/ActionBar';
 import type { Applicant } from './ApplicationsTab';
 
 // ─── Shared types ──────────────────────────────────────────────────────────
@@ -95,34 +97,16 @@ function fmtDateTime(iso: string | null | undefined): string {
   try { return new Date(iso).toLocaleString(); } catch { return String(iso); }
 }
 
-function IconBtn({ title, onClick, children, active, variant, disabled }: {
-  title: string; onClick: () => void; children: ReactNode;
-  active?: boolean; variant?: 'danger' | 'success' | 'warning'; disabled?: boolean;
-}) {
-  const activeBg = variant === 'danger' ? '#fee2e2' : variant === 'success' ? '#dcfce7' : variant === 'warning' ? '#fef3c7' : 'var(--ck-surface-alt)';
-  const activeFg = variant === 'danger' ? '#b91c1c' : variant === 'success' ? '#15803d' : variant === 'warning' ? '#92400e' : 'var(--ck-ink)';
-  return (
-    <button aria-label={title} title={title} onClick={onClick} disabled={disabled}
-      style={{
-        background: active ? activeBg : 'none', border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.4 : 1,
-        color: active ? activeFg : 'var(--ck-muted)',
-        padding: 6, borderRadius: 6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      }}
-      onMouseEnter={(e) => { if (!active && !disabled) { e.currentTarget.style.background = 'var(--ck-surface-alt)'; e.currentTarget.style.color = activeFg; } }}
-      onMouseLeave={(e) => { if (!active && !disabled) { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'var(--ck-muted)'; } }}>
-      {children}
-    </button>
-  );
-}
-
 function CandidateCell({ a, idx }: { a: Applicant; idx: number }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <Avatar name={a.full_name} hue={(idx * 53) % 360} size={32} />
-      <div>
+      <Avatar name={a.full_name} src={a.image_url} hue={(idx * 53) % 360} size={34} />
+      <div style={{ minWidth: 0 }}>
         <div style={{ fontWeight: 600, color: 'var(--ck-ink)' }}>{a.full_name}</div>
-        <div style={{ fontSize: 11.5, color: 'var(--ck-muted)' }}>{a.email}</div>
+        <div style={{ fontSize: 11.5, color: 'var(--ck-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 240 }}>
+          <span style={{ fontFamily: 'var(--ck-font-mono)' }}>{a.app_no ?? '—'}</span>
+          {a.email ? ` · ${a.email}` : ''}
+        </div>
       </div>
     </div>
   );
@@ -271,32 +255,40 @@ function Toolbar({ search, setSearch, right }: { search: string; setSearch: (v: 
   );
 }
 
-const th: CSSProperties = { padding: '10px 10px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', whiteSpace: 'nowrap', textAlign: 'left' };
-const td: CSSProperties = { padding: '10px', verticalAlign: 'middle' };
+const th: CSSProperties = { padding: '12px 16px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', whiteSpace: 'nowrap', textAlign: 'left' };
+const thRight: CSSProperties = { ...th, textAlign: 'right' };
+const td: CSSProperties = { padding: '12px 16px', verticalAlign: 'middle' };
+const tdRight: CSSProperties = { ...td, textAlign: 'right', whiteSpace: 'nowrap' };
 
-// Common applicant columns used by Screening / Interviews / Offers / Hire
+// Essential applicant columns shared by Screening / Interviews / Offers / Hire.
+// Source, role, company, location, salary, education and the screen/interview
+// scores live in the View panel (ViewApplicantModal) to keep the table readable.
 function CommonCols({ a, idx, statuses }: { a: Applicant; idx: number; statuses: Lookup[] }) {
   return (
     <>
-      <td style={{ ...td, fontFamily: 'var(--ck-font-mono)', fontSize: 11.5, fontWeight: 600 }}>{a.app_no ?? '—'}</td>
       <td style={td}><CandidateCell a={a} idx={idx} /></td>
-      <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>{a.source ?? '—'}</td>
-      <td style={td}>{a.experience_years != null ? `${a.experience_years}y` : '—'}</td>
-      <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>{a.current_role ?? '—'}</td>
-      <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>{a.current_company ?? '—'}</td>
-      <td style={{ ...td, color: 'var(--ck-muted)' }}>{a.location ?? '—'}</td>
-      <td style={td}>{formatSalary(a.salary_min, a.salary_max, a.salary_currency)}</td>
-      <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>
-        {a.education_level ?? '—'}
-        {a.institution && <div style={{ fontSize: 11, color: 'var(--ck-muted)' }}>{a.institution}</div>}
-      </td>
+      <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>{a.experience_years != null ? `${a.experience_years}y` : '—'}</td>
       <td style={{ ...td, fontWeight: 700, color: 'var(--ck-accent)' }}>{a.match_ratio != null ? `${a.match_ratio}%` : '—'}</td>
       <td style={td}><StatusBadge a={a} statuses={statuses} /></td>
     </>
   );
 }
 
-const COMMON_HEADERS = ['APP ID', 'CANDIDATE', 'SOURCE', 'EXP', 'CURRENT ROLE', 'COMPANY', 'LOCATION', 'SALARY', 'EDUCATION', 'MATCH %', 'STATUS'];
+// Render a funnel table header: shared essentials + per-tab trailing cols.
+// 'ACTIONS' is right-aligned to sit at the table edge.
+function FunnelHead({ trailing }: { trailing: string[] }) {
+  return (
+    <thead>
+      <tr style={{ background: 'var(--ck-bg)' }}>
+        {[...COMMON_HEADERS, ...trailing].map((h) => <th key={h} style={h === 'ACTIONS' ? thRight : th}>{h}</th>)}
+      </tr>
+    </thead>
+  );
+}
+
+const COMMON_HEADERS = ['CANDIDATE', 'EXP', 'MATCH %', 'STATUS'];
+// Trimmed tables share the same column count → one colSpan for loading/empty rows.
+const FUNNEL_COLSPAN = 6;
 
 // ─── SCREENING TAB ─────────────────────────────────────────────────────────
 export function ScreeningTab({ listingId }: { listingId: string }) {
@@ -327,32 +319,27 @@ export function ScreeningTab({ listingId }: { listingId: string }) {
       <Toolbar search={search} setSearch={setSearch} />
       <div className="ck-table-wrap" style={{ border: '1px solid var(--ck-line)', borderRadius: 8, overflow: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-          <thead>
-            <tr style={{ background: 'var(--ck-bg)' }}>
-              {[...COMMON_HEADERS, 'SCREEN SCORE', 'TAGS', ''].map((h) => <th key={h} style={th}>{h}</th>)}
-            </tr>
-          </thead>
+          <FunnelHead trailing={['TAGS', 'ACTIONS']} />
           <tbody>
-            {loading && <tr><td colSpan={14} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</td></tr>}
+            {loading && <tr><td colSpan={FUNNEL_COLSPAN} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</td></tr>}
             {!loading && apps.length === 0 && (
-              <tr><td colSpan={14} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
+              <tr><td colSpan={FUNNEL_COLSPAN} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
                 No candidates in screening yet. Click "Send to Screening" on an application.
               </td></tr>
             )}
             {apps.map((a, i) => (
               <tr key={a.id} style={{ borderTop: '1px solid var(--ck-line)' }}>
                 <CommonCols a={a} idx={i} statuses={statuses} />
-                <td style={{ ...td, fontWeight: 700, color: 'var(--ck-ink)' }}>{a.screen_score != null ? `${a.screen_score}%` : '—'}</td>
                 <td style={td}><TagsCell tags={a.tags} /></td>
-                <td style={td}>
-                  <div style={{ display: 'flex', gap: 2 }}>
-                    <IconBtn title="View" onClick={() => setViewTarget(a)}><Eye size={16} /></IconBtn>
-                    <IconBtn title="Fill Screening" onClick={() => setTarget(a)}><ClipboardCheck size={16} /></IconBtn>
-                    <IconBtn title="Approve Interview" variant="success" onClick={() => approve(a)}><ArrowRight size={16} /></IconBtn>
-                    <IconBtn title="Hold" active={a.status === 'On Hold'} variant="warning" onClick={() => hold(a)}><PauseCircle size={16} /></IconBtn>
-                    <IconBtn title="Reject" variant="danger" onClick={() => reject(a)}><Ban size={16} /></IconBtn>
-                    <IconBtn title="Tag" onClick={() => setTagTarget(a)}><TagIcon size={16} /></IconBtn>
-                  </div>
+                <td style={tdRight}>
+                  <ActionBar actions={[
+                    { icon: Eye, label: 'View', hint: 'View applicant', onClick: () => setViewTarget(a) },
+                    { icon: ClipboardCheck, label: 'Screen', hint: 'Fill screening', onClick: () => setTarget(a) },
+                    { icon: ArrowRight, label: 'Approve', hint: a.screen_score != null ? 'Approve for interview' : 'Complete the screening first', tone: 'success', disabled: a.screen_score == null, onClick: () => approve(a) },
+                    { icon: PauseCircle, label: 'Hold', hint: 'Put applicant on hold', tone: 'warning', onClick: () => hold(a) },
+                    { icon: Ban, label: 'Reject', hint: 'Reject applicant', tone: 'danger', onClick: () => reject(a) },
+                    { icon: TagIcon, label: 'Tag', hint: 'Tag applicant', onClick: () => setTagTarget(a) },
+                  ]} />
                 </td>
               </tr>
             ))}
@@ -475,35 +462,29 @@ export function InterviewsTab({ listingId }: { listingId: string }) {
       <Toolbar search={search} setSearch={setSearch} />
       <div className="ck-table-wrap" style={{ border: '1px solid var(--ck-line)', borderRadius: 8, overflow: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-          <thead>
-            <tr style={{ background: 'var(--ck-bg)' }}>
-              {[...COMMON_HEADERS, 'SCREEN', 'INTERVIEW', 'TAGS', ''].map((h) => <th key={h} style={th}>{h}</th>)}
-            </tr>
-          </thead>
+          <FunnelHead trailing={['TAGS', 'ACTIONS']} />
           <tbody>
-            {loading && <tr><td colSpan={15} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</td></tr>}
+            {loading && <tr><td colSpan={FUNNEL_COLSPAN} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</td></tr>}
             {!loading && apps.length === 0 && (
-              <tr><td colSpan={15} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
+              <tr><td colSpan={FUNNEL_COLSPAN} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
                 No interviews scheduled. Approve a screened candidate to begin.
               </td></tr>
             )}
             {apps.map((a, i) => (
               <tr key={a.id} style={{ borderTop: '1px solid var(--ck-line)' }}>
                 <CommonCols a={a} idx={i} statuses={statuses} />
-                <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>{a.screen_score != null ? `${a.screen_score}%` : '—'}</td>
-                <td style={{ ...td, fontWeight: 700 }}>{a.interview_score != null ? `${a.interview_score}%` : '—'}</td>
                 <td style={td}><TagsCell tags={a.tags} /></td>
-                <td style={td}>
-                  <div style={{ display: 'flex', gap: 2 }}>
-                    <IconBtn title="View" onClick={() => setViewTarget(a)}><Eye size={16} /></IconBtn>
-                    <IconBtn title="Schedule Interview" onClick={() => setScheduleTarget(a)}><Calendar size={16} /></IconBtn>
-                    <IconBtn title="Start / Score Interview" onClick={() => setCompleteTarget(a)}><Play size={16} /></IconBtn>
-                    <IconBtn title="Offer Job" variant="success" onClick={() => offer(a)}><ArrowRight size={16} /></IconBtn>
-                    <IconBtn title="No Show" variant="warning" onClick={async () => { await api.post(`/applicants/${a.id}/no-show`); refresh(); }}><UserX size={16} /></IconBtn>
-                    <IconBtn title="Hold" variant="warning" onClick={async () => { await api.post(`/applicants/${a.id}/hold`); refresh(); }}><PauseCircle size={16} /></IconBtn>
-                    <IconBtn title="Reject" variant="danger" onClick={async () => { if (window.confirm(`Reject ${a.full_name}?`)) { await api.post(`/applicants/${a.id}/reject`); refresh(); } }}><Ban size={16} /></IconBtn>
-                    <IconBtn title="Tag" onClick={() => setTagTarget(a)}><TagIcon size={16} /></IconBtn>
-                  </div>
+                <td style={tdRight}>
+                  <ActionBar actions={[
+                    { icon: Eye, label: 'View', hint: 'View applicant', onClick: () => setViewTarget(a) },
+                    { icon: Calendar, label: 'Schedule', hint: 'Schedule interview', onClick: () => setScheduleTarget(a) },
+                    { icon: Play, label: 'Start', hint: a.status === 'Interview Scheduled' ? 'Start / score interview' : 'Schedule the interview first', disabled: a.status !== 'Interview Scheduled', onClick: () => setCompleteTarget(a) },
+                    { icon: ArrowRight, label: 'Offer', hint: a.status === 'Interview Scheduled' ? 'Offer job' : 'Schedule & conduct the interview first', tone: 'success', disabled: a.status !== 'Interview Scheduled', onClick: () => offer(a) },
+                    { icon: UserX, label: 'No Show', hint: a.status === 'Interview Scheduled' ? 'Mark as no show' : 'No interview scheduled yet', tone: 'warning', disabled: a.status !== 'Interview Scheduled', onClick: async () => { await api.post(`/applicants/${a.id}/no-show`); refresh(); } },
+                    { icon: PauseCircle, label: 'Hold', hint: 'Put applicant on hold', tone: 'warning', onClick: async () => { await api.post(`/applicants/${a.id}/hold`); refresh(); } },
+                    { icon: Ban, label: 'Reject', hint: 'Reject applicant', tone: 'danger', onClick: async () => { if (window.confirm(`Reject ${a.full_name}?`)) { await api.post(`/applicants/${a.id}/reject`); refresh(); } } },
+                    { icon: TagIcon, label: 'Tag', hint: 'Tag applicant', onClick: () => setTagTarget(a) },
+                  ]} />
                 </td>
               </tr>
             ))}
@@ -629,9 +610,9 @@ function InterviewRoundsModal({ applicant, onClose, onChanged }: { applicant: Ap
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 4 }}>
-                  <IconBtn title="Share schedule" onClick={() => share(r.id)}><Send size={15} /></IconBtn>
-                  <IconBtn title="Mark started" disabled={!!r.started_at} onClick={() => start(r.id)}><Play size={15} /></IconBtn>
-                  <IconBtn title="Score / Complete" onClick={() => setActiveRound(r)}><ClipboardCheck size={15} /></IconBtn>
+                  <IconAction icon={Send} label="Share" hint="Share schedule" iconSize={15} onClick={() => share(r.id)} />
+                  <IconAction icon={Play} label="Start" hint="Mark started" iconSize={15} disabled={!!r.started_at} onClick={() => start(r.id)} />
+                  <IconAction icon={ClipboardCheck} label="Score" hint="Score / complete interview" iconSize={15} onClick={() => setActiveRound(r)} />
                 </div>
               </div>
             </div>
@@ -731,34 +712,28 @@ export function OffersTab({ listingId }: { listingId: string }) {
       <Toolbar search={search} setSearch={setSearch} />
       <div className="ck-table-wrap" style={{ border: '1px solid var(--ck-line)', borderRadius: 8, overflow: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-          <thead>
-            <tr style={{ background: 'var(--ck-bg)' }}>
-              {[...COMMON_HEADERS, 'SCREEN', 'INTERVIEW', 'TAGS', ''].map((h) => <th key={h} style={th}>{h}</th>)}
-            </tr>
-          </thead>
+          <FunnelHead trailing={['TAGS', 'ACTIONS']} />
           <tbody>
-            {loading && <tr><td colSpan={15} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</td></tr>}
+            {loading && <tr><td colSpan={FUNNEL_COLSPAN} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</td></tr>}
             {!loading && apps.length === 0 && (
-              <tr><td colSpan={15} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
+              <tr><td colSpan={FUNNEL_COLSPAN} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
                 No offers yet. Click "Offer Job" on an interviewed candidate.
               </td></tr>
             )}
             {apps.map((a, i) => (
               <tr key={a.id} style={{ borderTop: '1px solid var(--ck-line)' }}>
                 <CommonCols a={a} idx={i} statuses={statuses} />
-                <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>{a.screen_score != null ? `${a.screen_score}%` : '—'}</td>
-                <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>{a.interview_score != null ? `${a.interview_score}%` : '—'}</td>
                 <td style={td}><TagsCell tags={a.tags} /></td>
-                <td style={td}>
-                  <div style={{ display: 'flex', gap: 2 }}>
-                    <IconBtn title="View" onClick={() => setViewTarget(a)}><Eye size={16} /></IconBtn>
-                    <IconBtn title="Draft / Edit Offer" onClick={() => setDraftTarget(a)}><FileText size={16} /></IconBtn>
-                    <IconBtn title="Share Offer" onClick={() => action(a, 'share', 'Offer marked Sent')}><Send size={16} /></IconBtn>
-                    <IconBtn title="Accepted" variant="success" active={a.status === 'Offer Accepted'} onClick={() => action(a, 'accept', 'Offer Accepted')}><CheckCircle2 size={16} /></IconBtn>
-                    <IconBtn title="Declined" variant="danger" active={a.status === 'Offer Declined'} onClick={() => action(a, 'decline', 'Offer Declined')}><XCircle size={16} /></IconBtn>
-                    <IconBtn title="Hire" variant="success" onClick={() => hire(a)}><UserCheck size={16} /></IconBtn>
-                    <IconBtn title="Tag" onClick={() => setTagTarget(a)}><TagIcon size={16} /></IconBtn>
-                  </div>
+                <td style={tdRight}>
+                  <ActionBar actions={[
+                    { icon: Eye, label: 'View', hint: 'View applicant', onClick: () => setViewTarget(a) },
+                    { icon: FileText, label: 'Draft', hint: 'Draft / edit offer', onClick: () => setDraftTarget(a) },
+                    { icon: Send, label: 'Share', hint: a.offer_status != null ? 'Share offer' : 'Draft the offer first', disabled: a.offer_status == null, onClick: () => action(a, 'share', 'Offer marked Sent') },
+                    { icon: CheckCircle2, label: 'Accept', hint: a.offer_status === 'Sent' || a.offer_status === 'Accepted' ? 'Mark offer accepted' : 'Share the offer first', tone: 'success', disabled: a.offer_status !== 'Sent', onClick: () => action(a, 'accept', 'Offer Accepted') },
+                    { icon: XCircle, label: 'Decline', hint: a.offer_status === 'Sent' ? 'Mark offer declined' : 'Share the offer first', tone: 'danger', disabled: a.offer_status !== 'Sent', onClick: () => action(a, 'decline', 'Offer Declined') },
+                    { icon: UserCheck, label: 'Hire', hint: a.offer_status === 'Accepted' ? 'Hire candidate' : 'Offer must be accepted first', tone: 'success', disabled: a.offer_status !== 'Accepted', onClick: () => hire(a) },
+                    { icon: TagIcon, label: 'Tag', hint: 'Tag applicant', onClick: () => setTagTarget(a) },
+                  ]} />
                 </td>
               </tr>
             ))}
@@ -904,31 +879,25 @@ export function HireTab({ listingId }: { listingId: string }) {
       <Toolbar search={search} setSearch={setSearch} />
       <div className="ck-table-wrap" style={{ border: '1px solid var(--ck-line)', borderRadius: 8, overflow: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
-          <thead>
-            <tr style={{ background: 'var(--ck-bg)' }}>
-              {[...COMMON_HEADERS, 'SCREEN', 'INTERVIEW', 'TAGS', ''].map((h) => <th key={h} style={th}>{h}</th>)}
-            </tr>
-          </thead>
+          <FunnelHead trailing={['TAGS', 'ACTIONS']} />
           <tbody>
-            {loading && <tr><td colSpan={15} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</td></tr>}
+            {loading && <tr><td colSpan={FUNNEL_COLSPAN} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</td></tr>}
             {!loading && apps.length === 0 && (
-              <tr><td colSpan={15} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
+              <tr><td colSpan={FUNNEL_COLSPAN} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
                 No hired candidates yet.
               </td></tr>
             )}
             {apps.map((a, i) => (
               <tr key={a.id} style={{ borderTop: '1px solid var(--ck-line)' }}>
                 <CommonCols a={a} idx={i} statuses={statuses} />
-                <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>{a.screen_score != null ? `${a.screen_score}%` : '—'}</td>
-                <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>{a.interview_score != null ? `${a.interview_score}%` : '—'}</td>
                 <td style={td}><TagsCell tags={a.tags} /></td>
-                <td style={td}>
-                  <div style={{ display: 'flex', gap: 2 }}>
-                    <IconBtn title="View" onClick={() => setViewTarget(a)}><Eye size={16} /></IconBtn>
-                    <IconBtn title="Send to Onboarding" variant="success" onClick={() => onboard(a)}><UserCheck size={16} /></IconBtn>
-                    <IconBtn title="Reject" variant="danger" onClick={async () => { if (window.confirm(`Reject ${a.full_name}?`)) { await api.post(`/applicants/${a.id}/reject`); refresh(); } }}><Ban size={16} /></IconBtn>
-                    <IconBtn title="Tag" onClick={() => setTagTarget(a)}><TagIcon size={16} /></IconBtn>
-                  </div>
+                <td style={tdRight}>
+                  <ActionBar actions={[
+                    { icon: Eye, label: 'View', hint: 'View applicant', onClick: () => setViewTarget(a) },
+                    { icon: UserCheck, label: 'Onboard', hint: 'Send to onboarding', tone: 'success', onClick: () => onboard(a) },
+                    { icon: Ban, label: 'Reject', hint: 'Reject applicant', tone: 'danger', onClick: async () => { if (window.confirm(`Reject ${a.full_name}?`)) { await api.post(`/applicants/${a.id}/reject`); refresh(); } } },
+                    { icon: TagIcon, label: 'Tag', hint: 'Tag applicant', onClick: () => setTagTarget(a) },
+                  ]} />
                 </td>
               </tr>
             ))}
@@ -942,6 +911,19 @@ export function HireTab({ listingId }: { listingId: string }) {
 }
 
 // ─── ACTIVITIES TAB ────────────────────────────────────────────────────────
+// Activity pill colour by meaning: green = positive milestones, red = negative,
+// amber = hold, blue = neutral process steps, grey = meta (tag / status change).
+const ACT_POSITIVE = new Set(['approve_interview', 'accept_offer', 'hire', 'onboard']);
+const ACT_NEGATIVE = new Set(['reject', 'decline_offer', 'no_show']);
+const ACT_PROCESS  = new Set(['screen', 'schedule_interview', 'start_interview', 'complete_interview', 'share_schedule', 'draft_offer', 'share_offer']);
+function activityPillStyle(action: string): { background: string; color: string } {
+  if (ACT_POSITIVE.has(action)) return { background: 'var(--ck-success-bg)', color: 'var(--ck-success-fg)' };
+  if (ACT_NEGATIVE.has(action)) return { background: 'var(--ck-danger-bg)',  color: 'var(--ck-danger-fg)' };
+  if (action === 'hold')        return { background: 'var(--ck-warning-bg)', color: 'var(--ck-warning-fg)' };
+  if (ACT_PROCESS.has(action))  return { background: 'var(--ck-info-bg)',    color: 'var(--ck-info-fg)' };
+  return { background: 'var(--ck-line-soft)', color: 'var(--ck-ink-soft)' }; // tag, status_change, unknown
+}
+
 export function ActivitiesTab({ listingId }: { listingId: string }) {
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -970,7 +952,7 @@ export function ActivitiesTab({ listingId }: { listingId: string }) {
             <div style={{ flex: 1, fontSize: 13 }}>
               <span style={{ fontWeight: 600, color: 'var(--ck-ink)' }}>{r.actor_name ?? r.actor_email ?? 'System'}</span>
               {' · '}
-              <span style={{ padding: '2px 8px', borderRadius: 999, fontSize: 11, background: 'var(--ck-line-soft)', color: 'var(--ck-ink-soft)', fontWeight: 600 }}>{r.action.replace(/_/g, ' ')}</span>
+              <span style={{ padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600, textTransform: 'capitalize', ...activityPillStyle(r.action) }}>{r.action.replace(/_/g, ' ')}</span>
               {' · '}
               <span style={{ color: 'var(--ck-ink)' }}>{r.applicant_name ?? '—'}</span>{r.app_no ? <span style={{ color: 'var(--ck-muted)' }}> ({r.app_no})</span> : null}
               {(r.from_status || r.to_status) && (

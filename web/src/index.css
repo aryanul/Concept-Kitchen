@@ -329,3 +329,179 @@ h1, h2, h3 { margin: 0; }
 
 /* Table wrapper */
 .ck-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* ── Tooltip ─────────────────────────────────────────────────────────────
+   Wrapper shows a styled bubble on hover and keyboard focus. Used directly
+   via <Tooltip> and inside <IconAction> for icon captions. */
+.ck-tip { position: relative; display: inline-flex; }
+.ck-tip__bubble {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%) translateY(3px);
+  background: var(--ck-ink);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  padding: 5px 9px;
+  border-radius: var(--ck-r-sm);
+  white-space: nowrap;
+  max-width: 240px;
+  box-shadow: var(--ck-shadow-md);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 60;
+  transition: opacity var(--ck-dur-fast) var(--ck-ease), transform var(--ck-dur-fast) var(--ck-ease);
+}
+.ck-tip__bubble::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-top-color: var(--ck-ink);
+}
+.ck-tip--bottom .ck-tip__bubble {
+  bottom: auto;
+  top: calc(100% + 7px);
+  transform: translateX(-50%) translateY(-3px);
+}
+.ck-tip--bottom .ck-tip__bubble::after {
+  top: auto;
+  bottom: 100%;
+  border-top-color: transparent;
+  border-bottom-color: var(--ck-ink);
+}
+.ck-tip:hover > .ck-tip__bubble,
+.ck-tip:focus-within > .ck-tip__bubble {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ── Icon action button (icon + visible caption) ─────────────────────────── */
+.ck-iconaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 1px solid var(--ck-line);
+  border-radius: var(--ck-r-sm);
+  padding: 3px 7px;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--ck-ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--ck-dur-fast) var(--ck-ease), color var(--ck-dur-fast) var(--ck-ease), border-color var(--ck-dur-fast) var(--ck-ease);
+}
+.ck-iconaction > svg { flex: none; }
+.ck-iconaction:hover {
+  background: var(--ck-surface-alt);
+  color: var(--ck-ink);
+  border-color: var(--ck-line);
+}
+.ck-iconaction:focus-visible {
+  outline: 2px solid var(--ck-accent);
+  outline-offset: 1px;
+}
+.ck-iconaction--plain {
+  border-color: transparent;
+  padding: 3px 5px;
+  color: var(--ck-muted);
+}
+.ck-iconaction--plain:hover { background: var(--ck-surface-alt); color: var(--ck-ink); }
+.ck-iconaction--danger { color: var(--ck-danger-fg); }
+.ck-iconaction--danger:hover { background: var(--ck-danger-bg); color: var(--ck-danger-fg); }
+.ck-iconaction--success { color: var(--ck-success-fg); }
+.ck-iconaction--success:hover { background: var(--ck-success-bg); color: var(--ck-success-fg); }
+.ck-iconaction--warning { color: var(--ck-warning-fg); }
+.ck-iconaction--warning:hover { background: var(--ck-warning-bg); color: var(--ck-warning-fg); }
+.ck-iconaction__label { font-size: 11.5px; }
+
+/* ── Combobox (themed, type-ahead select) ────────────────────────────────── */
+.ck-combo { position: relative; display: block; }
+.ck-combo > input { width: 100%; }
+.ck-combo__chevron {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ck-muted);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.ck-combo-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  max-height: 248px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--ck-surface);
+  border: 1px solid var(--ck-line);
+  border-radius: var(--ck-r-md);
+  box-shadow: var(--ck-shadow-md);
+  animation: ck-actionmenu-in var(--ck-dur-fast) var(--ck-ease);
+}
+.ck-combo-option {
+  padding: 7px 10px;
+  border-radius: var(--ck-r-sm);
+  font-size: 13px;
+  color: var(--ck-ink);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ck-combo-option[data-active='true'] { background: var(--ck-surface-alt); }
+.ck-combo-option[aria-selected='true'] { font-weight: 600; }
+.ck-combo-empty { padding: 8px 10px; font-size: 12.5px; color: var(--ck-muted); }
+
+/* ── Overflow action menu (⋯) ────────────────────────────────────────────── */
+.ck-actionmenu {
+  position: fixed;
+  z-index: 200;
+  min-width: 184px;
+  padding: 5px;
+  background: var(--ck-surface);
+  border: 1px solid var(--ck-line);
+  border-radius: var(--ck-r-md);
+  box-shadow: var(--ck-shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  animation: ck-actionmenu-in var(--ck-dur-fast) var(--ck-ease);
+}
+@keyframes ck-actionmenu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.ck-actionmenu__item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  background: none;
+  border: none;
+  border-radius: var(--ck-r-sm);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--ck-ink-soft);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--ck-dur-fast) var(--ck-ease), color var(--ck-dur-fast) var(--ck-ease);
+}
+.ck-actionmenu__item > svg { flex: none; color: inherit; }
+.ck-actionmenu__item:hover { background: var(--ck-surface-alt); color: var(--ck-ink); }
+.ck-actionmenu__item--danger { color: var(--ck-danger-fg); }
+.ck-actionmenu__item--danger:hover { background: var(--ck-danger-bg); color: var(--ck-danger-fg); }
+.ck-actionmenu__item:disabled { opacity: 0.45; cursor: not-allowed; }

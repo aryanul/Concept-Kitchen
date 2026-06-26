@@ -12,6 +12,7 @@ import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
+import { IconAction } from '../../components/ui/IconAction';
 import { Avatar } from '../../components/ui/Avatar';
 import { StatusPill } from '../../components/ui/StatusPill';
 
@@ -911,7 +912,7 @@ function DocumentRow({ idx, value, editing, onChange, onDelete }: {
         <div style={{ fontSize: 13, color: 'var(--ck-muted)' }}>—</div>
       )}
       {editing
-        ? <button onClick={onDelete} style={iconBtn} aria-label="Delete"><Trash2 size={14} /></button>
+        ? <IconAction icon={Trash2} label="Delete" hint="Remove this row" iconOnly tone="danger" onClick={onDelete} />
         : <span />}
     </>
   );
@@ -938,7 +939,7 @@ function EducationRow({ value, editing, onChange, onDelete }: {
       <RowDate val={value.passing_year ?? ''} editing={editing} onChange={(v) => onChange({ ...value, passing_year: v })} />
       <RowInput val={value.percentage_cgpa ?? ''} editing={editing} onChange={(v) => onChange({ ...value, percentage_cgpa: v })} placeholder="72%" />
       {editing
-        ? <button onClick={onDelete} style={iconBtn} aria-label="Delete"><Trash2 size={14} /></button>
+        ? <IconAction icon={Trash2} label="Delete" hint="Remove this row" iconOnly tone="danger" onClick={onDelete} />
         : <span />}
     </>
   );
@@ -1122,7 +1123,7 @@ function SkillRow({ value, editing, onChange, onDelete }: {
       )}
       <RatingPicker value={value.rating} editing={editing} onChange={(r) => onChange({ ...value, rating: r })} />
       {editing
-        ? <button onClick={onDelete} style={iconBtn} aria-label="Delete"><Trash2 size={14} /></button>
+        ? <IconAction icon={Trash2} label="Delete" hint="Remove this row" iconOnly tone="danger" onClick={onDelete} />
         : <span />}
     </div>
   );
@@ -1742,7 +1743,7 @@ function EmergencyRow({ value, editing, onChange, onDelete }: {
       />
       <RowInput val={value.address ?? ''} editing={editing} onChange={(v) => onChange({ ...value, address: v })} placeholder="Address" />
       {editing
-        ? <button onClick={onDelete} style={iconBtn} aria-label="Delete"><Trash2 size={14} /></button>
+        ? <IconAction icon={Trash2} label="Delete" hint="Remove this row" iconOnly tone="danger" onClick={onDelete} />
         : <span />}
     </>
   );
@@ -1771,7 +1772,7 @@ function DependentRow({ value, editing, onChange, onDelete }: {
       <RowDate val={value.dob ?? ''} editing={editing} onChange={(v) => onChange({ ...value, dob: v })} />
       <div style={{ fontSize: 13, color: 'var(--ck-ink-soft)' }}>{age || '—'}</div>
       {editing
-        ? <button onClick={onDelete} style={iconBtn} aria-label="Delete"><Trash2 size={14} /></button>
+        ? <IconAction icon={Trash2} label="Delete" hint="Remove this row" iconOnly tone="danger" onClick={onDelete} />
         : <span />}
     </>
   );
@@ -1795,11 +1796,6 @@ function RowPhone({ cc, num, editing, onCc, onNum }: { cc: string; num: string; 
     </div>
   );
 }
-const iconBtn: React.CSSProperties = {
-  background: 'none', border: '1px solid var(--ck-line)', borderRadius: 6,
-  padding: '6px 8px', cursor: 'pointer', color: 'var(--ck-ink-soft)',
-};
-
 function formatDate(s: string) {
   try { return new Date(s).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); } catch { return s; }
 }

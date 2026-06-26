@@ -5,6 +5,7 @@ import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
+import { IconAction } from '../../components/ui/IconAction';
 
 type Employee = {
   id: string; code: string; first_name: string; last_name: string;
@@ -188,15 +189,9 @@ function Row({ emp, onView, onEdit }: { emp: Employee; onView: () => void; onEdi
       <Td>{emp.branch_name || '—'}</Td>
       <Td>{emp.location_name || '—'}</Td>
       <Td>
-        <div style={{ display: 'flex', gap: 4 }}>
-          <button onClick={onView} title="View" aria-label="View"
-            style={{ background: 'none', border: '1px solid var(--ck-line)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', color: 'var(--ck-ink-soft)' }}>
-            <Eye size={14} />
-          </button>
-          <button onClick={onEdit} title="Edit" aria-label="Edit"
-            style={{ background: 'none', border: '1px solid var(--ck-line)', borderRadius: 6, padding: '4px 8px', cursor: 'pointer', color: 'var(--ck-ink-soft)' }}>
-            <Pencil size={14} />
-          </button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <IconAction icon={Eye} label="View" hint="View employee profile" onClick={onView} />
+          <IconAction icon={Pencil} label="Edit" hint="Edit employee details" onClick={onEdit} />
         </div>
       </Td>
     </tr>

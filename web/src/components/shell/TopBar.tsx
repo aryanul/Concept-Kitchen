@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../ui/Avatar';
+import { Tooltip } from '../ui/Tooltip';
 import { useAuth } from '../../stores/auth';
 
 type TopBarProps = { onMenuClick: () => void };
@@ -65,19 +66,21 @@ export function TopBar({ onMenuClick }: TopBarProps) {
       }}
     >
       {/* Hamburger — visible on mobile only via CSS */}
-      <button
-        type="button"
-        aria-label="Open menu"
-        onClick={onMenuClick}
-        className="ck-hamburger"
-        style={{
-          width: 36, height: 36, borderRadius: 10, border: '1px solid var(--ck-line)',
-          background: 'var(--ck-surface)', alignItems: 'center', justifyContent: 'center',
-          color: 'var(--ck-ink)', cursor: 'pointer', flexShrink: 0,
-        }}
-      >
-        <Menu size={18} />
-      </button>
+      <Tooltip label="Open menu" placement="bottom">
+        <button
+          type="button"
+          aria-label="Open menu"
+          onClick={onMenuClick}
+          className="ck-hamburger"
+          style={{
+            width: 36, height: 36, borderRadius: 10, border: '1px solid var(--ck-line)',
+            background: 'var(--ck-surface)', alignItems: 'center', justifyContent: 'center',
+            color: 'var(--ck-ink)', cursor: 'pointer', flexShrink: 0,
+          }}
+        >
+          <Menu size={18} />
+        </button>
+      </Tooltip>
 
       <div
         className="ck-topbar-search-max"
@@ -111,23 +114,25 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         <Chip icon={Calendar} label={dStr} />
       </div>
 
-      <button
-        type="button"
-        aria-label="Notifications"
-        style={{
-          width: 36, height: 36, borderRadius: 10,
-          border: '1px solid var(--ck-line)', background: 'var(--ck-line-soft)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          position: 'relative', color: 'var(--ck-ink-soft)', cursor: 'pointer',
-        }}
-      >
-        <Bell size={16} strokeWidth={1.8} />
-        <span style={{
-          position: 'absolute', top: 7, right: 9,
-          width: 7, height: 7, borderRadius: '50%',
-          background: 'var(--ck-accent)', border: '2px solid var(--ck-surface)',
-        }} />
-      </button>
+      <Tooltip label="Notifications" placement="bottom">
+        <button
+          type="button"
+          aria-label="Notifications"
+          style={{
+            width: 36, height: 36, borderRadius: 10,
+            border: '1px solid var(--ck-line)', background: 'var(--ck-line-soft)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            position: 'relative', color: 'var(--ck-ink-soft)', cursor: 'pointer',
+          }}
+        >
+          <Bell size={16} strokeWidth={1.8} />
+          <span style={{
+            position: 'absolute', top: 7, right: 9,
+            width: 7, height: 7, borderRadius: '50%',
+            background: 'var(--ck-accent)', border: '2px solid var(--ck-surface)',
+          }} />
+        </button>
+      </Tooltip>
 
       {/* User chip + dropdown */}
       <div ref={menuRef} style={{ position: 'relative' }}>
@@ -145,15 +150,17 @@ export function TopBar({ onMenuClick }: TopBarProps) {
             <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ck-ink)' }}>{niceFirst}</div>
             <div style={{ fontSize: 10.5, color: 'var(--ck-faint)' }}>{role}</div>
           </div>
-          <ChevronDown
-            size={14}
-            className="ck-user-chevron"
-            style={{
-              color: 'var(--ck-muted)',
-              transition: 'transform 160ms',
-              transform: menuOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-            }}
-          />
+          <Tooltip label="Account menu" placement="bottom">
+            <ChevronDown
+              size={14}
+              className="ck-user-chevron"
+              style={{
+                color: 'var(--ck-muted)',
+                transition: 'transform 160ms',
+                transform: menuOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+              }}
+            />
+          </Tooltip>
         </div>
 
         {menuOpen && (

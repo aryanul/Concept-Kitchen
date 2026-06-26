@@ -10,6 +10,7 @@ import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { Avatar } from '../../components/ui/Avatar';
 import { Modal } from '../../components/ui/Modal';
+import { ActionBar } from '../../components/ui/ActionBar';
 
 type HiredApplicant = {
   id: string; app_no: string | null; image_url: string | null;
@@ -184,18 +185,20 @@ export function OnboardingPage() {
                       </span>
                     </td>
                     <td style={{ padding: '12px' }}>
-                      <div style={{ display: 'flex', gap: 2 }}>
-                        <IconBtn title="View / Offer letter" onClick={() => setViewTarget(a)}><Eye size={16} /></IconBtn>
-                        <IconBtn title={onboarded ? 'View Onboarding' : a.onboarding_status === 'pending' ? 'Start Onboarding' : 'Continue Onboarding'}
-                          onClick={() => navigate(`/onboarding/${a.id}`)} variant={onboarded ? undefined : 'success'}>
-                          <Play size={16} />
-                        </IconBtn>
-                        <IconBtn title="Print ID Card" onClick={() => window.open(`/onboarding/${a.id}/id-card`, '_blank', 'noopener,noreferrer')}><Printer size={16} /></IconBtn>
-                        <IconBtn title="Close & Archive" disabled={onboarded} onClick={() => setCloseTarget(a)} variant="success">
-                          <Archive size={16} />
-                        </IconBtn>
-                        <IconBtn title="Reject" disabled={onboarded} onClick={() => reject(a)} variant="danger"><Ban size={16} /></IconBtn>
-                      </div>
+                      <ActionBar
+                        actions={[
+                          { icon: Eye, label: 'View', hint: 'View / offer letter', onClick: () => setViewTarget(a) },
+                          {
+                            icon: Play,
+                            label: onboarded ? 'Onboarding' : a.onboarding_status === 'pending' ? 'Start' : 'Continue',
+                            hint: onboarded ? 'View Onboarding' : a.onboarding_status === 'pending' ? 'Start Onboarding' : 'Continue Onboarding',
+                            onClick: () => navigate(`/onboarding/${a.id}`),
+                          },
+                          { icon: Printer, label: 'Print', hint: 'Print ID Card', onClick: () => window.open(`/onboarding/${a.id}/id-card`, '_blank', 'noopener,noreferrer') },
+                          { icon: Archive, label: 'Archive', hint: 'Close & Archive', disabled: onboarded, onClick: () => setCloseTarget(a) },
+                          { icon: Ban, label: 'Reject', hint: 'Reject applicant', tone: 'danger', disabled: onboarded, onClick: () => reject(a) },
+                        ]}
+                      />
                     </td>
                   </tr>
                 );
@@ -219,26 +222,6 @@ const linkBtn: React.CSSProperties = {
   background: 'none', border: 'none', padding: 0, marginLeft: 4, cursor: 'pointer',
   color: 'var(--ck-accent)', textDecoration: 'underline', fontSize: 11.5,
 };
-
-function IconBtn({ title, onClick, children, variant, disabled }: {
-  title: string; onClick: () => void; children: ReactNode;
-  variant?: 'danger' | 'success'; disabled?: boolean;
-}) {
-  const fg = variant === 'danger' ? '#b91c1c' : variant === 'success' ? '#15803d' : 'var(--ck-ink)';
-  return (
-    <button aria-label={title} title={title} onClick={onClick} disabled={disabled}
-      style={{
-        background: 'none', border: 'none', cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.35 : 1,
-        color: 'var(--ck-muted)',
-        padding: 6, borderRadius: 6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      }}
-      onMouseEnter={(e) => { if (!disabled) { e.currentTarget.style.background = 'var(--ck-surface-alt)'; e.currentTarget.style.color = fg; } }}
-      onMouseLeave={(e) => { if (!disabled) { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'var(--ck-muted)'; } }}>
-      {children}
-    </button>
-  );
-}
 
 // ─── View modal — applicant details + offer letter preview ────────────────
 function ViewApplicantModal({ applicant, onClose }: { applicant: HiredApplicant; onClose: () => void }) {

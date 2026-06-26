@@ -3,9 +3,11 @@ type Props = {
   initials?: string;
   size?: number;
   hue?: number;
+  /** Photo URL or base64 data URL. When set, shown instead of initials. */
+  src?: string | null;
 };
 
-export function Avatar({ name, initials, size = 36, hue = 220 }: Props) {
+export function Avatar({ name, initials, size = 36, hue = 220, src }: Props) {
   const tint = hue;
   const ini =
     initials ||
@@ -18,6 +20,24 @@ export function Avatar({ name, initials, size = 36, hue = 220 }: Props) {
           .join('')
           .toUpperCase()
       : '??');
+
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={name ?? ''}
+        style={{
+          width: size,
+          height: size,
+          borderRadius: '50%',
+          objectFit: 'cover',
+          flexShrink: 0,
+          background: `oklch(0.9 0.01 ${tint})`,
+        }}
+      />
+    );
+  }
+
   return (
     <div
       style={{

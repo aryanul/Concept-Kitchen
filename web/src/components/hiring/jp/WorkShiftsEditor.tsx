@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Plus, X } from 'lucide-react';
 import { Modal } from '../../ui/Modal';
 import { Button } from '../../ui/Button';
+import { IconAction } from '../../ui/IconAction';
 import { api } from '../../../lib/api';
 
 export type ShiftOption = {
@@ -57,10 +58,7 @@ export function WorkShiftsEditor({
             ? 'No shifts selected. Click + to pick one or more shifts from Shift Master.'
             : `${value.length} shift${value.length === 1 ? '' : 's'} selected`}
         </div>
-        <button type="button" onClick={openModal}
-          style={{ width: 36, height: 38, borderRadius: 7, background: '#222', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Plus size={16} />
-        </button>
+        <IconAction icon={Plus} label="Add" hint="Add shifts from Shift Master" iconSize={16} onClick={openModal} />
       </div>
 
       {selectedShifts.length > 0 && (
@@ -68,9 +66,7 @@ export function WorkShiftsEditor({
           {selectedShifts.map((s) => (
             <span key={s.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 999, background: '#222', color: '#fff', fontSize: 12.5, fontWeight: 600 }}>
               {s.name} <span style={{ color: '#aaa', fontWeight: 400, fontSize: 11 }}>({s.start_time}–{s.end_time})</span>
-              <button type="button" onClick={() => remove(s.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#aaa', padding: 0, display: 'flex', alignItems: 'center' }}>
-                <X size={12} />
-              </button>
+              <IconAction icon={X} label="Remove" hint={`Remove ${s.name}`} iconOnly tone="danger" variant="plain" iconSize={12} onClick={() => remove(s.id)} />
             </span>
           ))}
         </div>

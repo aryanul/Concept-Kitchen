@@ -7,6 +7,7 @@ import { PageHeader } from '../../components/ui/PageHeader';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
+import { IconAction } from '../../components/ui/IconAction';
 import { inrPaiseToRupeesShort } from '../../lib/format';
 import { MasterCrudPage } from '../../components/masters/MasterCrudPage';
 import { HolidaysPage } from '../holidays/HolidaysPage';
@@ -984,11 +985,13 @@ export function DddMasterPage() {
               buildPayload={(values) => ({ code: values.code || undefined, name: values.name, departmentId: values.departmentId || undefined, divisionId: values.divisionId || undefined, parentDesignationId: values.parentDesignationId || undefined, hierarchyLevel: Number(values.hierarchyLevel || 0), isActive: Boolean(values.isActive) })}
               searchKeys={['code', 'name', 'department_name', 'division_name']}
               extraActions={(row) => (
-                <button type="button" aria-label="ERP Modules" title="Default ERP Modules"
+                <IconAction
+                  icon={Cpu}
+                  label="ERP Modules"
+                  hint="Default ERP Modules for this designation"
+                  iconSize={16}
                   onClick={() => setErpTarget(row)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' }}>
-                  <Cpu size={16} />
-                </button>
+                />
               )}
             />
           )}

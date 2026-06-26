@@ -3,8 +3,8 @@
 // Add (manual upload), Fetch (stub — would pull from LinkedIn/Naukri/etc.),
 // View, plus per-row actions Screen / Reject / Hold / Tag.
 
-import { useEffect, useState, type ReactNode } from 'react';
-import { Plus, RefreshCcw, Search, Eye, ClipboardCheck, PauseCircle, Ban, Tag as TagIcon } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Plus, RefreshCcw, Search, Eye, ClipboardCheck, PauseCircle, Ban, Tag as TagIcon, Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -13,6 +13,7 @@ import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Avatar } from '../ui/Avatar';
+import { ActionBar } from '../ui/ActionBar';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 export type Applicant = {
@@ -27,6 +28,7 @@ export type Applicant = {
   match_ratio: number | string | null;
   screen_score: number | string | null; interview_score: number | string | null;
   source: string | null; status: string;
+  offer_status: string | null;   // applicant_offers.status — Draft | Sent | Accepted | Declined (gates the Offers tab)
   notes: string | null;
   applied_at: string;
   tags: Array<{ id: string; name: string; color: string | null }>;
@@ -37,7 +39,9 @@ type Tag = { id: string; name: string; color: string | null };
 const inp: React.CSSProperties = { width: '100%', height: 38, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' };
 
 const addSchema = z.object({
-  fullName: z.string().min(1, 'Required'),
+  firstName:  z.string().min(1, 'Required'),
+  middleName: z.string().optional(),
+  lastName:   z.string().min(1, 'Required'),
   email:    z.string().email('Valid email required'),
   phone:    z.string().optional(),
   imageUrl: z.string().optional(),
@@ -131,16 +135,16 @@ export function ApplicationsTab({ listingId }: { listingId: string }) {
       <div className="ck-table-wrap" style={{ border: '1px solid var(--ck-line)', borderRadius: 8, overflow: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
           <thead>
-            <tr style={{ background: 'var(--ck-bg)', textAlign: 'left' }}>
-              {['APP ID', 'CANDIDATE', 'SOURCE', 'EXPERIENCE', 'CURRENT ROLE', 'COMPANY', 'LOCATION', 'SALARY', 'EDUCATION', 'MATCH %', 'STATUS', 'TAGS', ''].map((h) => (
-                <th key={h} style={{ padding: '10px 10px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>{h}</th>
+            <tr style={{ background: 'var(--ck-bg)' }}>
+              {['CANDIDATE', 'EXPERIENCE', 'MATCH %', 'STATUS', 'TAGS', 'ACTIONS'].map((h) => (
+                <th key={h} style={{ padding: '12px 16px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', whiteSpace: 'nowrap', textAlign: h === 'ACTIONS' ? 'right' : 'left' }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={13} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</td></tr>}
+            {loading && <tr><td colSpan={6} style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</td></tr>}
             {!loading && apps.length === 0 && (
-              <tr><td colSpan={13} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
+              <tr><td colSpan={6} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
                 No applications yet. Click "Add" to upload one manually.
               </td></tr>
             )}
@@ -148,33 +152,25 @@ export function ApplicationsTab({ listingId }: { listingId: string }) {
               const status = statuses.find((s) => s.code === a.status);
               return (
                 <tr key={a.id} style={{ borderTop: '1px solid var(--ck-line)' }}>
-                  <td style={{ padding: '10px', fontFamily: 'var(--ck-font-mono)', fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap' }}>{a.app_no ?? '—'}</td>
-                  <td style={{ padding: '10px', whiteSpace: 'nowrap' }}>
+                  <td style={{ padding: '12px 16px', whiteSpace: 'nowrap' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <Avatar name={a.full_name} hue={(i * 53) % 360} size={32} />
-                      <div>
+                      <Avatar name={a.full_name} src={a.image_url} hue={(i * 53) % 360} size={34} />
+                      <div style={{ minWidth: 0 }}>
                         <div style={{ fontWeight: 600, color: 'var(--ck-ink)' }}>{a.full_name}</div>
-                        <div style={{ fontSize: 11.5, color: 'var(--ck-muted)' }}>{a.email}</div>
+                        <div style={{ fontSize: 11.5, color: 'var(--ck-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 240 }}>
+                          <span style={{ fontFamily: 'var(--ck-font-mono)' }}>{a.app_no ?? '—'}</span>{a.email ? ` · ${a.email}` : ''}
+                        </div>
                       </div>
                     </div>
                   </td>
-                  <td style={{ padding: '10px', color: 'var(--ck-ink-soft)' }}>{a.source ?? '—'}</td>
-                  <td style={{ padding: '10px' }}>{a.experience_years != null ? `${a.experience_years}y` : '—'}</td>
-                  <td style={{ padding: '10px', color: 'var(--ck-ink-soft)' }}>{a.current_role ?? '—'}</td>
-                  <td style={{ padding: '10px', color: 'var(--ck-ink-soft)' }}>{a.current_company ?? '—'}</td>
-                  <td style={{ padding: '10px', color: 'var(--ck-muted)' }}>{a.location ?? '—'}</td>
-                  <td style={{ padding: '10px', whiteSpace: 'nowrap' }}>{formatSalary(a.salary_min, a.salary_max, a.salary_currency)}</td>
-                  <td style={{ padding: '10px', color: 'var(--ck-ink-soft)' }}>
-                    {a.education_level ?? '—'}
-                    {a.institution && <div style={{ fontSize: 11, color: 'var(--ck-muted)' }}>{a.institution}</div>}
-                  </td>
-                  <td style={{ padding: '10px', fontWeight: 700, color: 'var(--ck-accent)' }}>{a.match_ratio != null ? `${a.match_ratio}%` : '—'}</td>
-                  <td style={{ padding: '10px' }}>
+                  <td style={{ padding: '12px 16px', color: 'var(--ck-ink-soft)' }}>{a.experience_years != null ? `${a.experience_years}y` : '—'}</td>
+                  <td style={{ padding: '12px 16px', fontWeight: 700, color: 'var(--ck-accent)' }}>{a.match_ratio != null ? `${a.match_ratio}%` : '—'}</td>
+                  <td style={{ padding: '12px 16px' }}>
                     <span style={{ padding: '4px 10px', borderRadius: 6, fontSize: 11.5, fontWeight: 600, background: status?.color ?? 'var(--ck-line-soft)', color: status?.color ? '#fff' : 'var(--ck-ink-soft)' }}>
                       {status?.label ?? a.status}
                     </span>
                   </td>
-                  <td style={{ padding: '10px' }}>
+                  <td style={{ padding: '12px 16px' }}>
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 180 }}>
                       {a.tags.map((t) => (
                         <span key={t.id} style={{ padding: '2px 8px', borderRadius: 999, fontSize: 10.5, fontWeight: 600, background: t.color ?? 'var(--ck-line-soft)', color: t.color ? '#fff' : 'var(--ck-ink-soft)' }}>
@@ -183,24 +179,14 @@ export function ApplicationsTab({ listingId }: { listingId: string }) {
                       ))}
                     </div>
                   </td>
-                  <td style={{ padding: '10px' }}>
-                    <div style={{ display: 'flex', gap: 2 }}>
-                      <IconBtn title="View" onClick={() => setViewTarget(a)}>
-                        <Eye size={16} />
-                      </IconBtn>
-                      <IconBtn title="Send to Screening" onClick={() => sendToScreening(a)}>
-                        <ClipboardCheck size={16} />
-                      </IconBtn>
-                      <IconBtn title="Hold" active={a.status === 'On Hold'} onClick={() => setStatus(a.id, 'On Hold')}>
-                        <PauseCircle size={16} />
-                      </IconBtn>
-                      <IconBtn title="Reject" active={a.status === 'Rejected'} variant="danger" onClick={() => setStatus(a.id, 'Rejected')}>
-                        <Ban size={16} />
-                      </IconBtn>
-                      <IconBtn title="Tag" onClick={() => setTagTarget(a)}>
-                        <TagIcon size={16} />
-                      </IconBtn>
-                    </div>
+                  <td style={{ padding: '12px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <ActionBar actions={[
+                      { icon: Eye, label: 'View', hint: 'View applicant', onClick: () => setViewTarget(a) },
+                      { icon: ClipboardCheck, label: 'Screen', hint: 'Send to Screening', onClick: () => sendToScreening(a) },
+                      { icon: PauseCircle, label: 'Hold', hint: 'Put applicant on hold', tone: 'warning', onClick: () => setStatus(a.id, 'On Hold') },
+                      { icon: Ban, label: 'Reject', hint: 'Reject applicant', tone: 'danger', onClick: () => setStatus(a.id, 'Rejected') },
+                      { icon: TagIcon, label: 'Tag', hint: 'Tag applicant', onClick: () => setTagTarget(a) },
+                    ]} />
                   </td>
                 </tr>
               );
@@ -229,26 +215,6 @@ export function ApplicationsTab({ listingId }: { listingId: string }) {
   );
 }
 
-function IconBtn({ title, onClick, children, active, variant }: {
-  title: string; onClick: () => void; children: ReactNode;
-  active?: boolean; variant?: 'danger' | 'success';
-}) {
-  const activeBg = variant === 'danger' ? '#fee2e2' : variant === 'success' ? '#dcfce7' : 'var(--ck-surface-alt)';
-  const activeFg = variant === 'danger' ? '#b91c1c' : variant === 'success' ? '#15803d' : 'var(--ck-ink)';
-  return (
-    <button aria-label={title} title={title} onClick={onClick}
-      style={{
-        background: active ? activeBg : 'none', border: 'none', cursor: 'pointer',
-        color: active ? activeFg : 'var(--ck-muted)',
-        padding: 6, borderRadius: 6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      }}
-      onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = 'var(--ck-surface-alt)'; e.currentTarget.style.color = activeFg; } }}
-      onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'var(--ck-muted)'; } }}>
-      {children}
-    </button>
-  );
-}
-
 function formatSalary(min: number | string | null, max: number | string | null, currency: string | null): string {
   const lo = min != null && min !== '' ? Number(min) : null;
   const hi = max != null && max !== '' ? Number(max) : null;
@@ -273,7 +239,9 @@ function AddApplicantModal({ listingId, statuses, sources, currencies, education
 
   const onSubmit = async (data: AddForm) => {
     try {
-      await api.post(`/job-listings/${listingId}/applicants`, { ...data, tags: selectedTags });
+      const { firstName, middleName, lastName, ...rest } = data;
+      const fullName = [firstName, middleName, lastName].map((s) => s?.trim()).filter(Boolean).join(' ');
+      await api.post(`/job-listings/${listingId}/applicants`, { ...rest, fullName, tags: selectedTags });
       onSaved();
     } catch { toast.error('Failed'); }
   };
@@ -288,10 +256,18 @@ function AddApplicantModal({ listingId, statuses, sources, currencies, education
       </>}>
       <form id="add-app" onSubmit={form.handleSubmit(onSubmit)}>
         <div className="ck-form-grid-2">
-          <F label="Full name *" error={form.formState.errors.fullName?.message}><input {...form.register('fullName')} style={inp} /></F>
+          <F label="First name *" error={form.formState.errors.firstName?.message}><input {...form.register('firstName')} style={inp} /></F>
+          <F label="Middle name"><input {...form.register('middleName')} style={inp} /></F>
+          <F label="Last name *" error={form.formState.errors.lastName?.message}><input {...form.register('lastName')} style={inp} /></F>
           <F label="Email *" error={form.formState.errors.email?.message}><input type="email" {...form.register('email')} style={inp} /></F>
           <F label="Phone"><input {...form.register('phone')} style={inp} /></F>
-          <F label="Image URL"><input {...form.register('imageUrl')} style={inp} /></F>
+          <F label="Photo">
+            <PhotoUpload
+              value={form.watch('imageUrl')}
+              name={`${form.watch('firstName') ?? ''} ${form.watch('lastName') ?? ''}`.trim()}
+              onChange={(v) => form.setValue('imageUrl', v)}
+            />
+          </F>
           <F label="Source">
             <select {...form.register('source')} style={inp}>
               <option value="">— None —</option>
@@ -346,6 +322,66 @@ function AddApplicantModal({ listingId, statuses, sources, currencies, education
         </div>
       </form>
     </Modal>
+  );
+}
+
+// ─── Photo upload (resized to a small data URL — no external storage) ───────
+function resizeImageToDataUrl(file: File, max: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('read failed'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('decode failed'));
+      img.onload = () => {
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return reject(new Error('no canvas context'));
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function PhotoUpload({ value, name, onChange }: { value?: string; name?: string; onChange: (v: string) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (inputRef.current) inputRef.current.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast.error('Please choose an image file'); return; }
+    setBusy(true);
+    try {
+      onChange(await resizeImageToDataUrl(file, 256));
+    } catch { toast.error('Could not read that image'); }
+    finally { setBusy(false); }
+  };
+  const btn: React.CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 12px',
+    border: '1px solid var(--ck-line)', borderRadius: 8, background: 'var(--ck-surface)',
+    fontSize: 12.5, fontWeight: 600, color: 'var(--ck-ink-soft)', cursor: 'pointer',
+  };
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+      <Avatar name={name || '?'} src={value || null} size={44} />
+      <input ref={inputRef} type="file" accept="image/*" onChange={onFile} style={{ display: 'none' }} />
+      <button type="button" style={{ ...btn, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={() => inputRef.current?.click()}>
+        <Upload size={14} /> {busy ? 'Processing…' : value ? 'Change photo' : 'Upload photo'}
+      </button>
+      {value && (
+        <button type="button" style={{ ...btn, color: 'var(--ck-danger-fg)' }} onClick={() => onChange('')}>
+          <X size={14} /> Remove
+        </button>
+      )}
+    </div>
   );
 }
 

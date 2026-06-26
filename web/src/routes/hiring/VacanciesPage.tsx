@@ -21,6 +21,7 @@ import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
+import { IconAction } from '../../components/ui/IconAction';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Vacancy = {
@@ -222,13 +223,9 @@ function VacancyTable({ rows, loading, onCreate, onProspects }: {
                 )}
               </td>
               <td style={{ padding: '12px' }}>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <IconBtn title="Create Job Listing" onClick={() => onCreate(v)}>
-                    <Briefcase size={17} />
-                  </IconBtn>
-                  <IconBtn title="Prospects" onClick={() => onProspects(v)}>
-                    <Users size={17} />
-                  </IconBtn>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <IconAction icon={Briefcase} label="Vacancy" hint="Create Job Listing" onClick={() => onCreate(v)} />
+                  <IconAction icon={Users} label="Prospects" hint="View matching prospects" onClick={() => onProspects(v)} />
                 </div>
               </td>
             </tr>
@@ -236,20 +233,6 @@ function VacancyTable({ rows, loading, onCreate, onProspects }: {
         </tbody>
       </table>
     </div>
-  );
-}
-
-function IconBtn({ title, onClick, children }: { title: string; onClick: () => void; children: ReactNode }) {
-  return (
-    <button aria-label={title} title={title} onClick={onClick}
-      style={{
-        background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)',
-        padding: 6, borderRadius: 6, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--ck-surface-alt)'; e.currentTarget.style.color = 'var(--ck-ink)'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'var(--ck-muted)'; }}>
-      {children}
-    </button>
   );
 }
 

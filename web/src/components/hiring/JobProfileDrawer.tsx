@@ -151,17 +151,17 @@ export function JobProfileDrawer({ profileId, onClose, onEdit }: Props) {
                 {compactList([
                   formData?.shortDescRole && `Role: ${formData.shortDescRole}`,
                   formData?.shortDescTeam && `Team: ${formData.shortDescTeam}`,
-                  formData?.shortDescFocus && `Key focus: ${formData.shortDescFocus}`,
+                  joinNames(formData?.shortDescFocus) && `Key focus: ${joinNames(formData?.shortDescFocus)}`,
                 ]) || '—'}
               </SectionText>
               <SectionText label="Responsibilities">
-                {formData?.detailedResponsibilities || profile.description || '—'}
+                {joinNames(formData?.detailedResponsibilities) || profile.description || '—'}
               </SectionText>
               <SectionText label="Tools">
-                {formData?.detailedTools || '—'}
+                {joinNames(formData?.detailedTools) || '—'}
               </SectionText>
               <SectionText label="Collaboration">
-                {formData?.detailedCollaboration || '—'}
+                {joinNames(formData?.detailedCollaboration) || '—'}
               </SectionText>
               <SectionText label="Job purpose">
                 {compactList([
@@ -277,6 +277,14 @@ export function JobProfileDrawer({ profileId, onClose, onEdit }: Props) {
       )}
     </Drawer>
   );
+}
+
+// Render a value that may be a legacy comma-separated string or a Skill Master
+// chip array as a single display string (empty → '' so the '—' fallback applies).
+function joinNames(v: unknown): string {
+  if (Array.isArray(v)) return v.filter((x) => typeof x === 'string' && x.trim()).join(', ');
+  if (typeof v === 'string') return v;
+  return '';
 }
 
 function normalizeFormData(profile: JobProfileDetail | null): Partial<StepData> | undefined {

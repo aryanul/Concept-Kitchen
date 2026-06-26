@@ -10,7 +10,7 @@
     "seed:ref": "tsx scripts/seed-reference.ts",
     "seed:employees": "tsx scripts/seed-employees.ts",
     "seed:transactional": "tsx scripts/seed-transactional.ts",
-    "seed:all": "npm run seed:ref && npm run seed:employees && npm run seed:transactional",
+    "seed:all": "npm run seed:ref && npm run seed:lookups && npm run seed:employees && npm run seed:transactional",
     "seed:hiring": "tsx scripts/seed-hiring.ts",
     "seed:prospects": "tsx scripts/seed-prospects.ts",
     "seed:hiring-masters": "tsx scripts/seed-hiring-masters.ts",

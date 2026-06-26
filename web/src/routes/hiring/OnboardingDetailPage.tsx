@@ -7,6 +7,7 @@ import { Avatar } from '../../components/ui/Avatar';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { Modal } from '../../components/ui/Modal';
+import { IconAction } from '../../components/ui/IconAction';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 type Address = {
@@ -791,9 +792,7 @@ function EmergencyContactsSection({ applicantId, items, onRefresh }: {
                 <input value={r.phone ?? ''} onChange={(e) => upd(i, { phone: e.target.value })} placeholder="Phone" style={inp} />
               </div>
               <input value={r.address ?? ''} onChange={(e) => upd(i, { address: e.target.value })} placeholder="Address" style={inp} />
-              <button onClick={() => del(i)} aria-label="Delete" style={{ background: 'none', border: '1px solid var(--ck-line)', borderRadius: 6, padding: '6px 8px', cursor: 'pointer', color: 'var(--ck-ink-soft)' }}>
-                <Trash2 size={14} />
-              </button>
+              <IconAction icon={Trash2} label="Delete" hint="Delete this row" tone="danger" onClick={() => del(i)} />
             </div>
           ))}
         </div>
@@ -841,9 +840,7 @@ function DependentsSection({ applicantId, items, onRefresh }: {
               </div>
               <input value={r.email ?? ''} onChange={(e) => upd(i, { email: e.target.value })} placeholder="email@example.com" style={inp} />
               <input type="date" value={r.dob ?? ''} onChange={(e) => upd(i, { dob: e.target.value })} style={inp} />
-              <button onClick={() => del(i)} aria-label="Delete" style={{ background: 'none', border: '1px solid var(--ck-line)', borderRadius: 6, padding: '6px 8px', cursor: 'pointer', color: 'var(--ck-ink-soft)' }}>
-                <Trash2 size={14} />
-              </button>
+              <IconAction icon={Trash2} label="Delete" hint="Delete this row" tone="danger" onClick={() => del(i)} />
             </div>
           ))}
         </div>
@@ -1151,7 +1148,7 @@ function AssetsSection({ applicantId, items, onRefresh }: { applicantId: string;
                 <td style={td}><strong>{a.asset_name}</strong></td>
                 <td style={td}>{a.category_name ?? '—'}</td>
                 <td style={td}>{a.serial_no ?? '—'}</td>
-                <td style={td}><button onClick={() => remove(a.id)} style={iconBtn}><Trash2 size={14} /></button></td>
+                <td style={td}><IconAction icon={Trash2} label="Remove" hint="Remove asset" tone="danger" onClick={() => remove(a.id)} /></td>
               </tr>
             ))}
           </tbody>
@@ -1542,7 +1539,6 @@ const tileEmoji: CSSProperties = { width: 48, height: 48, borderRadius: 8, backg
 const tileDel: CSSProperties = { position: 'absolute', top: 6, right: 6, background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)', padding: 2 };
 const th: CSSProperties = { padding: '10px 12px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em' };
 const td: CSSProperties = { padding: '10px 12px' };
-const iconBtn: CSSProperties = { background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--ck-muted)' };
 
 function erpPill(status: string): CSSProperties {
   const map: Record<string, [string, string]> = {
