@@ -48,6 +48,7 @@ import {
   OnboardingDocMasterPage,
   OnboardingItemMasterPage,
 } from './routes/masters/MasterPages';
+import { InductionTemplateMasterPage, OnboardingTemplateMasterPage } from './routes/masters/TemplateMasterPages';
 import { StubPage } from './routes/StubPage';
 import { WipePage } from './routes/dev/WipePage';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -69,6 +70,8 @@ export default function App() {
             <Route path="/masters/salary-grades" element={<SalaryGradeMasterPage />} />
             <Route path="/masters/skills" element={<SkillsMasterPage />} />
             <Route path="/masters/training-modules" element={<TrainingModuleMasterPage />} />
+            <Route path="/masters/induction-templates" element={<InductionTemplateMasterPage />} />
+            <Route path="/masters/onboarding-templates" element={<OnboardingTemplateMasterPage />} />
             <Route path="/masters/companies" element={<CompanyMasterPage />} />
             <Route path="/masters/interview-templates" element={<InterviewTemplateMasterPage />} />
             <Route path="/masters/screening-templates" element={<ScreeningTemplateMasterPage />} />

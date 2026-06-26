@@ -14,6 +14,7 @@ import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
+import { MediaUpload } from '../../components/ui/MediaUpload';
 import { IconAction } from '../../components/ui/IconAction';
 import { StatusPill } from '../../components/ui/StatusPill';
 
@@ -348,8 +349,8 @@ export function CompensationDetailPage() {
         </Section>
 
         <Section title="Attachments & Notes">
-          <Field label="Attachment URL">
-            <input value={form.attachment_url ?? ''} onChange={(e) => set('attachment_url', e.target.value || null)} placeholder="https://…/offer_letter.pdf" style={inp} disabled={!editable} />
+          <Field label="Attachment">
+            <MediaUpload mode="file" readOnly={!editable} value={form.attachment_url ?? ''} onChange={(v) => set('attachment_url', v || null)} />
           </Field>
           <Field label="Reason for Change">
             <input value={form.reason_for_change ?? ''} onChange={(e) => set('reason_for_change', e.target.value || null)} placeholder="Joining Offer / Annual Increment / …" style={inp} disabled={!editable} />

@@ -277,6 +277,33 @@ app.get('/api/v1/dashboard/summary', authRequired, async (_req, res, next) => {
   }
 });
 
+app.get('/api/v1/dashboard/activity', authRequired, async (_req, res, next) => {
+  try {
+    const rows = await query<{
+      id: string;
+      action: string;
+      resource: string;
+      resource_id: string;
+      at: string;
+      actor_name: string | null;
+      actor_email: string | null;
+    }>(
+      `SELECT al.id, al.action, al.resource, al.resource_id, al.at,
+              CONCAT(e.first_name, ' ', e.last_name) AS actor_name,
+              u.email AS actor_email
+       FROM audit_logs al
+       LEFT JOIN users u ON u.id = al.actor_id
+       LEFT JOIN employees e ON e.id = u.employee_id
+       WHERE al.at >= NOW() - INTERVAL 2 MINUTE
+       ORDER BY al.at DESC
+       LIMIT 50`
+    );
+    res.json({ data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- Employees ---
 
 type EmployeeListRow = {
@@ -1613,6 +1640,9 @@ async function ensureOnboardingRow(applicantId: string): Promise<string> {
     'INSERT INTO applicant_onboarding (id, applicant_id, status) VALUES (?, ?, ?)',
     [id, applicantId, 'pending']
   );
+  // Seed induction/onboarding/training items from the linked Job Profile so any
+  // path that first creates the onboarding row gets the JP-defined content.
+  await seedOnboardingFromJobProfile(applicantId, id);
   return id;
 }
 
@@ -2224,8 +2254,8 @@ app.post('/api/v1/applicants/:id/onboarding/close', authRequired, async (req, re
               a.full_name, a.email AS applicant_email, a.phone AS applicant_phone,
               a.image_url AS applicant_image_url,
               o.ctc AS offer_ctc, o.joining_date AS offer_joining, o.designation AS offer_designation,
-              jp.designation AS jp_designation,
-              jp.id AS job_profile_id,
+              COALESCE(jljp.designation, vjp.designation) AS jp_designation,
+              COALESCE(jljp.id, vjp.id) AS job_profile_id,
               ao.gender, ao.marital_status, ao.nationality, ao.religion,
               ao.languages_known, ao.caste_category,
               ao.alternate_phone, ao.alternate_phone_country_code,
@@ -2237,8 +2267,10 @@ app.post('/api/v1/applicants/:id/onboarding/close', authRequired, async (req, re
        JOIN applicants a ON a.id = ao.applicant_id
        LEFT JOIN designations d ON d.id = ao.designation_id
        LEFT JOIN applicant_offers o ON o.applicant_id = ao.applicant_id
+       LEFT JOIN vacancies v ON v.id = a.vacancy_id
+       LEFT JOIN job_profiles vjp ON vjp.id = v.job_profile_id
        LEFT JOIN job_listings jl ON jl.id = a.job_listing_id
-       LEFT JOIN job_profiles jp ON jp.id = jl.job_profile_id
+       LEFT JOIN job_profiles jljp ON jljp.id = jl.job_profile_id
        LEFT JOIN branches b ON b.id = ao.branch_id
        LEFT JOIN phone_number_pool pn ON pn.number = ao.phone_assigned
        WHERE ao.id = ?`,
@@ -2897,6 +2929,73 @@ app.post('/api/v1/applicants/:id/offer/decline', authRequired, async (req, res, 
   } catch (err) { next(err); }
 });
 
+// Seed an applicant's onboarding children from the Job Profile it was hired
+// against: the Induction template (presentations + docs), the Onboarding
+// template (programs/tours/activities) and the Training modules. Called once,
+// when the applicant_onboarding shell is first created.
+async function seedOnboardingFromJobProfile(applicantId: string, aoId: string): Promise<void> {
+  // Idempotent: if this onboarding already has any seeded children, do nothing.
+  const seeded = await query<{ n: number | string }>(
+    `SELECT
+        (SELECT COUNT(*) FROM applicant_presentations    WHERE ao_id = ?) +
+        (SELECT COUNT(*) FROM applicant_documents         WHERE ao_id = ?) +
+        (SELECT COUNT(*) FROM applicant_onboarding_items  WHERE ao_id = ?) +
+        (SELECT COUNT(*) FROM applicant_trainings          WHERE ao_id = ?) AS n`,
+    [aoId, aoId, aoId, aoId]
+  );
+  if (Number(seeded[0]?.n ?? 0) > 0) return;
+
+  const jpRows = await query<{ form_data: unknown }>(
+    `SELECT jp.form_data
+     FROM applicants a
+     JOIN job_listings jl ON jl.id = a.job_listing_id
+     JOIN job_profiles jp ON jp.id = jl.job_profile_id
+     WHERE a.id = ?`,
+    [applicantId]
+  );
+  const raw = jpRows[0]?.form_data;
+  if (raw == null) return;
+  let fd: Record<string, unknown>;
+  try { fd = typeof raw === 'string' ? JSON.parse(raw) : (raw as Record<string, unknown>); }
+  catch { return; }
+
+  const inductionTemplateId  = typeof fd.inductionTemplateId === 'string' ? fd.inductionTemplateId : '';
+  const onboardingTemplateId = typeof fd.onboardingTemplateId === 'string' ? fd.onboardingTemplateId : '';
+  const trainingModules = Array.isArray(fd.trainingModules) ? fd.trainingModules : [];
+
+  if (inductionTemplateId) {
+    const items = await query<{ ref_kind: string; ref_id: string }>(
+      'SELECT ref_kind, ref_id FROM induction_template_items WHERE template_id = ? ORDER BY sort_order',
+      [inductionTemplateId]
+    );
+    for (const it of items) {
+      if (it.ref_kind === 'presentation') {
+        await query("INSERT INTO applicant_presentations (id, ao_id, presentation_id, status) VALUES (?, ?, ?, 'pending')", [ulid(), aoId, it.ref_id]);
+      } else if (it.ref_kind === 'doc') {
+        await query("INSERT INTO applicant_documents (id, ao_id, doc_id, status) VALUES (?, ?, ?, 'pending')", [ulid(), aoId, it.ref_id]);
+      }
+    }
+  }
+
+  if (onboardingTemplateId) {
+    const items = await query<{ item_id: string }>(
+      'SELECT item_id FROM onboarding_template_items WHERE template_id = ? ORDER BY sort_order',
+      [onboardingTemplateId]
+    );
+    for (const it of items) {
+      await query("INSERT INTO applicant_onboarding_items (id, ao_id, item_id, status) VALUES (?, ?, ?, 'pending')", [ulid(), aoId, it.item_id]);
+    }
+  }
+
+  for (const tm of trainingModules) {
+    const tmId = tm && typeof tm === 'object' && typeof (tm as Record<string, unknown>).id === 'string'
+      ? (tm as Record<string, unknown>).id as string : '';
+    if (tmId) {
+      await query("INSERT INTO applicant_trainings (id, ao_id, training_module_id, status) VALUES (?, ?, ?, 'pending')", [ulid(), aoId, tmId]);
+    }
+  }
+}
+
 // ── Onboard (handoff from Hire tab into existing applicant_onboarding flow) ──
 app.post('/api/v1/applicants/:id/onboard', authRequired, async (req, res, next) => {
   try {
@@ -2906,9 +3005,9 @@ app.post('/api/v1/applicants/:id/onboard', authRequired, async (req, res, next) 
     // that can't be resolved is left null and HR fills it in the detail page.
     const ctx = await query<{
       branch_id: string | null; location_id: string | null; department_id: string | null;
-      designation_name: string | null; email: string; phone: string | null;
+      division_name: string | null; designation_name: string | null; email: string; phone: string | null;
     }>(
-      `SELECT jl.branch_id, jl.location_id, jp.department_id,
+      `SELECT jl.branch_id, jl.location_id, jp.department_id, jp.division AS division_name,
               COALESCE(o.designation, jp.designation) AS designation_name,
               a.email, a.phone
        FROM applicants a
@@ -2924,17 +3023,25 @@ app.post('/api/v1/applicants/:id/onboard', authRequired, async (req, res, next) 
       const d = await query<{ id: string }>('SELECT id FROM designations WHERE name = ? LIMIT 1', [c.designation_name]);
       designationId = d[0]?.id ?? null;
     }
+    let divisionId: string | null = null;
+    if (c?.division_name) {
+      const dv = await query<{ id: string }>('SELECT id FROM divisions WHERE name = ? LIMIT 1', [c.division_name]);
+      divisionId = dv[0]?.id ?? null;
+    }
 
     if (!aoId) {
       aoId = ulid();
       await query(
         `INSERT INTO applicant_onboarding
-           (id, applicant_id, status, branch_id, location_id, department_id, designation_id, phone_assigned)
-         VALUES (?, ?, 'onboarding', ?, ?, ?, ?, ?)`,
+           (id, applicant_id, status, branch_id, location_id, division_id, department_id, designation_id, phone_assigned)
+         VALUES (?, ?, 'onboarding', ?, ?, ?, ?, ?, ?)`,
         [aoId, req.params.id,
-         c?.branch_id ?? null, c?.location_id ?? null, c?.department_id ?? null,
+         c?.branch_id ?? null, c?.location_id ?? null, divisionId, c?.department_id ?? null,
          designationId, c?.phone ?? null]
       );
+      // Seed presentations / documents / programs-tours-activities / trainings
+      // from the templates & training modules defined on the linked Job Profile.
+      await seedOnboardingFromJobProfile(req.params.id, aoId);
     } else {
       // Only pre-fill columns that are still NULL on the existing row.
       await query(
@@ -2942,11 +3049,12 @@ app.post('/api/v1/applicants/:id/onboard', authRequired, async (req, res, next) 
             SET status = 'onboarding',
                 branch_id      = COALESCE(branch_id, ?),
                 location_id    = COALESCE(location_id, ?),
+                division_id    = COALESCE(division_id, ?),
                 department_id  = COALESCE(department_id, ?),
                 designation_id = COALESCE(designation_id, ?),
                 phone_assigned = COALESCE(phone_assigned, ?)
           WHERE id = ?`,
-        [c?.branch_id ?? null, c?.location_id ?? null, c?.department_id ?? null,
+        [c?.branch_id ?? null, c?.location_id ?? null, divisionId, c?.department_id ?? null,
          designationId, c?.phone ?? null, aoId]
       );
     }

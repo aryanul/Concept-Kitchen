@@ -459,8 +459,15 @@ function HeaderInfoSection({ applicantId, parent, onRefresh }: { applicantId: st
     } catch { toast.error('Save failed'); }
   };
 
+  // Org placement (branch / location / division / department / designation) is
+  // fixed by the Job Profile the candidate was hired against — shown read-only.
+  const lockedInp: CSSProperties = { ...inp, background: 'var(--ck-bg)', color: 'var(--ck-ink-soft)', cursor: 'not-allowed' };
+
   return (
     <Section title="Header / Other Info" right={<Button size="sm" variant="primary" onClick={save}>Save</Button>}>
+      <p style={{ fontSize: 12, color: 'var(--ck-muted)', margin: '0 0 14px' }}>
+        Branch, Location, Division, Department and Designation are set from the Job Profile and can't be changed here.
+      </p>
       <div style={fourColGrid}>
         <Field label="DOB"><input type="date" value={dob ?? ''} onChange={(e) => setDob(e.target.value)} style={inp} /></Field>
         <Field label="Blood Group">
@@ -470,31 +477,31 @@ function HeaderInfoSection({ applicantId, parent, onRefresh }: { applicantId: st
           </select>
         </Field>
         <Field label="Branch">
-          <select value={branchId ?? ''} onChange={(e) => setBranchId(e.target.value)} style={inp}>
+          <select value={branchId ?? ''} disabled style={lockedInp}>
             <option value="">—</option>
             {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </Field>
         <Field label="Location">
-          <select value={locationId ?? ''} onChange={(e) => setLocationId(e.target.value)} style={inp}>
+          <select value={locationId ?? ''} disabled style={lockedInp}>
             <option value="">—</option>
             {locs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
           </select>
         </Field>
         <Field label="Division">
-          <select value={divisionId ?? ''} onChange={(e) => setDivisionId(e.target.value)} style={inp}>
+          <select value={divisionId ?? ''} disabled style={lockedInp}>
             <option value="">—</option>
             {divs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         </Field>
         <Field label="Department">
-          <select value={departmentId ?? ''} onChange={(e) => setDepartmentId(e.target.value)} style={inp}>
+          <select value={departmentId ?? ''} disabled style={lockedInp}>
             <option value="">—</option>
             {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         </Field>
         <Field label="Designation">
-          <select value={designationId ?? ''} onChange={(e) => setDesignationId(e.target.value)} style={inp}>
+          <select value={designationId ?? ''} disabled style={lockedInp}>
             <option value="">—</option>
             {desigs.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
@@ -1272,7 +1279,7 @@ function PresentationsSection({ applicantId, items, onRefresh }: { applicantId: 
     catch { toast.error('Failed'); }
   };
   return (
-    <Section title="Presentations" right={<Button size="sm" variant="primary" icon={Plus} onClick={() => setPickerOpen(true)}>Add Presentations</Button>}>
+    <Section title="Presentations" right={<span style={{ fontSize: 12, color: 'var(--ck-muted)' }}>Defined by Job Profile</span>}>
       {items.length === 0 && <Empty msg="No presentations added." />}
       <div style={tileGrid}>
         {items.map((p) => (
@@ -1324,7 +1331,7 @@ function DocsSection({ applicantId, items, onRefresh }: { applicantId: string; i
     catch { toast.error('Failed'); }
   };
   return (
-    <Section title="Forms & Documents" right={<Button size="sm" variant="primary" icon={Plus} onClick={() => setPickerOpen(true)}>Add Documents</Button>}>
+    <Section title="Forms & Documents" right={<span style={{ fontSize: 12, color: 'var(--ck-muted)' }}>Defined by Job Profile</span>}>
       {items.length === 0 && <Empty msg="No documents added." />}
       <div style={tileGrid}>
         {items.map((d) => (
@@ -1388,7 +1395,7 @@ function ItemKindSection({ title, kind, emoji, applicantId, items, onRefresh }: 
     catch { toast.error('Failed'); }
   };
   return (
-    <Section title={title} right={<Button size="sm" variant="primary" icon={Plus} onClick={() => setPickerOpen(true)}>Add</Button>}>
+    <Section title={title} right={<span style={{ fontSize: 12, color: 'var(--ck-muted)' }}>Defined by Job Profile</span>}>
       {items.length === 0 && <Empty msg={`No ${kind}s added.`} />}
       <div style={tileGrid}>
         {items.map((i) => (
@@ -1436,7 +1443,7 @@ function TrainingsTab({ applicantId, data, onRefresh }: { applicantId: string; d
     catch { toast.error('Failed'); }
   };
   return (
-    <Section title="Training Modules" right={<Button size="sm" variant="primary" icon={Plus} onClick={() => setPickerOpen(true)}>Add Training</Button>}>
+    <Section title="Training Modules" right={<span style={{ fontSize: 12, color: 'var(--ck-muted)' }}>Defined by Job Profile</span>}>
       {items.length === 0 && <Empty msg="No training modules assigned." />}
       <div style={tileGrid}>
         {items.map((t) => (

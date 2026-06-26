@@ -1586,4 +1586,178 @@ export function registerMasterRoutes(app: Application) {
       res.json({ data: { id: req.params.id } });
     } catch (err) { next(err); }
   });
+
+  // ── Induction templates (named bundle of presentations + documents) ────────
+  async function replaceInductionItems(templateId: string, presentationIds: unknown, docIds: unknown): Promise<void> {
+    await query('DELETE FROM induction_template_items WHERE template_id = ?', [templateId]);
+    let order = 0;
+    const ins = async (kind: string, ids: unknown) => {
+      if (!Array.isArray(ids)) return;
+      for (const ref of ids) {
+        if (typeof ref === 'string' && ref) {
+          await query(
+            'INSERT INTO induction_template_items (id, template_id, ref_kind, ref_id, sort_order) VALUES (?, ?, ?, ?, ?)',
+            [ulid(), templateId, kind, ref, order++]
+          );
+        }
+      }
+    };
+    await ins('presentation', presentationIds);
+    await ins('doc', docIds);
+  }
+
+  app.get('/api/v1/induction-templates', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query(
+        `SELECT t.*, (SELECT COUNT(*) FROM induction_template_items i WHERE i.template_id = t.id) AS item_count
+         FROM induction_templates t ORDER BY t.name`
+      );
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/v1/induction-templates/:id', authRequired, async (req, res, next) => {
+    try {
+      const rows = await query<Record<string, unknown>>('SELECT * FROM induction_templates WHERE id = ?', [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Template not found' } });
+      const presentations = await query(
+        `SELECT p.id, p.title, p.category, p.sub_category
+         FROM induction_template_items i JOIN presentations p ON p.id = i.ref_id
+         WHERE i.template_id = ? AND i.ref_kind = 'presentation' ORDER BY i.sort_order, p.title`,
+        [req.params.id]
+      );
+      const docs = await query(
+        `SELECT d.id, d.title, d.category, d.sub_category, d.requires_signature
+         FROM induction_template_items i JOIN onboarding_docs d ON d.id = i.ref_id
+         WHERE i.template_id = ? AND i.ref_kind = 'doc' ORDER BY i.sort_order, d.title`,
+        [req.params.id]
+      );
+      res.json({ data: { ...rows[0], presentations, docs } });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/induction-templates', authRequired, async (req, res, next) => {
+    try {
+      const { code, name, description, isActive, presentationIds, docIds } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
+      const id = ulid();
+      const tplCode = typeof code === 'string' && code.trim() ? code.trim() : await nextCode('induction_templates', 'code', 'IND');
+      await query('INSERT INTO induction_templates (id, code, name, description, is_active) VALUES (?, ?, ?, ?, ?)',
+        [id, tplCode, name, description || null, parseBool(isActive ?? true)]);
+      await replaceInductionItems(id, presentationIds, docIds);
+      res.status(201).json({ data: { id, code: tplCode } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/induction-templates/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'code', column: 'code' },
+        { key: 'name', column: 'name' },
+        { key: 'description', column: 'description' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      if (sets.length) {
+        values.push(req.params.id);
+        await query(`UPDATE induction_templates SET ${sets.join(', ')} WHERE id = ?`, values);
+      }
+      if (req.body?.presentationIds !== undefined || req.body?.docIds !== undefined) {
+        await replaceInductionItems(req.params.id, req.body?.presentationIds ?? [], req.body?.docIds ?? []);
+      }
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/induction-templates/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM induction_templates WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  // ── Onboarding templates (named bundle of programs / tours / activities) ───
+  async function replaceOnboardingTemplateItems(templateId: string, itemIds: unknown): Promise<void> {
+    await query('DELETE FROM onboarding_template_items WHERE template_id = ?', [templateId]);
+    if (!Array.isArray(itemIds)) return;
+    let order = 0;
+    for (const ref of itemIds) {
+      if (typeof ref === 'string' && ref) {
+        await query(
+          'INSERT INTO onboarding_template_items (id, template_id, item_id, sort_order) VALUES (?, ?, ?, ?)',
+          [ulid(), templateId, ref, order++]
+        );
+      }
+    }
+  }
+
+  app.get('/api/v1/onboarding-templates', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query(
+        `SELECT t.*, (SELECT COUNT(*) FROM onboarding_template_items i WHERE i.template_id = t.id) AS item_count
+         FROM onboarding_templates t ORDER BY t.name`
+      );
+      res.json({ data: rows });
+    } catch (err) { next(err); }
+  });
+
+  app.get('/api/v1/onboarding-templates/:id', authRequired, async (req, res, next) => {
+    try {
+      const rows = await query<Record<string, unknown>>('SELECT * FROM onboarding_templates WHERE id = ?', [req.params.id]);
+      if (!rows[0]) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Template not found' } });
+      const items = await query(
+        `SELECT it.id, it.kind, it.title, it.category, it.sub_category
+         FROM onboarding_template_items oi JOIN onboarding_items it ON it.id = oi.item_id
+         WHERE oi.template_id = ? ORDER BY oi.sort_order, it.kind, it.title`,
+        [req.params.id]
+      );
+      res.json({ data: { ...rows[0], items } });
+    } catch (err) { next(err); }
+  });
+
+  app.post('/api/v1/onboarding-templates', authRequired, async (req, res, next) => {
+    try {
+      const { code, name, description, isActive, itemIds } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
+      const id = ulid();
+      const tplCode = typeof code === 'string' && code.trim() ? code.trim() : await nextCode('onboarding_templates', 'code', 'OBT');
+      await query('INSERT INTO onboarding_templates (id, code, name, description, is_active) VALUES (?, ?, ?, ?, ?)',
+        [id, tplCode, name, description || null, parseBool(isActive ?? true)]);
+      await replaceOnboardingTemplateItems(id, itemIds);
+      res.status(201).json({ data: { id, code: tplCode } });
+    } catch (err) { next(err); }
+  });
+
+  app.patch('/api/v1/onboarding-templates/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'code', column: 'code' },
+        { key: 'name', column: 'name' },
+        { key: 'description', column: 'description' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (req.body?.isActive !== undefined) {
+        const idx = sets.findIndex((s) => s.startsWith('is_active'));
+        if (idx >= 0) values[idx] = parseBool(req.body.isActive);
+      }
+      if (sets.length) {
+        values.push(req.params.id);
+        await query(`UPDATE onboarding_templates SET ${sets.join(', ')} WHERE id = ?`, values);
+      }
+      if (req.body?.itemIds !== undefined) {
+        await replaceOnboardingTemplateItems(req.params.id, req.body.itemIds);
+      }
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/api/v1/onboarding-templates/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM onboarding_templates WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) { next(err); }
+  });
 }

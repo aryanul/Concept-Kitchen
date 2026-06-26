@@ -49,6 +49,8 @@ export function MastersHomePage() {
     { title: 'Salary Grades', desc: 'Grade ladder and pay bands', to: '/masters/salary-grades', icon: Wallet },
     { title: 'Skills', desc: 'Skill master for designations', to: '/masters/skills', icon: Sparkles },
     { title: 'Training Modules', desc: 'Course modules for job profiles', to: '/masters/training-modules', icon: BookOpen },
+    { title: 'Induction Templates', desc: 'Presentations + documents bundles for job profiles', to: '/masters/induction-templates', icon: PresentationIcon },
+    { title: 'Onboarding Templates', desc: 'Programs / tours / activities bundles for job profiles', to: '/masters/onboarding-templates', icon: MapPin },
     { title: 'Companies', desc: 'Hiring company master', to: '/masters/companies', icon: Building2 },
     { title: 'Users', desc: 'User console and role access', to: '/masters/users', icon: Shield },
     { title: 'Interview Templates', desc: 'Interview scorecards', to: '/masters/interview-templates', icon: ClipboardList },
@@ -267,7 +269,7 @@ export function TrainingModuleMasterPage() {
         { name: 'description',   label: 'Description',          type: 'textarea', span: true },
         { name: 'chapterCount',  label: 'Chapter Count',        type: 'number', placeholder: '5' },
         { name: 'durationHours', label: 'Duration (hours)',     type: 'number', placeholder: '8' },
-        { name: 'coverImageUrl', label: 'Cover Image URL',      type: 'text', placeholder: 'https://…', span: true },
+        { name: 'coverImageUrl', label: 'Cover Image',           type: 'image', span: true },
         { name: 'isActive',      label: 'Active',               type: 'checkbox', span: true },
       ]}
       rowToValues={(row) => row ? {
@@ -373,7 +375,7 @@ export function InterviewTemplateMasterPage() {
         { name: 'fieldsJson', label: 'Scorecard fields (JSON)', type: 'textarea',
           help: 'Array of {name,label,type,required?,weight?,options?}. type ∈ text|number|select|checkbox.',
           span: true },
-        { name: 'imageUrl', label: 'Image URL', type: 'text', placeholder: 'https://...', span: true },
+        { name: 'imageUrl', label: 'Image', type: 'image', span: true },
         { name: 'isDefault', label: 'Default', type: 'checkbox', span: true },
       ]}
       rowToValues={(row) => row ? {
@@ -509,7 +511,7 @@ export function GiveawayTemplateMasterPage() {
         { name: 'name', label: 'Name', type: 'text', placeholder: 'Welcome kit', required: true },
         { name: 'category', label: 'Category', type: 'text', placeholder: 'Apparel / Stationery / Hamper' },
         { name: 'occasion', label: 'Occasion', type: 'text', placeholder: 'Onboarding / Birthday / Festival' },
-        { name: 'thumbnailUrl', label: 'Thumbnail URL', type: 'text', placeholder: 'https://…', span: true },
+        { name: 'thumbnailUrl', label: 'Thumbnail', type: 'image', span: true },
         { name: 'description', label: 'Description', type: 'textarea', span: true },
         { name: 'isDefault', label: 'Default', type: 'checkbox' },
         { name: 'isActive', label: 'Active', type: 'checkbox' },
@@ -662,7 +664,7 @@ export function AssetMasterPage() {
         ]},
         { name: 'purchaseDate', label: 'Purchase Date', type: 'text', placeholder: 'YYYY-MM-DD' },
         { name: 'purchaseCost', label: 'Purchase Cost', type: 'number' },
-        { name: 'thumbnailUrl', label: 'Thumbnail URL', type: 'text', span: true },
+        { name: 'thumbnailUrl', label: 'Thumbnail', type: 'image', span: true },
       ]}
       rowToValues={(row) => row ? {
         assetTag: row.asset_tag, name: row.name, categoryId: row.category_id ?? '',
@@ -702,8 +704,8 @@ export function PresentationMasterPage() {
         { name: 'category', label: 'Category', type: 'text', placeholder: 'Company / Policy / Product' },
         { name: 'subCategory', label: 'Sub Category', type: 'text' },
         { name: 'description', label: 'Description', type: 'textarea', span: true },
-        { name: 'fileUrl', label: 'File URL', type: 'text', span: true },
-        { name: 'thumbnailUrl', label: 'Thumbnail URL', type: 'text', span: true },
+        { name: 'fileUrl', label: 'File', type: 'file', span: true },
+        { name: 'thumbnailUrl', label: 'Thumbnail', type: 'image', span: true },
         { name: 'durationMinutes', label: 'Duration (min)', type: 'number' },
         { name: 'isActive', label: 'Active', type: 'checkbox' },
       ]}
@@ -742,8 +744,8 @@ export function OnboardingDocMasterPage() {
         { name: 'category', label: 'Category', type: 'text', placeholder: 'Policy / Form / NDA' },
         { name: 'subCategory', label: 'Sub Category', type: 'text' },
         { name: 'description', label: 'Description', type: 'textarea', span: true },
-        { name: 'fileUrl', label: 'File URL', type: 'text', span: true },
-        { name: 'thumbnailUrl', label: 'Thumbnail URL', type: 'text', span: true },
+        { name: 'fileUrl', label: 'File', type: 'file', span: true },
+        { name: 'thumbnailUrl', label: 'Thumbnail', type: 'image', span: true },
         { name: 'requiresSignature', label: 'Requires Signature', type: 'checkbox' },
         { name: 'isActive', label: 'Active', type: 'checkbox' },
       ]}
@@ -807,7 +809,7 @@ function OnboardingItemList({ kind }: { kind: 'program' | 'tour' | 'activity' })
         { name: 'category', label: 'Category', type: 'text' },
         { name: 'subCategory', label: 'Sub Category', type: 'text' },
         { name: 'description', label: 'Description', type: 'textarea', span: true },
-        { name: 'thumbnailUrl', label: 'Thumbnail URL', type: 'text', span: true },
+        { name: 'thumbnailUrl', label: 'Thumbnail', type: 'image', span: true },
         { name: 'durationMinutes', label: 'Duration (min)', type: 'number' },
         { name: 'isActive', label: 'Active', type: 'checkbox' },
       ]}

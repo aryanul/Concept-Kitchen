@@ -3,6 +3,8 @@ import {
   FileText, ListChecks, Target, LayoutGrid, BookOpen,
   TrendingUp, CheckSquare, Users, UserSearch, ClipboardList,
   Plus, X, ChevronLeft, Eye, Pencil, Lock,
+  Presentation as PresentationIcon, MapPin,
+  type LucideIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '../../lib/api';
@@ -46,7 +48,10 @@ export interface StepData {
   deptAlignments: { label: string; category: string; selections: string[] }[];
   // Step 6 — references to training_modules master rows
   trainingModules: { id: string; name: string; description: string; chapters: number }[];
-  // Step 7 — Career Path: hierarchy references (IDs into designations master)
+  // Step 7 / 8 — Induction & Onboarding template ids (auto-populate onboarding)
+  inductionTemplateId: string;
+  onboardingTemplateId: string;
+  // Step 9 — Career Path: hierarchy references (IDs into designations master)
   careerParentDesignationId: string;       // Where this role sits below
   careerNextPromotionDesignationId: string; // Standard promotion path
   careerLateralDesignationIds: string[];   // Possible lateral moves
@@ -78,6 +83,8 @@ const DEFAULT_STEP_DATA: StepData = {
     { label: 'Cross-Department Interaction',  category: 'Cross-Department Interaction',  selections: [] },
   ],
   trainingModules: [],
+  inductionTemplateId: '',
+  onboardingTemplateId: '',
   careerParentDesignationId: '',
   careerNextPromotionDesignationId: '',
   careerLateralDesignationIds: [],
@@ -113,11 +120,13 @@ const STEPS = [
   { num: 4,  label: 'Job Challenges & Performance', Icon: Target },
   { num: 5,  label: 'Department Alignments',       Icon: LayoutGrid },
   { num: 6,  label: 'Training',                    Icon: BookOpen },
-  { num: 7,  label: 'Career Path',                 Icon: TrendingUp },
-  { num: 8,  label: 'ATM (Auto Task Manager)',     Icon: CheckSquare },
-  { num: 9,  label: 'Employees & Alumni',          Icon: Users },
-  { num: 10, label: 'Prospets',                    Icon: UserSearch },
-  { num: 11, label: 'Interview Templates',         Icon: ClipboardList },
+  { num: 7,  label: 'Induction',                   Icon: PresentationIcon },
+  { num: 8,  label: 'Onboarding',                  Icon: MapPin },
+  { num: 9,  label: 'Career Path',                 Icon: TrendingUp },
+  { num: 10, label: 'ATM (Auto Task Manager)',     Icon: CheckSquare },
+  { num: 11, label: 'Employees & Alumni',          Icon: Users },
+  { num: 12, label: 'Prospets',                    Icon: UserSearch },
+  { num: 13, label: 'Interview Templates',         Icon: ClipboardList },
 ];
 
 const inp: React.CSSProperties = { width: '100%', height: 38, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' };
@@ -276,7 +285,7 @@ export function JobProfileForm({
           </button>
           <div style={{ display: 'flex', gap: 8 }}>
             {activeStep > 1 && <Button size="sm" onClick={() => setActiveStep((s) => s - 1)}>← Prev</Button>}
-            {activeStep < 11 && <Button size="sm" variant="primary" onClick={() => setActiveStep((s) => s + 1)}>Next →</Button>}
+            {activeStep < 13 && <Button size="sm" variant="primary" onClick={() => setActiveStep((s) => s + 1)}>Next →</Button>}
             <Button size="sm" variant="primary" disabled={saving} onClick={saveProfile}>{saving ? 'Saving…' : 'Save Profile'}</Button>
           </div>
         </div>
@@ -289,11 +298,13 @@ export function JobProfileForm({
           {activeStep === 4 && <Step4 data={data} upd={upd} />}
           {activeStep === 5 && <Step5 data={data} upd={upd} />}
           {activeStep === 6 && <Step6 data={data} upd={upd} />}
-          {activeStep === 7 && <Step7 data={data} upd={upd} allDesignations={allDesignations} />}
-          {activeStep === 8 && <Step8 data={data} upd={upd} />}
-          {activeStep === 9 && <Step9 editId={editId} />}
-          {activeStep === 10 && <Step10 data={data} upd={upd} />}
-          {activeStep === 11 && <Step11 data={data} upd={upd} />}
+          {activeStep === 7 && <StepInduction data={data} upd={upd} />}
+          {activeStep === 8 && <StepOnboarding data={data} upd={upd} />}
+          {activeStep === 9 && <Step7 data={data} upd={upd} allDesignations={allDesignations} />}
+          {activeStep === 10 && <Step8 data={data} upd={upd} />}
+          {activeStep === 11 && <Step9 editId={editId} />}
+          {activeStep === 12 && <Step10 data={data} upd={upd} />}
+          {activeStep === 13 && <Step11 data={data} upd={upd} />}
         </div>
       </div>
     </div>
@@ -709,6 +720,136 @@ function Step6({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => v
         onSave={(modules) => upd({ trainingModules: modules })}
       />
     </div>
+  );
+}
+
+// ─── Steps 7 & 8 — Induction / Onboarding template pickers ───────────────────
+type TplOpt = { id: string; name: string; description: string | null; item_count: number | string };
+
+function TemplatePickerModal({ open, onClose, templates, selectedId, onPick, masterHint, Icon }: {
+  open: boolean; onClose: () => void; templates: TplOpt[]; selectedId: string;
+  onPick: (id: string) => void; masterHint: string; Icon: LucideIcon;
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title="Pick from Master" subtitle="Choose one template" width={620}
+      footer={<Button onClick={onClose}>Close</Button>}>
+      {templates.length === 0 ? (
+        <div style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)', fontSize: 13 }}>
+          No templates yet — create them in {masterHint}.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {templates.map((t) => {
+            const on = t.id === selectedId;
+            return (
+              <button key={t.id} type="button" onClick={() => onPick(t.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: 12, textAlign: 'left', width: '100%',
+                  border: '1px solid ' + (on ? 'var(--ck-accent)' : 'var(--ck-line)'), borderRadius: 10,
+                  background: on ? 'var(--ck-surface-alt)' : 'var(--ck-surface)', cursor: 'pointer',
+                }}>
+                <div style={{ width: 40, height: 40, borderRadius: 8, background: 'var(--ck-line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ck-faint)', flexShrink: 0 }}>
+                  <Icon size={20} strokeWidth={1.5} />
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13.5 }}>{t.name}</div>
+                  <div style={{ fontSize: 12, color: 'var(--ck-muted)' }}>{t.description || `${Number(t.item_count) || 0} item${Number(t.item_count) === 1 ? '' : 's'}`}</div>
+                </div>
+                {on && <span style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--ck-accent)' }}>Selected</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function TemplateStep({ title, blurb, endpoint, masterHint, value, onChange, Icon }: {
+  title: string; blurb: string; endpoint: string; masterHint: string; value: string; onChange: (v: string) => void; Icon: LucideIcon;
+}) {
+  const [templates, setTemplates] = useState<TplOpt[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  useEffect(() => {
+    api.get<{ data: TplOpt[] }>(endpoint).then((r) => setTemplates(r.data.data ?? [])).catch(() => setTemplates([]));
+  }, [endpoint]);
+  const selected = templates.find((t) => t.id === value) ?? null;
+
+  return (
+    <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+        <SectionTitle>{title}</SectionTitle>
+        <Button size="sm" variant="primary" icon={Plus} onClick={() => setPickerOpen(true)}>Pick from Master</Button>
+      </div>
+      <p style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginTop: 0, marginBottom: 18 }}>{blurb}</p>
+      {!value ? (
+        <div style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)', border: '2px dashed var(--ck-line)', borderRadius: 10 }}>
+          No template selected. Click "Pick from Master" to choose one.
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 14 }}>
+          <div style={{ border: '1px solid var(--ck-line)', borderRadius: 10, overflow: 'hidden', position: 'relative' }}>
+            <div style={{ height: 120, background: 'var(--ck-line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ck-faint)' }}>
+              <Icon size={32} strokeWidth={1} />
+            </div>
+            <button type="button" aria-label="Remove" onClick={() => onChange('')}
+              style={{ position: 'absolute', top: 8, right: 8, width: 26, height: 26, borderRadius: 8, background: 'rgba(0,0,0,0.55)', color: '#fff', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <X size={13} />
+            </button>
+            <div style={{ padding: 14 }}>
+              <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 8 }}>{selected?.name ?? '—'}</div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 11, color: 'var(--ck-muted)', marginBottom: 6 }}>
+                <CheckSquare size={13} /> DESCRIPTION
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--ck-ink-soft)', marginBottom: 10, minHeight: 32 }}>
+                {selected?.description || '—'}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--ck-muted)' }}>
+                <span>ITEMS</span>
+                <span style={{ fontWeight: 700 }}>{String(Number(selected?.item_count) || 0).padStart(2, '0')}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      <TemplatePickerModal
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        templates={templates}
+        selectedId={value}
+        masterHint={masterHint}
+        Icon={Icon}
+        onPick={(id) => { onChange(id); setPickerOpen(false); }}
+      />
+    </div>
+  );
+}
+
+function StepInduction({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => void }) {
+  return (
+    <TemplateStep
+      title="Induction Plan"
+      blurb="Pick an induction template (presentations + forms/documents). It auto-fills the candidate's Induction tab when they're onboarded — no manual adding needed."
+      endpoint="/induction-templates"
+      masterHint="Masters → Induction Templates"
+      value={data.inductionTemplateId}
+      onChange={(v) => upd({ inductionTemplateId: v })}
+      Icon={PresentationIcon}
+    />
+  );
+}
+
+function StepOnboarding({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => void }) {
+  return (
+    <TemplateStep
+      title="Onboarding Plan"
+      blurb="Pick an onboarding template (programs / tours / activities). It auto-fills the candidate's Onboarding tab when they're onboarded — no manual adding needed."
+      endpoint="/onboarding-templates"
+      masterHint="Masters → Onboarding Templates"
+      value={data.onboardingTemplateId}
+      onChange={(v) => upd({ onboardingTemplateId: v })}
+      Icon={MapPin}
+    />
   );
 }
 

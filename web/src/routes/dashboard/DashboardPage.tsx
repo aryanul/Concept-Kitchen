@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Users, ClipboardCheck, CalendarClock, FileText, CalendarDays,
   Building2, Briefcase,
-  Download, Plus, ArrowUpRight,
+  Download, Plus, ArrowUpRight, Activity,
   type LucideIcon,
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
@@ -25,6 +25,16 @@ type Summary = {
 
 type SummaryResp = { data: Summary };
 
+type ActivityEntry = {
+  id: string;
+  action: string;
+  resource: string;
+  resource_id: string;
+  at: string;
+  actor_name: string | null;
+  actor_email: string | null;
+};
+
 type Stat = { label: string; value: string; delta: string; icon: LucideIcon; tint: number };
 
 export function DashboardPage() {
@@ -33,6 +43,15 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const [meStatus, setMeStatus] = useState<'idle' | 'ok' | 'fail'>('idle');
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [activity, setActivity] = useState<ActivityEntry[]>([]);
+  const [activityAge, setActivityAge] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const fetchActivity = useCallback(() => {
+    api.get<{ data: ActivityEntry[] }>('/dashboard/activity')
+      .then((r) => { setActivity(r.data.data ?? []); setActivityAge(0); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     api
@@ -43,7 +62,14 @@ export function DashboardPage() {
       .get<SummaryResp>('/dashboard/summary')
       .then((r) => setSummary(r.data.data))
       .catch(() => {});
-  }, []);
+    fetchActivity();
+    timerRef.current = setInterval(fetchActivity, 30_000);
+    const ageTimer = setInterval(() => setActivityAge((a) => a + 1), 1000);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      clearInterval(ageTimer);
+    };
+  }, [fetchActivity]);
 
   const onLogout = () => {
     clear();
@@ -169,71 +195,38 @@ export function DashboardPage() {
 
       <div className="ck-dash-split">
         <Card padding={0}>
-          <div
-            style={{
-              padding: '18px 22px',
-              borderBottom: '1px solid var(--ck-line)',
-            }}
-          >
-            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ck-ink)' }}>
-              Phase 1 — Module readiness
+          <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--ck-line)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ck-ink)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Activity size={15} strokeWidth={1.8} style={{ color: 'var(--ck-accent)' }} />
+                Activity Log
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginTop: 2 }}>
+                All portal actions in the last 2 minutes
+              </div>
             </div>
-            <div style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginTop: 2 }}>
-              Where each module currently sits in the build.
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span style={{ fontSize: 11.5, color: 'var(--ck-muted)' }}>
+                {activityAge < 5 ? 'Just refreshed' : `${activityAge}s ago`}
+              </span>
+              <button
+                onClick={fetchActivity}
+                style={{ fontSize: 12, padding: '4px 10px', borderRadius: 6, border: '1px solid var(--ck-line)', background: 'var(--ck-bg)', color: 'var(--ck-ink-soft)', cursor: 'pointer', fontFamily: 'inherit' }}
+              >
+                Refresh
+              </button>
             </div>
           </div>
-          <div style={{ padding: '8px 0' }}>
-            {[
-              { name: 'Employee Master',           status: 'live',     to: '/employees' },
-              { name: 'Holidays',                  status: 'live',     to: '/holidays' },
-              { name: 'Duty Shifts',               status: 'live',     to: '/shifts' },
-              { name: 'Salary Master',             status: 'live',     to: '/salary-master' },
-              { name: 'Attendance & Exceptions',   status: 'soon',     to: '/attendance' },
-              { name: 'Payroll Runs',              status: 'soon',     to: '/payroll' },
-              { name: 'Leaves & Approvals',        status: 'soon',     to: '/leaves' },
-              { name: 'Loans, Increments, Tours',  status: 'soon',     to: '/loans' },
-            ].map((m) => (
-              <div
-                key={m.name}
-                onClick={() => navigate(m.to)}
-                style={{
-                  padding: '12px 22px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  cursor: 'pointer',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--ck-surface-alt)')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = '')}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      background:
-                        m.status === 'live' ? 'oklch(0.55 0.16 145)' : 'var(--ck-faint)',
-                    }}
-                  />
-                  <span style={{ fontSize: 13.5, color: 'var(--ck-ink)', fontWeight: 500 }}>
-                    {m.name}
-                  </span>
-                </div>
-                <span
-                  style={{
-                    fontSize: 11.5,
-                    fontWeight: 600,
-                    padding: '3px 10px',
-                    borderRadius: 999,
-                    background: m.status === 'live' ? 'oklch(0.95 0.05 145)' : 'var(--ck-line-soft)',
-                    color: m.status === 'live' ? 'oklch(0.42 0.12 145)' : 'var(--ck-muted)',
-                  }}
-                >
-                  {m.status === 'live' ? 'Live' : 'Coming soon'}
-                </span>
+          <div style={{ overflowY: 'auto', maxHeight: 380 }}>
+            {activity.length === 0 ? (
+              <div style={{ padding: '32px 22px', textAlign: 'center', color: 'var(--ck-muted)', fontSize: 13 }}>
+                No activity in the last 2 minutes.
               </div>
-            ))}
+            ) : (
+              activity.map((entry) => (
+                <ActivityRow key={entry.id} entry={entry} />
+              ))
+            )}
           </div>
         </Card>
 
@@ -304,6 +297,81 @@ function Row({
           {value}
         </div>
       </div>
+    </div>
+  );
+}
+
+const RESOURCE_LABELS: Record<string, string> = {
+  employee: 'Employee', leave: 'Leave', attendance: 'Attendance',
+  holiday: 'Holiday', loan: 'Loan', increment: 'Increment',
+  incentive: 'Incentive', payroll_period: 'Payroll', tour: 'Tour',
+  compensation: 'Compensation',
+};
+
+const ACTION_COLORS: Record<string, string> = {
+  create: 'oklch(0.45 0.13 145)',
+  update: 'oklch(0.45 0.13 250)',
+  delete: 'oklch(0.45 0.13 20)',
+  approve: 'oklch(0.45 0.13 145)',
+  activate: 'oklch(0.45 0.13 145)',
+  archive: 'oklch(0.45 0.13 60)',
+  exit: 'oklch(0.45 0.13 20)',
+  decide: 'oklch(0.45 0.13 250)',
+  run: 'oklch(0.45 0.13 290)',
+  disburse: 'oklch(0.45 0.13 145)',
+  settle: 'oklch(0.45 0.13 145)',
+};
+
+const ACTION_BG: Record<string, string> = {
+  create: 'oklch(0.96 0.04 145)',
+  update: 'oklch(0.96 0.04 250)',
+  delete: 'oklch(0.96 0.04 20)',
+  approve: 'oklch(0.96 0.04 145)',
+  activate: 'oklch(0.96 0.04 145)',
+  archive: 'oklch(0.96 0.04 60)',
+  exit: 'oklch(0.96 0.04 20)',
+  decide: 'oklch(0.96 0.04 250)',
+  run: 'oklch(0.96 0.04 290)',
+  disburse: 'oklch(0.96 0.04 145)',
+  settle: 'oklch(0.96 0.04 145)',
+};
+
+function formatRelativeTime(isoStr: string): string {
+  const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
+  if (diff < 5) return 'just now';
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 120) return '1m ago';
+  return `${Math.floor(diff / 60)}m ago`;
+}
+
+function ActivityRow({ entry }: { entry: ActivityEntry }) {
+  const actionColor = ACTION_COLORS[entry.action] ?? 'var(--ck-muted)';
+  const actionBg    = ACTION_BG[entry.action]    ?? 'var(--ck-line-soft)';
+  const resource    = RESOURCE_LABELS[entry.resource] ?? entry.resource;
+  const actor       = entry.actor_name ?? entry.actor_email ?? 'System';
+
+  return (
+    <div style={{
+      padding: '11px 22px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      borderBottom: '1px solid var(--ck-line-soft)',
+    }}>
+      <span style={{
+        fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 5,
+        background: actionBg, color: actionColor,
+        textTransform: 'uppercase', letterSpacing: '0.04em', flexShrink: 0,
+      }}>
+        {entry.action}
+      </span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ fontSize: 13, color: 'var(--ck-ink)', fontWeight: 500 }}>{resource}</span>
+        <span style={{ fontSize: 12, color: 'var(--ck-muted)', marginLeft: 6 }}>by {actor}</span>
+      </div>
+      <span style={{ fontSize: 11.5, color: 'var(--ck-faint)', flexShrink: 0 }}>
+        {formatRelativeTime(entry.at)}
+      </span>
     </div>
   );
 }

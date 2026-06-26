@@ -6,13 +6,14 @@ import { PageHeader } from '../ui/PageHeader';
 import { Button } from '../ui/Button';
 import { IconAction } from '../ui/IconAction';
 import { Modal } from '../ui/Modal';
+import { MediaUpload } from '../ui/MediaUpload';
 
 type RowValue = string | number | boolean;
 
 export type MasterField<Row> = {
   name: string;
   label: string;
-  type: 'text' | 'textarea' | 'number' | 'select' | 'checkbox';
+  type: 'text' | 'textarea' | 'number' | 'select' | 'checkbox' | 'image' | 'file';
   placeholder?: string;
   options?: Array<{ label: string; value: string }>;
   required?: boolean;
@@ -308,6 +309,8 @@ function FieldInput<Row>({ field, value, onChange }: { field: MasterField<Row>; 
           <input type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} disabled={field.disabled} />
           <span style={{ fontSize: 13, color: 'var(--ck-ink)' }}>Enabled</span>
         </label>
+      ) : field.type === 'image' || field.type === 'file' ? (
+        <MediaUpload mode={field.type} value={String(value ?? '')} onChange={(v) => onChange(v)} />
       ) : (
         <input
           type={field.type === 'number' ? 'number' : 'text'}

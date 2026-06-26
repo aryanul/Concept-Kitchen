@@ -9,6 +9,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Pencil, Save, X, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '../../lib/api';
+import { MediaUpload } from '../../components/ui/MediaUpload';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
@@ -565,8 +566,8 @@ function InfoTab({ form, setForm, emp, editing, departments, divisions, phonePoo
           <Field label="Display / Preferred Name">
             <Input value={form.display_name ?? ''} editing={editing} onChange={(v) => set('display_name', v)} placeholder={`${form.first_name} ${form.last_name}`} />
           </Field>
-          <Field label="Photo URL">
-            <Input value={form.photo_url ?? ''} editing={editing} onChange={(v) => set('photo_url', v)} placeholder="https://…/profile.jpg" />
+          <Field label="Photo">
+            <MediaUpload mode="image" readOnly={!editing} value={form.photo_url ?? ''} onChange={(v) => set('photo_url', v || null)} />
           </Field>
         </Grid2>
       </Section>
@@ -671,8 +672,8 @@ function InfoTab({ form, setForm, emp, editing, departments, divisions, phonePoo
             <Field label="Contract To">
               <DateInput value={form.contract_to ?? ''} editing={editing} onChange={(v) => set('contract_to', v || null)} />
             </Field>
-            <Field label="Contract Attachment URL">
-              <Input value={form.contract_attachment_url ?? ''} editing={editing} onChange={(v) => set('contract_attachment_url', v)} placeholder="https://…/contract.pdf" />
+            <Field label="Contract Attachment">
+              <MediaUpload mode="file" readOnly={!editing} value={form.contract_attachment_url ?? ''} onChange={(v) => set('contract_attachment_url', v || null)} />
             </Field>
           </Grid3>
         )}
@@ -904,13 +905,7 @@ function DocumentRow({ idx, value, editing, onChange, onDelete }: {
       )}
       <RowInput val={value.doc_number ?? ''} editing={editing} onChange={(v) => onChange({ ...value, doc_number: v })} placeholder="ABCDE1234F" />
       <RowInput val={value.description ?? ''} editing={editing} onChange={(v) => onChange({ ...value, description: v })} placeholder="Notes" />
-      {editing ? (
-        <input value={value.file_url ?? ''} onChange={(e) => onChange({ ...value, file_url: e.target.value })} placeholder="https://…/file.pdf" style={inpStyle} />
-      ) : value.file_url ? (
-        <a href={value.file_url} target="_blank" rel="noreferrer" style={{ fontSize: 13, color: 'var(--ck-accent)', textDecoration: 'none' }}>View</a>
-      ) : (
-        <div style={{ fontSize: 13, color: 'var(--ck-muted)' }}>—</div>
-      )}
+      <MediaUpload mode="file" readOnly={!editing} value={value.file_url ?? ''} onChange={(v) => onChange({ ...value, file_url: v })} />
       {editing
         ? <IconAction icon={Trash2} label="Delete" hint="Remove this row" iconOnly tone="danger" onClick={onDelete} />
         : <span />}
@@ -982,8 +977,8 @@ function WorkExperienceCard({ value, editing, onChange, onDelete }: {
         <Field label="Reporting Manager Phone">
           <Input value={value.reporting_manager_phone ?? ''} editing={editing} onChange={(v) => onChange({ ...value, reporting_manager_phone: v })} placeholder="+91 9812345678" />
         </Field>
-        <Field label="Experience Letter URL">
-          <Input value={value.experience_letter_url ?? ''} editing={editing} onChange={(v) => onChange({ ...value, experience_letter_url: v })} placeholder="https://…/letter.pdf" />
+        <Field label="Experience Letter">
+          <MediaUpload mode="file" readOnly={!editing} value={value.experience_letter_url ?? ''} onChange={(v) => onChange({ ...value, experience_letter_url: v })} />
         </Field>
       </div>
       {editing && (
@@ -1185,7 +1180,7 @@ function SalaryTab({ form, setForm, editing }: { form: Employee; setForm: (e: Em
             <ReadOnly value={ctcRupees ? `₹ ${ctcRupees.toLocaleString('en-IN')}/year` : '—'} />
           </Field>
           <Field label="Form 16 / 26AS Attachment">
-            <Input value={form.form16_url ?? ''} editing={editing} onChange={(v) => set('form16_url', v || null)} placeholder="https://…/form16.pdf" />
+            <MediaUpload mode="file" readOnly={!editing} value={form.form16_url ?? ''} onChange={(v) => set('form16_url', v || null)} />
           </Field>
         </Grid2>
       </Section>
@@ -1516,8 +1511,8 @@ function OtherTab({ form, setForm, editing }: { form: Employee; setForm: (e: Emp
           <Field label="Digital Signature ID">
             <Input value={form.digital_signature_id ?? ''} editing={editing} onChange={(v) => set('digital_signature_id', v || null)} placeholder="DSC-4567" />
           </Field>
-          <Field label="e-Signature Image URL">
-            <Input value={form.esignature_url ?? ''} editing={editing} onChange={(v) => set('esignature_url', v || null)} placeholder="https://…/esign.png" />
+          <Field label="e-Signature Image">
+            <MediaUpload mode="image" readOnly={!editing} value={form.esignature_url ?? ''} onChange={(v) => set('esignature_url', v || null)} />
           </Field>
         </Grid2>
         <Field label="Workflow Approver Roles">
