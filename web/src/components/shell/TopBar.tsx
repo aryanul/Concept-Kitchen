@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../ui/Avatar';
 import { Tooltip } from '../ui/Tooltip';
 import { useAuth } from '../../stores/auth';
+import { api } from '../../lib/api';
 
 type TopBarProps = { onMenuClick: () => void };
 
@@ -47,6 +48,7 @@ export function TopBar({ onMenuClick }: TopBarProps) {
 
   const handleLogout = () => {
     setMenuOpen(false);
+    api.post('/auth/logout').catch(() => {}); // fire-and-forget: logs the event server-side
     clear();
     navigate('/login', { replace: true });
   };

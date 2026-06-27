@@ -9,6 +9,7 @@ import { query } from './db';
 import { signAccessToken, authRequired, requireRole, type Role } from './auth';
 import { registerMasterRoutes } from './masters';
 import { uploadToCloudinary } from './upload';
+import { writeAudit } from './audit';
 
 const multerUpload = multer({
   storage: multer.memoryStorage(),
@@ -38,29 +39,6 @@ app.use(express.json({ limit: '8mb' })); // headroom for base64 photo data URLs 
 // Master routes registered AFTER global middleware so req.body / CORS headers are available
 registerMasterRoutes(app);
 
-type AuditPayload = unknown | null;
-
-async function writeAudit(
-  actorId: string,
-  action: string,
-  resource: string,
-  resourceId: string,
-  beforeData: AuditPayload,
-  afterData: AuditPayload
-) {
-  await query(
-    'INSERT INTO audit_logs (id, actor_id, action, resource, resource_id, before_data, after_data) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [
-      ulid(),
-      actorId,
-      action,
-      resource,
-      resourceId,
-      beforeData ? JSON.stringify(beforeData) : null,
-      afterData ? JSON.stringify(afterData) : null,
-    ]
-  );
-}
 
 app.get('/api/v1/healthz', (_req, res) => {
   res.json({ status: 'ok', uptime: process.uptime() });
@@ -101,6 +79,10 @@ app.post('/api/v1/auth/login', async (req, res, next) => {
       role: user.role,
       employeeId: user.employee_id,
     });
+
+    // Fire-and-forget — don't let audit failure block the login response
+    writeAudit(user.id, 'login', 'auth', user.id, null, { email: user.email }).catch(() => {});
+
     res.json({
       data: {
         token,
@@ -112,6 +94,15 @@ app.post('/api/v1/auth/login', async (req, res, next) => {
         },
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/v1/auth/logout', authRequired, async (req, res, next) => {
+  try {
+    await writeAudit(req.user!.id, 'logout', 'auth', req.user!.id, null, null);
+    res.json({ data: { ok: true } });
   } catch (err) {
     next(err);
   }

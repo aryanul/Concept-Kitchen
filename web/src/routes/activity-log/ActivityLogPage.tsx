@@ -28,13 +28,32 @@ type LogsResponse = {
 };
 
 const RESOURCE_LABELS: Record<string, string> = {
+  // Domain (index.ts)
   employee: 'Employee', leave: 'Leave', attendance: 'Attendance',
   holiday: 'Holiday', loan: 'Loan', increment: 'Increment',
   incentive: 'Incentive', payroll_period: 'Payroll', tour: 'Tour',
   compensation: 'Compensation',
+  // Auth events
+  auth: 'Session',
+  // Masters (masters.ts)
+  branches: 'Branch', departments: 'Department', designations: 'Designation',
+  divisions: 'Division', locations: 'Location', shifts: 'Shift',
+  'salary-grades': 'Salary Grade', skills: 'Skill', 'training-modules': 'Training Module',
+  'induction-templates': 'Induction Template', 'onboarding-templates': 'Onboarding Template',
+  'attendance-rules': 'Attendance Rule', lookups: 'Lookup', tags: 'Tag',
+  users: 'User', holidays: 'Holiday (Master)',
+  'atm-tasks': 'ATM Task', 'hiring/companies': 'Hiring Company',
+  'hiring/interview-templates': 'Interview Template',
+  'onboarding/giveaways': 'Giveaway', 'onboarding/phone-pool': 'Phone Pool',
+  'onboarding/erp-modules': 'ERP Module', 'onboarding/asset-categories': 'Asset Category',
+  'onboarding/assets': 'Asset', 'onboarding/presentations': 'Presentation',
 };
 
-const ALL_ACTIONS = ['create', 'update', 'delete', 'approve', 'activate', 'archive', 'exit', 'decide', 'run', 'disburse', 'settle'];
+const ALL_ACTIONS = [
+  'login', 'logout',
+  'create', 'update', 'delete', 'approve', 'activate', 'archive',
+  'exit', 'decide', 'run', 'disburse', 'settle', 'close', 'push_to_payroll',
+];
 const ALL_RESOURCES = Object.keys(RESOURCE_LABELS);
 
 const ACTION_COLORS: Record<string, string> = {
@@ -42,12 +61,16 @@ const ACTION_COLORS: Record<string, string> = {
   approve: 'oklch(0.45 0.13 145)', activate: 'oklch(0.45 0.13 145)', archive: 'oklch(0.45 0.13 60)',
   exit: 'oklch(0.45 0.13 20)', decide: 'oklch(0.45 0.13 250)', run: 'oklch(0.45 0.13 290)',
   disburse: 'oklch(0.45 0.13 145)', settle: 'oklch(0.45 0.13 145)',
+  close: 'oklch(0.45 0.13 20)', push_to_payroll: 'oklch(0.45 0.13 290)',
+  login: 'oklch(0.45 0.13 195)', logout: 'oklch(0.45 0.13 60)',
 };
 const ACTION_BG: Record<string, string> = {
   create: 'oklch(0.96 0.04 145)', update: 'oklch(0.96 0.04 250)', delete: 'oklch(0.96 0.04 20)',
   approve: 'oklch(0.96 0.04 145)', activate: 'oklch(0.96 0.04 145)', archive: 'oklch(0.96 0.04 60)',
   exit: 'oklch(0.96 0.04 20)', decide: 'oklch(0.96 0.04 250)', run: 'oklch(0.96 0.04 290)',
   disburse: 'oklch(0.96 0.04 145)', settle: 'oklch(0.96 0.04 145)',
+  close: 'oklch(0.96 0.04 20)', push_to_payroll: 'oklch(0.96 0.04 290)',
+  login: 'oklch(0.96 0.04 195)', logout: 'oklch(0.96 0.04 60)',
 };
 
 type SortKey = 'at' | 'action' | 'resource' | 'actor';

@@ -3,6 +3,7 @@ import type { Application } from 'express';
 import { ulid } from 'ulid';
 import { authRequired, type Role } from './auth';
 import { query } from './db';
+import { writeAudit } from './audit';
 
 function parseBool(value: unknown): number {
   return value === true || value === 1 || value === '1' || value === 'true' ? 1 : 0;
@@ -32,7 +33,59 @@ function updateSets(body: Record<string, unknown>, allowed: Array<{ key: string;
   return { sets, values };
 }
 
+// Top-level segments owned exclusively by masters routes (not in index.ts domain routes)
+const MASTER_SEGMENTS = new Set([
+  'atm-tasks', 'attendance-rules', 'branches', 'departments', 'designations',
+  'divisions', 'holidays', 'induction-templates', 'locations', 'lookups',
+  'onboarding-templates', 'salary-grades', 'shifts', 'skills', 'tags',
+  'training-modules', 'users',
+]);
+
 export function registerMasterRoutes(app: Application) {
+  // Auto-audit every successful mutation across all ~84 master routes.
+  // We intercept res.json to capture the new ID (for POST), then write
+  // the audit entry on 'finish' so it never blocks the response.
+  app.use('/api/v1', (req, res, next) => {
+    if (!['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) return next();
+
+    // req.path has the '/api/v1' prefix stripped by Express
+    const parts = req.path.split('/').filter(Boolean);
+    const first = parts[0] ?? '';
+
+    const isMasterRoute =
+      MASTER_SEGMENTS.has(first) || first === 'hiring' || first === 'onboarding';
+    if (!isMasterRoute) return next();
+
+    // For nested paths like /hiring/companies or /onboarding/giveaways,
+    // combine first two segments as the resource name; otherwise use first.
+    const resource =
+      first === 'hiring' || first === 'onboarding'
+        ? `${first}/${parts[1] ?? ''}`
+        : first;
+
+    // URL-level resource ID (present on PATCH/PUT/DELETE)
+    const urlId = first === 'hiring' || first === 'onboarding' ? parts[2] : parts[1];
+
+    // Intercept res.json so we can capture the ID returned by POST handlers
+    let capturedId: string | undefined;
+    const origJson = res.json.bind(res);
+    (res as unknown as { json: typeof res.json }).json = function (body: unknown) {
+      capturedId = (body as Record<string, Record<string, string>>)?.data?.id;
+      return origJson(body);
+    };
+
+    res.on('finish', () => {
+      if (res.statusCode >= 400 || !req.user?.id) return;
+      const resourceId = capturedId ?? urlId ?? ulid();
+      const action =
+        req.method === 'POST'   ? 'create' :
+        req.method === 'DELETE' ? 'delete' : 'update';
+      writeAudit(req.user.id, action, resource, resourceId, null, null).catch(() => {});
+    });
+
+    next();
+  });
+
   // Branches
   app.post('/api/v1/branches', authRequired, async (req, res, next) => {
     try {
