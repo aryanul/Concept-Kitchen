@@ -106,6 +106,9 @@ h1, h2, h3 { margin: 0; }
 }
 .ck-page-enter { animation: ck-fade-in var(--ck-dur-default) var(--ck-ease); }
 
+@keyframes ck-spin { to { transform: rotate(360deg); } }
+.ck-spin { animation: ck-spin 0.8s linear infinite; }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 8px; border: 2px solid var(--ck-bg); }

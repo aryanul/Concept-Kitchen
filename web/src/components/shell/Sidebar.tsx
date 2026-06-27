@@ -6,7 +6,7 @@ import {
   Clock, CalendarDays, ClipboardCheck, Wallet, FileText, Banknote,
   TrendingUp, CalendarClock, Plane, Gift,
   Building2, LocateFixed, ClipboardList, Sparkles, BookOpen, Tag,
-  Presentation as PresentationIcon, MapPin,
+  Presentation as PresentationIcon, MapPin, Activity,
   type LucideIcon,
 } from 'lucide-react';
 import { Avatar } from '../ui/Avatar';
@@ -23,7 +23,8 @@ type SidebarProps = {
 };
 
 const NAV: Item[] = [
-  { id: 'dashboard', path: '/', label: 'Dashboard', icon: Home },
+  { id: 'dashboard',    path: '/',             label: 'Dashboard',    icon: Home },
+  { id: 'activity-log', path: '/activity-log', label: 'Activity Log', icon: Activity },
   {
     id: 'hiring', label: 'Hiring', icon: Briefcase, children: [
       { id: 'job-profile', path: '/job-profile', label: 'Job Profile' },

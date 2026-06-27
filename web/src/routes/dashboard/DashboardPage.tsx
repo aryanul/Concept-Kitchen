@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import {
   Users, ClipboardCheck, CalendarClock, FileText, CalendarDays,
   Building2, Briefcase,
-  Download, Plus, ArrowUpRight, Activity,
+  Download, Plus, ArrowUpRight, Activity, ChevronRight,
   type LucideIcon,
 } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
@@ -63,7 +63,7 @@ export function DashboardPage() {
       .then((r) => setSummary(r.data.data))
       .catch(() => {});
     fetchActivity();
-    timerRef.current = setInterval(fetchActivity, 30_000);
+    timerRef.current = setInterval(fetchActivity, 120_000);
     const ageTimer = setInterval(() => setActivityAge((a) => a + 1), 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -202,7 +202,7 @@ export function DashboardPage() {
                 Activity Log
               </div>
               <div style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginTop: 2 }}>
-                All portal actions in the last 2 minutes
+                Latest portal activity · refreshes every 2 minutes
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -220,7 +220,7 @@ export function DashboardPage() {
           <div style={{ overflowY: 'auto', maxHeight: 380 }}>
             {activity.length === 0 ? (
               <div style={{ padding: '32px 22px', textAlign: 'center', color: 'var(--ck-muted)', fontSize: 13 }}>
-                No activity in the last 2 minutes.
+                No activity recorded yet.
               </div>
             ) : (
               activity.map((entry) => (
@@ -228,6 +228,23 @@ export function DashboardPage() {
               ))
             )}
           </div>
+          <Link
+            to="/activity-log"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 4,
+              padding: '11px 22px',
+              borderTop: '1px solid var(--ck-line)',
+              fontSize: 12.5,
+              fontWeight: 500,
+              color: 'var(--ck-accent)',
+              textDecoration: 'none',
+            }}
+          >
+            View all activity <ChevronRight size={13} />
+          </Link>
         </Card>
 
         <Card padding={0}>

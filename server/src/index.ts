@@ -3,10 +3,17 @@ import express, { type ErrorRequestHandler } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import bcrypt from 'bcryptjs';
+import multer from 'multer';
 import { ulid } from 'ulid';
 import { query } from './db';
 import { signAccessToken, authRequired, requireRole, type Role } from './auth';
 import { registerMasterRoutes } from './masters';
+import { uploadToCloudinary } from './upload';
+
+const multerUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+});
 
 const app = express();
 
@@ -294,11 +301,105 @@ app.get('/api/v1/dashboard/activity', authRequired, async (_req, res, next) => {
        FROM audit_logs al
        LEFT JOIN users u ON u.id = al.actor_id
        LEFT JOIN employees e ON e.id = u.employee_id
-       WHERE al.at >= NOW() - INTERVAL 2 MINUTE
        ORDER BY al.at DESC
-       LIMIT 50`
+       LIMIT 15`
     );
     res.json({ data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- File upload ---
+
+app.post('/api/v1/upload', authRequired, multerUpload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'No file provided' } });
+    }
+    const resourceType: 'image' | 'raw' = req.body.type === 'image' ? 'image' : 'raw';
+    const result = await uploadToCloudinary(req.file.buffer, resourceType);
+    res.json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.get('/api/v1/activity-logs', authRequired, async (req, res, next) => {
+  try {
+    const page  = Math.max(1, Number(req.query.page)  || 1);
+    const limit = Math.min(100, Math.max(10, Number(req.query.limit) || 50));
+    const offset = (page - 1) * limit;
+    const { action, resource, q, dateFrom, dateTo, sortBy, sortDir } =
+      req.query as Record<string, string>;
+
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (action) {
+      const acts = action.split(',').map((s) => s.trim()).filter(Boolean);
+      if (acts.length) {
+        conditions.push(`al.action IN (${acts.map(() => '?').join(',')})`);
+        params.push(...acts);
+      }
+    }
+    if (resource) {
+      const res_ = resource.split(',').map((s) => s.trim()).filter(Boolean);
+      if (res_.length) {
+        conditions.push(`al.resource IN (${res_.map(() => '?').join(',')})`);
+        params.push(...res_);
+      }
+    }
+    if (q) {
+      conditions.push(
+        `(CONCAT(IFNULL(e.first_name,''),' ',IFNULL(e.last_name,'')) LIKE ? OR u.email LIKE ?)`
+      );
+      params.push(`%${q}%`, `%${q}%`);
+    }
+    if (dateFrom) { conditions.push(`al.at >= ?`); params.push(dateFrom); }
+    if (dateTo)   { conditions.push(`al.at < DATE_ADD(?, INTERVAL 1 DAY)`); params.push(dateTo); }
+
+    const WHERE = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const SORT_EXPRS: Record<string, string> = {
+      at:       'al.at',
+      action:   'al.action',
+      resource: 'al.resource',
+      actor:    'IFNULL(CONCAT(e.first_name,\' \',e.last_name), u.email)',
+    };
+    const sortExpr = SORT_EXPRS[sortBy] ?? 'al.at';
+    const direction = sortDir === 'asc' ? 'ASC' : 'DESC';
+
+    const [countRows, logs] = await Promise.all([
+      query<{ total: string }>(
+        `SELECT COUNT(*) AS total
+         FROM audit_logs al
+         LEFT JOIN users u ON u.id = al.actor_id
+         LEFT JOIN employees e ON e.id = u.employee_id
+         ${WHERE}`,
+        params
+      ),
+      query<{
+        id: string; action: string; resource: string; resource_id: string;
+        at: string; actor_name: string | null; actor_email: string | null;
+      }>(
+        `SELECT al.id, al.action, al.resource, al.resource_id, al.at,
+                CONCAT(e.first_name, ' ', e.last_name) AS actor_name,
+                u.email AS actor_email
+         FROM audit_logs al
+         LEFT JOIN users u ON u.id = al.actor_id
+         LEFT JOIN employees e ON e.id = u.employee_id
+         ${WHERE}
+         ORDER BY ${sortExpr} ${direction}
+         LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      ),
+    ]);
+
+    const total = Number(countRows[0]?.total ?? 0);
+    res.json({
+      data: { logs, total, page, limit, totalPages: Math.ceil(total / limit) },
+    });
   } catch (err) {
     next(err);
   }

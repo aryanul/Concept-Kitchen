@@ -1,48 +1,14 @@
 import { useRef, useState } from 'react';
-import { Upload, X, FileText, Eye } from 'lucide-react';
+import { Upload, X, FileText, Eye, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-
-/** Downscale an image file to a JPEG data URL no larger than `max` px on a side. */
-export function resizeImageToDataUrl(file: File, max: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('read failed'));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('decode failed'));
-      img.onload = () => {
-        const scale = Math.min(1, max / Math.max(img.width, img.height));
-        const w = Math.max(1, Math.round(img.width * scale));
-        const h = Math.max(1, Math.round(img.height * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return reject(new Error('no canvas context'));
-        ctx.drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL('image/jpeg', 0.85));
-      };
-      img.src = reader.result as string;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-/** Read any file as a base64 data URL (used for documents — no resizing). */
-export function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('read failed'));
-    reader.onload = () => resolve(reader.result as string);
-    reader.readAsDataURL(file);
-  });
-}
+import { api } from '../../lib/api';
 
 type Props = {
-  /** 'image' resizes + previews; 'file' stores any document as-is. */
+  /** 'image' previews as thumbnail; 'file' shows a link. */
   mode: 'image' | 'file';
   value?: string | null;
   onChange: (v: string) => void;
-  /** Max document size in MB (file mode only). */
+  /** Max file size in MB (default 10). */
   maxFileMb?: number;
   /** Override the file input's accept attribute. */
   accept?: string;
@@ -56,17 +22,19 @@ const btn: React.CSSProperties = {
   fontSize: 12.5, fontWeight: 600, color: 'var(--ck-ink-soft)', cursor: 'pointer',
 };
 
-/**
- * Upload control that stores the chosen file as a base64 data URL (this
- * deployment has no external file storage). Images are downscaled; documents
- * are stored as-is up to `maxFileMb`. Replaces "paste a URL" inputs.
- */
-export function MediaUpload({ mode, value, onChange, maxFileMb = 5, accept, readOnly }: Props) {
+function isImageUrl(url: string): boolean {
+  return (
+    url.startsWith('data:image') ||
+    /\/image\/upload\//i.test(url) ||   // Cloudinary image
+    /\.(png|jpe?g|gif|webp|svg)(\?|#|$)/i.test(url)
+  );
+}
+
+export function MediaUpload({ mode, value, onChange, maxFileMb = 10, accept, readOnly }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const hasValue = !!value;
-  // data:image uploads, or legacy http(s) links that point at an image file.
-  const isImage = !!value && (value.startsWith('data:image') || /^https?:\/\/.*\.(png|jpe?g|gif|webp|svg)(\?|#|$)/i.test(value));
+  const isImage = !!value && isImageUrl(value);
 
   if (readOnly) {
     if (!hasValue) return <span style={{ fontSize: 13, color: 'var(--ck-muted)' }}>—</span>;
@@ -79,13 +47,29 @@ export function MediaUpload({ mode, value, onChange, maxFileMb = 5, accept, read
     const file = e.target.files?.[0];
     if (inputRef.current) inputRef.current.value = '';
     if (!file) return;
-    if (mode === 'image' && !file.type.startsWith('image/')) { toast.error('Please choose an image file'); return; }
-    if (mode === 'file' && file.size > maxFileMb * 1024 * 1024) { toast.error(`File too large (max ${maxFileMb} MB)`); return; }
+    if (mode === 'image' && !file.type.startsWith('image/')) {
+      toast.error('Please choose an image file');
+      return;
+    }
+    if (file.size > maxFileMb * 1024 * 1024) {
+      toast.error(`File too large — maximum is ${maxFileMb} MB`);
+      return;
+    }
+
     setBusy(true);
     try {
-      onChange(mode === 'image' ? await resizeImageToDataUrl(file, 512) : await fileToDataUrl(file));
-    } catch { toast.error('Could not read that file'); }
-    finally { setBusy(false); }
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('type', mode === 'image' ? 'image' : 'raw');
+      const res = await api.post<{ data: { url: string; publicId: string } }>('/upload', fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      onChange(res.data.data.url);
+    } catch {
+      toast.error('Upload failed — please try again');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -98,14 +82,34 @@ export function MediaUpload({ mode, value, onChange, maxFileMb = 5, accept, read
         </a>
       ) : (
         <div style={{ width: 48, height: 48, borderRadius: 8, border: '1px dashed var(--ck-line)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ck-faint)', flexShrink: 0 }}>
-          {mode === 'image' ? <Upload size={18} /> : <FileText size={18} />}
+          {busy
+            ? <Loader2 size={18} className="ck-spin" />
+            : mode === 'image' ? <Upload size={18} /> : <FileText size={18} />
+          }
         </div>
       )}
-      <input ref={inputRef} type="file" accept={accept ?? (mode === 'image' ? 'image/*' : undefined)} onChange={onFile} style={{ display: 'none' }} />
-      <button type="button" style={{ ...btn, opacity: busy ? 0.6 : 1 }} disabled={busy} onClick={() => inputRef.current?.click()}>
-        <Upload size={14} /> {busy ? 'Processing…' : hasValue ? 'Replace' : (mode === 'image' ? 'Upload image' : 'Upload file')}
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept ?? (mode === 'image' ? 'image/*' : undefined)}
+        onChange={onFile}
+        style={{ display: 'none' }}
+      />
+
+      <button
+        type="button"
+        style={{ ...btn, opacity: busy ? 0.6 : 1 }}
+        disabled={busy}
+        onClick={() => inputRef.current?.click()}
+      >
+        {busy
+          ? <><Loader2 size={14} className="ck-spin" /> Uploading…</>
+          : <><Upload size={14} /> {hasValue ? 'Replace' : (mode === 'image' ? 'Upload image' : 'Upload file')}</>
+        }
       </button>
-      {hasValue && (
+
+      {hasValue && !busy && (
         <button type="button" style={{ ...btn, color: 'var(--ck-danger-fg)' }} onClick={() => onChange('')}>
           <X size={14} /> Remove
         </button>

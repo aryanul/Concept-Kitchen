@@ -49,6 +49,7 @@ import {
   OnboardingItemMasterPage,
 } from './routes/masters/MasterPages';
 import { InductionTemplateMasterPage, OnboardingTemplateMasterPage } from './routes/masters/TemplateMasterPages';
+import { ActivityLogPage } from './routes/activity-log/ActivityLogPage';
 import { StubPage } from './routes/StubPage';
 import { WipePage } from './routes/dev/WipePage';
 import { ProtectedRoute } from './components/ProtectedRoute';
@@ -62,6 +63,7 @@ export default function App() {
         <Route element={<ProtectedRoute />}>
           <Route element={<AppLayout />}>
             <Route path="/" element={<DashboardPage />} />
+            <Route path="/activity-log" element={<ActivityLogPage />} />
             <Route path="/masters" element={<MastersHomePage />} />
             <Route path="/masters/branches" element={<BranchMasterPage />} />
             <Route path="/masters/ddd" element={<DddMasterPage />} />
