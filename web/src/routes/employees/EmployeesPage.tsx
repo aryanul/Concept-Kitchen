@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Eye, Pencil } from 'lucide-react';
+import { Eye, Pencil, UserPlus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
@@ -104,7 +104,12 @@ export function EmployeesPage() {
     <div>
       <PageHeader
         title="Employee Master"
-        subtitle="Employee records are created when a vacancy is filled. Use this list to view and edit existing employees."
+        subtitle="Records come from filled vacancies, or add existing staff directly with the button on the right."
+        actions={
+          <Button variant="primary" size="sm" onClick={() => navigate('/employees/new')}>
+            <UserPlus size={15} style={{ marginRight: 6 }} /> Add New Employee
+          </Button>
+        }
       />
 
       <Card padding={0}>

@@ -32,8 +32,9 @@ npm --workspace server run dev       # tsx watch src/index.ts
 npm --workspace server run build     # tsc → dist/
 npm --workspace server run migrate   # apply pending SQL migrations
 npm --workspace server run seed:all  # seed ref + employees + transactional data
-# individual seeds: seed:ref, seed:employees, seed:hiring, seed:prospects,
-# seed:lookups, seed:skills, seed:atm-tasks, seed:jp-masters, etc. (see server/package.json)
+# individual seeds: seed:ref, seed:employees, seed:transactional, seed:hiring,
+# seed:hiring-masters, seed:prospects, seed:lookups, seed:skills, seed:atm-tasks,
+# seed:jp-masters, seed:training-modules, seed:funnel-templates (see server/package.json)
 ```
 
 Frontend (`web/`):
@@ -49,12 +50,15 @@ are a destructive developer tool for clearing DB tables — never invoke against
 
 ## Environment
 
-Copy `.env.example` → `.env` at the repo root. The server **refuses to start** without
-`JWT_ACCESS_SECRET`. Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and
-`CLOUDINARY_API_SECRET` to enable file/photo uploads (obtained from the Cloudinary dashboard). The DB connection reads `DATABASE_URL` if set, otherwise the discrete
+Two separate env files: the **server** reads `.env` at the repo root (copy from
+`.env.example`); the **web** app reads `web/.env.local` (`VITE_API_URL`, points at
+`…/api/v1`). The server **refuses to start** without `JWT_ACCESS_SECRET`. Set
+`CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` to enable
+file/photo uploads (obtained from the Cloudinary dashboard). The DB connection reads
+`DATABASE_URL` if set, otherwise the discrete
 `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` fields. Set `DB_SSL=true` for TiDB
-Serverless (which requires TLS). The web app reads `VITE_API_URL` (in `web/.env.local`,
-points at `…/api/v1`).
+Serverless (which requires TLS) — note `DB_SSL` is read in `db.ts` but is **not** in
+`.env.example`, so add it yourself for a serverless DB.
 
 After `seed:all`, three demo accounts are available:
 
@@ -89,10 +93,11 @@ is duplicated in both `server/src/auth.ts` and `web/src/stores/auth.ts`).
 
 Express 4 + TypeScript. Two route files register everything:
 
-- [server/src/index.ts](server/src/index.ts) — a **monolithic ~137-route file** holding all
+- [server/src/index.ts](server/src/index.ts) — a **monolithic ~140-route file** holding all
   domain endpoints (auth, employees, compensations, hiring/applicants/onboarding, attendance,
-  leaves, payroll, loans, etc.). New domain routes go here unless they're master/reference CRUD.
-- [server/src/masters.ts](server/src/masters.ts) — `registerMasterRoutes(app)`, ~99 routes
+  leaves, payroll, loans, activity logs, file uploads, etc.). New domain routes go here unless
+  they're master/reference CRUD.
+- [server/src/masters.ts](server/src/masters.ts) — `registerMasterRoutes(app)`, ~110 routes
   for master/reference data (branches, departments, shifts, salary grades, skills, templates,
   lookups, tags, assets, onboarding catalogues, users). Registered **after** global
   middleware in `index.ts` so `req.body` and CORS are available.
@@ -113,7 +118,11 @@ Conventions enforced across both files:
 - **DB access** ([server/src/db.ts](server/src/db.ts)): a single shared `pool` and a
   `query<T>(sql, params)` helper. Always use parameterized queries.
 - **Audit:** mutations call `writeAudit(actorId, action, resource, resourceId, before, after)`
-  which inserts into `audit_logs`.
+  (defined in [server/src/audit.ts](server/src/audit.ts)) which inserts into `audit_logs`.
+  Surfaced by `GET /api/v1/activity-logs` and the Activity Log page.
+- **File uploads:** [server/src/upload.ts](server/src/upload.ts) wraps Cloudinary; the
+  `POST /api/v1/upload` route uses `multer` memory storage and routes images vs. raw files to
+  separate Cloudinary folders (`cknest/photos`, `cknest/documents`).
 - The mysql2 driver returns `CAST(... AS UNSIGNED)` results as **strings** — coerce with
   `Number()` before arithmetic (see the comment in `nextCode`).
 
@@ -143,3 +152,6 @@ of `--ck-*` design tokens defined in [web/src/index.css](web/src/index.css) (mir
   or external stylesheets. Follow this pattern when building new primitives. The `Button`
   component accepts `variant` (`primary | accent | secondary | ghost | danger`) and `size`
   (`sm | md | lg`).
+- **Shared primitives to reuse** (in `ui/`): `IconAction` for icon buttons — always give it a
+  visible caption + hover hint rather than a bare icon; `MediaUpload` for photo/document
+  uploads, which POSTs to `/api/v1/upload` and returns the Cloudinary URL.

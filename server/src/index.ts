@@ -3253,34 +3253,117 @@ app.post('/api/v1/onboarding/employees/:employeeId/complete/:taskId', authRequir
 
 // ─── MUTATIONS ───────────────────────────────────────────────────────────────
 
-// Create employee
+// Create employee — direct-add to the Employee Master (bypasses the hiring
+// flow, used to bring existing staff onto the system). Accepts the core
+// identity/org fields plus an optional monthly `salary` block; when salary is
+// present it also creates a linked "Joining" compensation (Active) and syncs
+// the employee's current_compensation_id + ctc snapshot.
+const EMP_STATUSES = ['ACTIVE', 'PROBATION', 'ON_LEAVE', 'EXITED'] as const;
 app.post('/api/v1/employees', authRequired, async (req, res, next) => {
   try {
+    const b = req.body ?? {};
     const { firstName, lastName, email, phone, designation, branchId, departmentId,
       gradeId, ctcRupees, joiningDate, bankName, bankAccount, ifsc, pan, aadhaar,
-      companyId, divisionId } = req.body ?? {};
-    if (!firstName || !lastName || !email || !phone || !designation || !branchId || !departmentId || !gradeId || !ctcRupees || !joiningDate) {
-      return res.status(400).json({ error: { code: 'VALIDATION', message: 'Required fields missing' } });
+      companyId, divisionId, salary } = b;
+    // grade + ctc are no longer mandatory: existing employees may not map to a
+    // salary grade, and the salary block (if given) supplies the CTC.
+    if (!firstName || !lastName || !email || !phone || !designation || !branchId || !departmentId) {
+      return res.status(400).json({ error: { code: 'VALIDATION', message: 'Required fields missing (name, email, phone, designation, branch, department)' } });
     }
+    const status = EMP_STATUSES.includes(b.status) ? b.status : 'ACTIVE';
+
+    // Annual CTC (paise): salary block is MONTHLY (legacy screen) → ×12; else
+    // fall back to an explicit annual ctcRupees; else 0 (column is NOT NULL).
+    const hasSalary = salary && Number(salary.grossMonthly) > 0;
+    const annualCtcPaise = hasSalary
+      ? Math.round(Number(salary.grossMonthly) * 12 * 100)
+      : (ctcRupees ? Math.round(Number(ctcRupees) * 100) : 0);
+
     const [maxRow] = await query<{ n: number | string | null }>(
       "SELECT COALESCE(MAX(CAST(SUBSTRING(code, 8) AS UNSIGNED)), 0) AS n FROM employees WHERE code LIKE 'CK-EMP-%'"
     );
     const code = `CK-EMP-${String(Number(maxRow?.n ?? 0) + 1).padStart(4, '0')}`;
     const id = ulid();
+
+    // Build the INSERT from a column→value map so optional fields stay optional.
+    const cols: string[] = ['id', 'code', 'first_name', 'last_name', 'designation', 'status',
+      'email', 'phone', 'branch_id', 'department_id', 'ctc'];
+    const vals: unknown[] = [id, code, firstName, lastName, designation, status,
+      email, phone, branchId, departmentId, annualCtcPaise];
+    const add = (col: string, v: unknown) => { cols.push(col); vals.push(v); };
+    const addIf = (col: string, v: unknown) => { if (v !== undefined && v !== '' && v !== null) add(col, v); };
+    const addDate = (col: string, v: unknown) => { if (v) add(col, v); };
+    const addBool = (col: string, v: unknown) => { if (v !== undefined) add(col, v ? 1 : 0); };
+
+    addDate('joining_date', joiningDate);
+    addIf('company_id', companyId);
+    addIf('division_id', divisionId);
+    addIf('grade_id', gradeId);
+    addIf('bank_name', bankName); addIf('bank_account', bankAccount); addIf('ifsc', ifsc);
+    addIf('pan', pan); addIf('aadhaar', aadhaar);
+    // Extended legacy "General Info" / personal fields (all map to existing columns).
+    addIf('middle_name', b.middleName); addIf('display_name', b.displayName); addIf('photo_url', b.photoUrl);
+    addIf('gender', b.gender); addDate('dob', b.dob); addIf('marital_status', b.maritalStatus);
+    addIf('blood_group', b.bloodGroup); addIf('nationality', b.nationality); addIf('religion', b.religion);
+    addIf('employment_type', b.employmentType); addIf('work_mode', b.workMode);
+    addIf('pay_mode', b.payMode); addIf('wage_basis', b.wageBasis);
+    addIf('default_shift_id', b.defaultShiftId);
+    addIf('personal_email', b.personalEmail); addIf('alternate_phone', b.alternatePhone);
+    addIf('bank_branch', b.bankBranch); addIf('account_type', b.accountType); addIf('pt_state', b.ptState);
+    addIf('pf', b.pf); addIf('esic', b.esic); addIf('uan', b.uan);
+    addBool('pf_applicable', b.pfApplicable); addBool('esi_applicable', b.esiApplicable);
+    addBool('tds_applicable', b.tdsApplicable);
+    if (b.presentAddress != null) add('present_address', typeof b.presentAddress === 'string' ? b.presentAddress : JSON.stringify(b.presentAddress));
+    if (b.permanentAddress != null) add('permanent_address', typeof b.permanentAddress === 'string' ? b.permanentAddress : JSON.stringify(b.permanentAddress));
+
     await query(
-      `INSERT INTO employees (id, code, first_name, last_name, designation, status, joining_date, email, phone,
-       branch_id, company_id, department_id, division_id, grade_id, ctc, bank_name, bank_account, ifsc, pan, aadhaar)
-       VALUES (?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, code, firstName, lastName, designation, joiningDate, email, phone,
-       branchId, companyId || null, departmentId, divisionId || null, gradeId,
-       Math.round(Number(ctcRupees) * 100),
-       bankName || null, bankAccount || null, ifsc || null, pan || null, aadhaar || null]
+      `INSERT INTO employees (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+      vals
     );
+
+    // Salary block → linked "Joining" compensation, activated immediately.
+    let compId: string | null = null;
+    if (hasSalary) {
+      compId = ulid();
+      const compCode = await nextCompCode();
+      const mToAnnualPaise = (v: unknown) => {
+        if (v === '' || v == null) return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? Math.round(n * 12 * 100) : null;
+      };
+      // other_allowances amounts are stored in RUPEES (see POST /compensations);
+      // Special + Phone allowances plus any extras, annualised.
+      const otherAll: Array<{ name: string; amount: number }> = [];
+      if (Number(salary.specialAllowanceMonthly) > 0) otherAll.push({ name: 'Special Allowance', amount: Math.round(Number(salary.specialAllowanceMonthly) * 12) });
+      if (Number(salary.phoneAllowanceMonthly) > 0) otherAll.push({ name: 'Phone Allowance', amount: Math.round(Number(salary.phoneAllowanceMonthly) * 12) });
+      if (Array.isArray(salary.otherAllowances)) {
+        for (const a of salary.otherAllowances) {
+          if (a && a.name && Number(a.amount) > 0) otherAll.push({ name: String(a.name), amount: Math.round(Number(a.amount) * 12) });
+        }
+      }
+      await query(
+        `INSERT INTO compensations
+           (id, code, record_type, employee_id, effective_from, annual_ctc,
+            basic, hra, conveyance, medical_allowance, other_allowances,
+            pf_applicable, esi_applicable, status, reason_for_change)
+         VALUES (?, ?, 'Joining', ?, COALESCE(?, CURDATE()), ?, ?, ?, ?, ?, ?, ?, ?, 'Active', 'Direct add to Employee Master')`,
+        [
+          compId, compCode, id, salary.effectiveFrom || joiningDate || null, annualCtcPaise,
+          mToAnnualPaise(salary.basicMonthly), mToAnnualPaise(salary.hraMonthly),
+          mToAnnualPaise(salary.taMonthly), mToAnnualPaise(salary.medicalMonthly),
+          otherAll.length ? JSON.stringify(otherAll) : null,
+          salary.pfApplicable ? 1 : 0, salary.esiApplicable ? 1 : 0,
+        ]
+      );
+      await query('UPDATE employees SET current_compensation_id = ? WHERE id = ?', [compId, id]);
+      await writeAudit(req.user!.id, 'create', 'compensation', compId, null, { code: compCode, recordType: 'Joining', employeeId: id, annualCtcPaise });
+    }
+
     await writeAudit(req.user!.id, 'create', 'employee', id, null, {
-      id, code, firstName, lastName, designation, joiningDate, email, phone,
-      branchId, companyId, departmentId, divisionId, gradeId, ctcRupees,
+      id, code, firstName, lastName, designation, status, joiningDate, email, phone,
+      branchId, companyId, departmentId, divisionId, gradeId, annualCtcPaise, compId,
     });
-    res.status(201).json({ data: { id, code } });
+    res.status(201).json({ data: { id, code, compensationId: compId } });
   } catch (err) { next(err); }
 });
 

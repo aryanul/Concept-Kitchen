@@ -3,6 +3,7 @@ import { LoginPage } from './routes/login/LoginPage';
 import { DashboardPage } from './routes/dashboard/DashboardPage';
 import { EmployeesPage } from './routes/employees/EmployeesPage';
 import { EmployeeDetailPage } from './routes/employees/EmployeeDetailPage';
+import { EmployeeCreatePage } from './routes/employees/EmployeeCreatePage';
 import { CompensationsListPage } from './routes/compensations/CompensationsListPage';
 import { CompensationDetailPage } from './routes/compensations/CompensationDetailPage';
 import { HolidaysPage } from './routes/holidays/HolidaysPage';
@@ -94,6 +95,7 @@ export default function App() {
 
             {/* Phase 1 — placeholders until each module is built */}
             <Route path="/employees"     element={<EmployeesPage />} />
+            <Route path="/employees/new" element={<EmployeeCreatePage />} />
             <Route path="/employees/:id" element={<EmployeeDetailPage />} />
             <Route path="/compensations"      element={<CompensationsListPage />} />
             <Route path="/compensations/new"  element={<CompensationDetailPage />} />
