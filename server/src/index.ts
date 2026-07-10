@@ -10,6 +10,7 @@ import { signAccessToken, authRequired, requireRole, type Role } from './auth';
 import { registerMasterRoutes } from './masters';
 import { uploadToCloudinary } from './upload';
 import { writeAudit } from './audit';
+import { enrollFace, deletePerson, faceApiConfigured, FaceApiError } from './faceApi';
 
 const multerUpload = multer({
   storage: multer.memoryStorage(),
@@ -1924,6 +1925,61 @@ app.patch('/api/v1/applicants/:id/onboarding/header', authRequired, async (req, 
     const keys = Object.keys(body).filter((k) => map.some((m) => m[0] === k));
     await writeOnboardingActivity(aoId, req.params.id, req.user?.id ?? null, 'update_header', {
       section: sectionFromKeys(keys), meta: Object.fromEntries(keys.map((k) => [k, body[k]])),
+    });
+    res.json({ data: { id: aoId } });
+  } catch (err) { next(err); }
+});
+
+// ── Face enrollment (external Face Recognition API) ──────────────────────────
+// Registers the applicant's face against the recognition service and stamps
+// face_mapped_at so the onboarding "Face Detection" tile flips to Mapped. The
+// applicant_id doubles as the face-API person id (stable + unique).
+app.post('/api/v1/applicants/:id/face/enroll', authRequired, multerUpload.single('file'), async (req, res, next) => {
+  try {
+    if (!faceApiConfigured()) {
+      return res.status(503).json({ error: { code: 'FACE_API_UNCONFIGURED', message: 'Face Recognition API is not configured (set FACE_API_URL).' } });
+    }
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No image file provided' } });
+    const applicantId = req.params.id;
+    const aoId = await ensureOnboardingRow(applicantId);
+    const name = typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim() : applicantId;
+    const stampedAt = new Date().toISOString();
+    const { person, created } = await enrollFace({
+      personId: applicantId,
+      name,
+      meta: { source: 'onboarding', aoId },
+      buffer: file.buffer,
+      filename: file.originalname || 'face.jpg',
+      mimetype: file.mimetype,
+    });
+    await query('UPDATE applicant_onboarding SET face_mapped_at = ? WHERE id = ?', [stampedAt, aoId]);
+    await writeOnboardingActivity(aoId, applicantId, req.user?.id ?? null, 'update_header', {
+      section: 'face', meta: { action: created ? 'enrolled' : 'face_added', faceCount: person.faces?.length ?? null },
+    });
+    res.status(201).json({ data: { faceMappedAt: stampedAt, created, faceCount: person.faces?.length ?? null } });
+  } catch (err) {
+    if (err instanceof FaceApiError) {
+      return res.status(502).json({ error: { code: 'FACE_API_ERROR', message: err.message } });
+    }
+    next(err);
+  }
+});
+
+// Un-enroll: remove the person (and their faces) from the recognition service
+// and clear the stamp. Remote cleanup is best-effort — a failing face API must
+// not block clearing the local status.
+app.delete('/api/v1/applicants/:id/face', authRequired, async (req, res, next) => {
+  try {
+    const applicantId = req.params.id;
+    const aoId = await ensureOnboardingRow(applicantId);
+    if (faceApiConfigured()) {
+      try { await deletePerson(applicantId); }
+      catch (err) { if (!(err instanceof FaceApiError)) throw err; }
+    }
+    await query('UPDATE applicant_onboarding SET face_mapped_at = NULL WHERE id = ?', [aoId]);
+    await writeOnboardingActivity(aoId, applicantId, req.user?.id ?? null, 'update_header', {
+      section: 'face', meta: { action: 'unenrolled' },
     });
     res.json({ data: { id: aoId } });
   } catch (err) { next(err); }

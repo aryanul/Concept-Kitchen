@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Plus, Printer, Trash2, Mail, Phone as PhoneIcon, Activity as ActivityIcon } from 'lucide-react';
 import { toast } from 'sonner';
@@ -184,7 +184,7 @@ export function OnboardingDetailPage() {
         </div>
 
         <div style={{ padding: 24 }}>
-          {tab === 'pre'        && <PreOnboardingTab applicantId={applicantId} data={data} onRefresh={fetchAll} />}
+          {tab === 'pre'        && <PreOnboardingTab applicantId={applicantId} applicantName={applicant.full_name} data={data} onRefresh={fetchAll} />}
           {tab === 'induction'  && <InductionTab applicantId={applicantId} data={data} onRefresh={fetchAll} />}
           {tab === 'onboarding' && <OnboardingTab applicantId={applicantId} data={data} onRefresh={fetchAll} />}
           {tab === 'trainings'  && <TrainingsTab applicantId={applicantId} data={data} onRefresh={fetchAll} />}
@@ -387,7 +387,7 @@ function Header({ applicant, parent }: { applicant: Applicant; parent: AOParent 
 }
 
 // ─── Pre-Onboarding Tab ────────────────────────────────────────────────────
-function PreOnboardingTab({ applicantId, data, onRefresh }: { applicantId: string; data: FullData; onRefresh: () => void }) {
+function PreOnboardingTab({ applicantId, applicantName, data, onRefresh }: { applicantId: string; applicantName: string; data: FullData; onRefresh: () => void }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 28 }}>
       <HeaderInfoSection applicantId={applicantId} parent={data.parent} onRefresh={onRefresh} />
@@ -399,7 +399,7 @@ function PreOnboardingTab({ applicantId, data, onRefresh }: { applicantId: strin
       <EmailPhoneSection applicantId={applicantId} parent={data.parent} onRefresh={onRefresh} />
       <ErpSection applicantId={applicantId} items={data.erp ?? []} designationId={data.parent?.designation_id ?? null} onRefresh={onRefresh} />
       <IdCardSection applicantId={applicantId} parent={data.parent} onRefresh={onRefresh} />
-      <FaceBiometricsSection applicantId={applicantId} parent={data.parent} onRefresh={onRefresh} />
+      <FaceBiometricsSection applicantId={applicantId} applicantName={applicantName} parent={data.parent} onRefresh={onRefresh} />
       <AssetsSection applicantId={applicantId} items={data.assets ?? []} onRefresh={onRefresh} />
       <BuddySection applicantId={applicantId} parent={data.parent} onRefresh={onRefresh} />
     </div>
@@ -1089,22 +1089,181 @@ function IdCardSection({ applicantId, parent }: { applicantId: string; parent: A
   );
 }
 
-function FaceBiometricsSection({ applicantId, parent, onRefresh }: { applicantId: string; parent: AOParent | null; onRefresh: () => void }) {
-  const set = async (field: 'faceMappedAt' | 'biometricMappedAt', clear = false) => {
+function FaceBiometricsSection({ applicantId, applicantName, parent, onRefresh }: { applicantId: string; applicantName: string; parent: AOParent | null; onRefresh: () => void }) {
+  // Biometrics stays a manual stamp; Face Detection now enrolls against the
+  // Face Recognition API (see FaceDetectionTile).
+  const setBiometric = async (clear = false) => {
     try {
-      await api.patch(`/applicants/${applicantId}/onboarding/header`, { [field]: clear ? null : new Date().toISOString() });
+      await api.patch(`/applicants/${applicantId}/onboarding/header`, { biometricMappedAt: clear ? null : new Date().toISOString() });
       onRefresh();
     } catch { toast.error('Failed'); }
   };
   return (
     <Section title="Face & Biometrics">
       <div style={twoColGrid}>
-        <StatusTile title="Face Detection" stampedAt={parent?.face_mapped_at}
-          onMap={() => set('faceMappedAt')} onClear={() => set('faceMappedAt', true)} />
+        <FaceDetectionTile applicantId={applicantId} applicantName={applicantName}
+          stampedAt={parent?.face_mapped_at ?? null} onRefresh={onRefresh} />
         <StatusTile title="Biometrics" stampedAt={parent?.biometric_mapped_at}
-          onMap={() => set('biometricMappedAt')} onClear={() => set('biometricMappedAt', true)} />
+          onMap={() => setBiometric()} onClear={() => setBiometric(true)} />
       </div>
     </Section>
+  );
+}
+
+function apiErr(e: unknown, fallback: string): string {
+  const msg = (e as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message;
+  return msg || fallback;
+}
+
+function FaceDetectionTile({ applicantId, applicantName, stampedAt, onRefresh }: {
+  applicantId: string; applicantName: string; stampedAt: string | null; onRefresh: () => void;
+}) {
+  const [modalOpen, setModalOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const clear = async () => {
+    if (!window.confirm("Remove this person's enrolled face(s) from the recognition system?")) return;
+    setBusy(true);
+    try {
+      await api.delete(`/applicants/${applicantId}/face`);
+      toast.success('Face un-enrolled');
+      onRefresh();
+    } catch (e) { toast.error(apiErr(e, 'Failed to un-enroll')); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div style={{ border: '1px solid var(--ck-line)', borderRadius: 12, padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div>
+        <div style={{ fontWeight: 600, color: 'var(--ck-ink)' }}>Face Detection</div>
+        <div style={{ fontSize: 12, color: 'var(--ck-muted)' }}>
+          {stampedAt ? `Enrolled ${new Date(stampedAt).toLocaleString()}` : 'Status: Pending'}
+        </div>
+      </div>
+      {stampedAt
+        ? <Button size="sm" onClick={clear} disabled={busy}>Clear</Button>
+        : <Button size="sm" variant="primary" onClick={() => setModalOpen(true)}>Map</Button>}
+      {modalOpen && (
+        <FaceEnrollModal applicantId={applicantId} applicantName={applicantName}
+          onClose={() => setModalOpen(false)}
+          onDone={() => { setModalOpen(false); onRefresh(); }} />
+      )}
+    </div>
+  );
+}
+
+function FaceEnrollModal({ applicantId, applicantName, onClose, onDone }: {
+  applicantId: string; applicantName: string; onClose: () => void; onDone: () => void;
+}) {
+  const [mode, setMode] = useState<'camera' | 'upload'>('camera');
+  const [blob, setBlob] = useState<Blob | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [camError, setCamError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const stopStream = () => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  };
+
+  // Start the camera when in camera mode with nothing captured yet; tear it
+  // down otherwise. Re-runs when mode flips or a capture is cleared (retake).
+  useEffect(() => {
+    let cancelled = false;
+    if (mode === 'camera' && !blob) {
+      setCamError(null);
+      navigator.mediaDevices?.getUserMedia({ video: { facingMode: 'user' }, audio: false })
+        .then((stream) => {
+          if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
+          streamRef.current = stream;
+          if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play().catch(() => {}); }
+        })
+        .catch((err) => { if (!cancelled) setCamError(err?.message || 'Cannot access camera'); });
+    } else {
+      stopStream();
+    }
+    return () => { cancelled = true; stopStream(); };
+  }, [mode, blob]);
+
+  // Revoke the last preview object URL on unmount.
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
+
+  const setCaptured = (b: Blob | null) => {
+    setPreviewUrl((old) => { if (old) URL.revokeObjectURL(old); return b ? URL.createObjectURL(b) : null; });
+    setBlob(b);
+  };
+
+  const capture = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0);
+    canvas.toBlob((b) => { if (b) setCaptured(b); }, 'image/jpeg', 0.9);
+  };
+
+  const onFile = (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (f) setCaptured(f);
+  };
+
+  const enroll = async () => {
+    if (!blob) return;
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append('file', blob, 'face.jpg');
+      form.append('name', applicantName || applicantId);
+      await api.post(`/applicants/${applicantId}/face/enroll`, form);
+      toast.success('Face enrolled');
+      onDone();
+    } catch (e) { toast.error(apiErr(e, 'Enrollment failed')); }
+    finally { setBusy(false); }
+  };
+
+  const switchMode = (m: 'camera' | 'upload') => { setCaptured(null); setMode(m); };
+
+  return (
+    <Modal open onClose={onClose} title="Enroll Face" subtitle={applicantName} width={480}
+      footer={<>
+        <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button variant="primary" onClick={enroll} disabled={!blob || busy}>{busy ? 'Enrolling…' : 'Enroll'}</Button>
+      </>}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        <Chip selected={mode === 'camera'} onClick={() => switchMode('camera')}>Camera</Chip>
+        <Chip selected={mode === 'upload'} onClick={() => switchMode('upload')}>Upload</Chip>
+      </div>
+
+      {previewUrl ? (
+        <div style={{ textAlign: 'center' }}>
+          <img src={previewUrl} alt="Face preview" style={{ maxWidth: '100%', maxHeight: 300, borderRadius: 10 }} />
+          <div style={{ marginTop: 10 }}>
+            <Button size="sm" variant="ghost" onClick={() => setCaptured(null)}>
+              {mode === 'camera' ? 'Retake' : 'Choose again'}
+            </Button>
+          </div>
+        </div>
+      ) : mode === 'camera' ? (
+        <div style={{ textAlign: 'center' }}>
+          {camError ? (
+            <div style={{ color: 'var(--ck-danger-fg)', fontSize: 13, padding: '16px 0' }}>{camError}. Try Upload instead.</div>
+          ) : (
+            <>
+              <video ref={videoRef} playsInline muted style={{ width: '100%', maxHeight: 300, borderRadius: 10, background: '#000' }} />
+              <div style={{ marginTop: 10 }}><Button size="sm" variant="primary" onClick={capture}>Capture</Button></div>
+            </>
+          )}
+        </div>
+      ) : (
+        <label style={{ display: 'block', border: '1px dashed var(--ck-line)', borderRadius: 10, padding: 24, textAlign: 'center', cursor: 'pointer', fontSize: 13, color: 'var(--ck-muted)' }}>
+          <input type="file" accept="image/*" onChange={onFile} style={{ display: 'none' }} />
+          Click to choose an image file
+        </label>
+      )}
+    </Modal>
   );
 }
 
