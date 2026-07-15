@@ -8,9 +8,13 @@ import { ulid } from 'ulid';
 import { query } from './db';
 import { signAccessToken, authRequired, requireRole, type Role } from './auth';
 import { registerMasterRoutes } from './masters';
+import { registerRelievingRoutes } from './relieving';
+import { registerDocumentRoutes } from './documents';
 import { uploadToCloudinary } from './upload';
 import { writeAudit } from './audit';
 import { enrollFace, deletePerson, faceApiConfigured, FaceApiError } from './faceApi';
+import { ckApiConfigured } from './ckApi';
+import { ckSyncAll } from './ckSync';
 
 const multerUpload = multer({
   storage: multer.memoryStorage(),
@@ -39,10 +43,51 @@ app.use(express.json({ limit: '8mb' })); // headroom for base64 photo data URLs 
 
 // Master routes registered AFTER global middleware so req.body / CORS headers are available
 registerMasterRoutes(app);
+registerRelievingRoutes(app);
+registerDocumentRoutes(app);
 
 
 app.get('/api/v1/healthz', (_req, res) => {
   res.json({ status: 'ok', uptime: process.uptime() });
+});
+
+// --- Concept Kitchen master-data sync ---
+// Mirrors CK's central masters into our tables (see ckSync.ts). Sync mutates
+// masters, so it is HR_ADMIN-only; status is readable by any authed user so the
+// Settings page can show coverage counts.
+
+app.get('/api/v1/ck/status', authRequired, async (_req, res, next) => {
+  try {
+    const tables = [
+      'hiring_companies', 'branches', 'locations', 'departments',
+      'divisions', 'designations', 'skills', 'lookups',
+    ];
+    const counts: Record<string, number> = {};
+    for (const t of tables) {
+      const rows = await query<{ n: number | string }>(
+        'SELECT COUNT(*) AS n FROM `' + t + '` WHERE ck_id IS NOT NULL'
+      );
+      counts[t] = Number(rows[0]?.n ?? 0);
+    }
+    res.json({ data: { configured: ckApiConfigured(), counts } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/v1/ck/sync', authRequired, requireRole('HR_ADMIN'), async (req, res, next) => {
+  try {
+    if (!ckApiConfigured()) {
+      return res.status(503).json({
+        error: { code: 'NOT_CONFIGURED', message: 'CK_API_URL is not set on the server' },
+      });
+    }
+    const summary = await ckSyncAll();
+    writeAudit(req.user!.id, 'run', 'ck-sync', ulid(), null, summary).catch(() => {});
+    res.json({ data: summary });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // --- Auth ---

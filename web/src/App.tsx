@@ -51,7 +51,10 @@ import {
 } from './routes/masters/MasterPages';
 import { InductionTemplateMasterPage, OnboardingTemplateMasterPage } from './routes/masters/TemplateMasterPages';
 import { ActivityLogPage } from './routes/activity-log/ActivityLogPage';
-import { StubPage } from './routes/StubPage';
+import { SyncSettingsPage } from './routes/settings/SyncSettingsPage';
+import { DocumentSettingsPage } from './routes/settings/DocumentSettingsPage';
+import { ExitListPage } from './routes/relieving/ExitListPage';
+import { ExitDetailPage } from './routes/relieving/ExitDetailPage';
 import { WipePage } from './routes/dev/WipePage';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AppLayout } from './components/shell/AppLayout';
@@ -119,11 +122,12 @@ export default function App() {
             <Route path="/onboarding/:applicantId" element={<OnboardingDetailPage />} />
             <Route path="/onboarding/:applicantId/id-card" element={<IdCardPage />} />
 
-            {/* Phase 3 stubs */}
-            <Route path="/exit-clearance" element={<StubPage title="Exit Clearance"          phase="Phase 3" />} />
-            <Route path="/fnf"            element={<StubPage title="Full & Final Settlement" phase="Phase 3" />} />
+            {/* Phase 3 — Relieving */}
+            <Route path="/exit-clearance"     element={<ExitListPage />} />
+            <Route path="/exit-clearance/:id" element={<ExitDetailPage />} />
 
-            <Route path="/settings"      element={<StubPage title="Settings" phase="a later step" />} />
+            <Route path="/settings"           element={<SyncSettingsPage />} />
+            <Route path="/settings/documents" element={<DocumentSettingsPage />} />
 
             {/* Dev-only DB wipe utility (HR_ADMIN gated server-side) */}
             <Route path="/dev/wipe"      element={<WipePage />} />

@@ -6,7 +6,7 @@ import {
   Clock, CalendarDays, ClipboardCheck, Wallet, FileText, Banknote,
   TrendingUp, CalendarClock, Plane, Gift,
   Building2, LocateFixed, ClipboardList, Sparkles, BookOpen, Tag,
-  Presentation as PresentationIcon, MapPin, Activity,
+  Presentation as PresentationIcon, MapPin, Activity, RefreshCw,
   type LucideIcon,
 } from 'lucide-react';
 import { Avatar } from '../ui/Avatar';
@@ -48,14 +48,11 @@ const NAV: Item[] = [
       { id: 'incentives',    path: '/incentives',    label: 'Incentives & Perks',       icon: Gift },
     ],
   },
-  {
-    id: 'relieving', label: 'Relieving', icon: LogOut, children: [
-      { id: 'exit-clearance', path: '/exit-clearance', label: 'Exit Clearance' },
-      { id: 'fnf',            path: '/fnf',            label: 'Full & Final' },
-    ],
-  },
+  { id: 'relieving', path: '/exit-clearance', label: 'Relieving', icon: LogOut },
   {
     id: 'settings', label: 'Settings', icon: Settings, children: [
+      { id: 'settings-sync', path: '/settings', label: 'Master Data Sync', icon: RefreshCw },
+      { id: 'settings-documents', path: '/settings/documents', label: 'Document Templates', icon: FileText },
       { id: 'masters-companies', path: '/masters/companies', label: 'Company Master', icon: Building2 },
       { id: 'masters-branches', path: '/masters/branches', label: 'Branch Master', icon: Building2 },
       { id: 'masters-locations', path: '/masters/locations', label: 'Location Master', icon: LocateFixed },
