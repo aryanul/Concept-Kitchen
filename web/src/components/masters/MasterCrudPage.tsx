@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
-import { api } from '../../lib/api';
+import { toast } from 'sonner';
+import { api, apiErrorMessage } from '../../lib/api';
 import { Card } from '../ui/Card';
 import { PageHeader } from '../ui/PageHeader';
 import { Button } from '../ui/Button';
@@ -131,10 +132,11 @@ export function MasterCrudPage<Row extends { id: string }>({
     if (!window.confirm(`Delete ${title.toLowerCase()} item?`)) return;
     try {
       await api.delete(`${delBase}/${row.id}`);
+      toast.success('Deleted');
       onChanged?.();
       fetchRows();
-    } catch {
-      window.alert('Delete failed');
+    } catch (err) {
+      toast.error(apiErrorMessage(err, 'Delete failed'));
     }
   };
 

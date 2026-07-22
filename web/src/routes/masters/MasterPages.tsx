@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Building2, LayoutGrid, LocateFixed, Shield, Sparkles, Wallet, CalendarDays, ClipboardList, BookOpen, ListChecks, Tag, Plus, Phone, Package, Presentation as PresentationIcon, FileText, MapPin, Cpu, ClipboardCheck } from 'lucide-react';
-import { api } from '../../lib/api';
+import { toast } from 'sonner';
+import { api, apiErrorMessage } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { StatusPill } from '../../components/ui/StatusPill';
@@ -1157,8 +1158,8 @@ export function LookupMasterPage() {
   };
   const remove = async (row: LookupValue) => {
     if (!window.confirm(`Delete "${row.label}"?`)) return;
-    try { await api.delete(`/lookups/${row.id}`); fetchValues(activeCat); }
-    catch { window.alert('Delete failed'); }
+    try { await api.delete(`/lookups/${row.id}`); toast.success('Deleted'); fetchValues(activeCat); }
+    catch (err) { toast.error(apiErrorMessage(err, 'Delete failed')); }
   };
 
   const cat = cats.find((c) => c.code === activeCat);

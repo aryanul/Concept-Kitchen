@@ -3,7 +3,8 @@
 // activities). Picked on a Job Profile and auto-populated into onboarding.
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Search } from 'lucide-react';
-import { api } from '../../lib/api';
+import { toast } from 'sonner';
+import { api, apiErrorMessage } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
@@ -87,7 +88,8 @@ function TemplateMaster({ title, subtitle, endpoint, addLabel, sections }: {
   };
   const onDelete = async (row: TemplateRow) => {
     if (!window.confirm(`Delete template "${row.name}"?`)) return;
-    try { await api.delete(`${endpoint}/${row.id}`); fetchRows(); } catch { window.alert('Delete failed'); }
+    try { await api.delete(`${endpoint}/${row.id}`); toast.success('Deleted'); fetchRows(); }
+    catch (err) { toast.error(apiErrorMessage(err, 'Delete failed')); }
   };
   const onSave = async () => {
     if (!name.trim()) { window.alert('Name is required'); return; }

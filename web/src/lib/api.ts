@@ -11,6 +11,14 @@ api.interceptors.request.use((cfg) => {
   return cfg;
 });
 
+// Pull the server's error-envelope message out of an axios error, falling back
+// to a caller-supplied default. Use this in catch blocks so validation messages
+// (e.g. IN_USE on blocked deletes) reach the user instead of a generic alert.
+export function apiErrorMessage(err: unknown, fallback: string): string {
+  const e = err as { response?: { data?: { error?: { message?: string } } } };
+  return e?.response?.data?.error?.message ?? fallback;
+}
+
 // Token expired or invalidated server-side — clear the stale session and bounce to /login
 // so the user re-authenticates instead of staring at a broken-looking dashboard.
 api.interceptors.response.use(

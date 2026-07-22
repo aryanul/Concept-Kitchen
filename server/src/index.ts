@@ -4480,6 +4480,30 @@ app.post('/api/v1/dev/wipe/delete', authRequired, requireRole('HR_ADMIN'), async
   }
 });
 
+// FK-violation → friendly 409/400. The schema's FOREIGN KEYs are the source of
+// truth for "is this record used somewhere": a DELETE blocked by errno 1451
+// means referencing rows still exist, so surface that as an in-use validation
+// error (not a generic 500) and let the UI tell the user why. 1452 is the
+// mirror case — an INSERT/UPDATE pointing at a record that doesn't exist.
+const fkErrorHandler: ErrorRequestHandler = (err, _req, res, next) => {
+  const e = err as { errno?: number; code?: string };
+  if (e?.errno === 1451 || e?.code === 'ER_ROW_IS_REFERENCED_2') {
+    return res.status(409).json({
+      error: {
+        code: 'IN_USE',
+        message: 'Cannot delete — this record is still used by other data (employees, transactions or templates). Remove or reassign those references first.',
+      },
+    });
+  }
+  if (e?.errno === 1452 || e?.code === 'ER_NO_REFERENCED_ROW_2') {
+    return res.status(400).json({
+      error: { code: 'VALIDATION', message: 'A referenced record does not exist (it may have been deleted).' },
+    });
+  }
+  next(err);
+};
+app.use(fkErrorHandler);
+
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   console.error('[server] error:', err);
   res.status(500).json({ error: { code: 'INTERNAL', message: 'Server error' } });

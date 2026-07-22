@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Clock, MapPin, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { api } from '../../lib/api';
+import { api, apiErrorMessage } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
@@ -237,7 +237,7 @@ export function ShiftsPage() {
       await api.delete(`/shifts/${s.id}`);
       toast.success('Shift deleted');
       fetchShifts();
-    } catch { toast.error('Failed to delete shift'); }
+    } catch (err) { toast.error(apiErrorMessage(err, 'Failed to delete shift')); }
   };
 
   const openAddBreak = () => {
