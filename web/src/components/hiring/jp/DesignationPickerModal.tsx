@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, Plus, Briefcase } from 'lucide-react';
+import { Search, Plus, Briefcase, Filter } from 'lucide-react';
 import { toast } from 'sonner';
 import { Modal } from '../../ui/Modal';
 import { Button } from '../../ui/Button';
@@ -18,7 +18,7 @@ export type Designation = {
 };
 
 type Dept = { id: string; name: string };
-type Division = { id: string; code: string | null; name: string };
+type Division = { id: string; code: string | null; name: string; department_id: string | null };
 
 type Props = {
   open: boolean;
@@ -30,6 +30,8 @@ export function DesignationPickerModal({ open, onClose, onPicked }: Props) {
   const [tab, setTab] = useState<'pick' | 'create'>('pick');
   const [designations, setDesignations] = useState<Designation[]>([]);
   const [search, setSearch] = useState('');
+  const [deptFilter, setDeptFilter] = useState('');
+  const [divisionFilter, setDivisionFilter] = useState('');
   const [loading, setLoading] = useState(false);
 
   // Create-new form state
@@ -55,15 +57,35 @@ export function DesignationPickerModal({ open, onClose, onPicked }: Props) {
     api.get<{ data: Division[] }>('/divisions').then((r) => setDivisions(r.data.data)).catch(() => {});
   }, [open]);
 
-  const filtered = search.trim()
-    ? designations.filter((d) => {
-        const q = search.toLowerCase();
-        return d.name.toLowerCase().includes(q)
-          || d.department_name?.toLowerCase().includes(q)
-          || d.division_name?.toLowerCase().includes(q)
-          || d.code?.toLowerCase().includes(q);
-      })
-    : designations;
+  // Division dropdown narrows to the picked department, so the two filters can't
+  // contradict each other. Divisions with no department stay visible (unlinked rows
+  // would otherwise be unreachable once a department is picked).
+  const divisionChoices = deptFilter
+    ? divisions.filter((d) => !d.department_id || d.department_id === deptFilter)
+    : divisions;
+
+  const q = search.trim().toLowerCase();
+  const filtered = designations.filter((d) => {
+    if (deptFilter && d.department_id !== deptFilter) return false;
+    if (divisionFilter && d.division_id !== divisionFilter) return false;
+    if (!q) return true;
+    return d.name.toLowerCase().includes(q)
+      || d.department_name?.toLowerCase().includes(q)
+      || d.division_name?.toLowerCase().includes(q)
+      || d.code?.toLowerCase().includes(q);
+  });
+
+  const filtersOn = Boolean(q || deptFilter || divisionFilter);
+  const clearFilters = () => { setSearch(''); setDeptFilter(''); setDivisionFilter(''); };
+
+  // Changing department invalidates a division from another department.
+  const onDeptFilterChange = (value: string) => {
+    setDeptFilter(value);
+    if (value && divisionFilter) {
+      const current = divisions.find((d) => d.id === divisionFilter);
+      if (current?.department_id && current.department_id !== value) setDivisionFilter('');
+    }
+  };
 
   const createDesignation = async () => {
     if (!name.trim() || !departmentId) {
@@ -111,15 +133,43 @@ export function DesignationPickerModal({ open, onClose, onPicked }: Props) {
 
       {tab === 'pick' ? (
         <>
-          <div style={{ position: 'relative', marginBottom: 12 }}>
+          <div style={{ position: 'relative', marginBottom: 8 }}>
             <Search size={14} style={{ position: 'absolute', left: 12, top: 12, color: 'var(--ck-muted)' }} />
             <input value={search} onChange={(e) => setSearch(e.target.value)}
               placeholder="Search by name, department, division, code…"
               style={{ width: '100%', height: 38, padding: '0 12px 0 34px', border: '1px solid var(--ck-line)', borderRadius: 8, fontSize: 13, background: 'var(--ck-surface)' }} />
           </div>
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
+            <Filter size={14} style={{ color: 'var(--ck-muted)', flexShrink: 0 }} />
+            <select value={deptFilter} onChange={(e) => onDeptFilterChange(e.target.value)} style={filterSelect}>
+              <option value="">All departments</option>
+              {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+            <select value={divisionFilter} onChange={(e) => setDivisionFilter(e.target.value)} style={filterSelect}>
+              <option value="">All divisions</option>
+              {divisionChoices.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+            <span style={{ fontSize: 11.5, color: 'var(--ck-muted)', marginLeft: 'auto' }}>
+              {filtered.length} of {designations.length}
+            </span>
+            {filtersOn && (
+              <button onClick={clearFilters}
+                style={{ background: 'transparent', border: 'none', padding: '0 2px', cursor: 'pointer', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-accent)' }}>
+                Clear
+              </button>
+            )}
+          </div>
+
           <div style={{ maxHeight: 380, overflowY: 'auto', border: '1px solid var(--ck-line)', borderRadius: 8 }}>
             {loading && <div style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)', fontSize: 13 }}>Loading…</div>}
-            {!loading && filtered.length === 0 && <div style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)', fontSize: 13 }}>No designations found. Use "Create new" tab to add one.</div>}
+            {!loading && filtered.length === 0 && (
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)', fontSize: 13 }}>
+                {filtersOn
+                  ? 'No designations match this search / filter.'
+                  : 'No designations found. Use "Create new" tab to add one.'}
+              </div>
+            )}
             {!loading && filtered.map((d) => (
               <button key={d.id} onClick={() => onPicked(d)}
                 style={{
@@ -146,7 +196,7 @@ export function DesignationPickerModal({ open, onClose, onPicked }: Props) {
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Senior Manager" style={inp} />
           </Field>
           <Field label="Department *">
-            <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} style={inp}>
+            <select value={departmentId} onChange={(e) => { setDepartmentId(e.target.value); setDivisionId(''); }} style={inp}>
               <option value="">Select department</option>
               {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
@@ -154,7 +204,8 @@ export function DesignationPickerModal({ open, onClose, onPicked }: Props) {
           <Field label="Division (optional)">
             <select value={divisionId} onChange={(e) => setDivisionId(e.target.value)} style={inp}>
               <option value="">Select division</option>
-              {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              {(departmentId ? divisions.filter((d) => !d.department_id || d.department_id === departmentId) : divisions)
+                .map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </Field>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 6 }}>
@@ -170,6 +221,11 @@ export function DesignationPickerModal({ open, onClose, onPicked }: Props) {
 }
 
 const inp: React.CSSProperties = { width: '100%', height: 38, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' };
+
+const filterSelect: React.CSSProperties = {
+  height: 32, maxWidth: 220, padding: '0 8px', border: '1px solid var(--ck-line)',
+  borderRadius: 7, fontSize: 12.5, background: 'var(--ck-surface)', color: 'var(--ck-ink)', cursor: 'pointer',
+};
 
 function tabStyle(active: boolean): React.CSSProperties {
   return {

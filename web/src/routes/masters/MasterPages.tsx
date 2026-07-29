@@ -18,7 +18,7 @@ type Branch = { id: string; code: string; name: string; city: string; kind: stri
 type AttendanceRule = { id: string; code: string | null; name: string; description: string | null; is_active: number | boolean };
 type CompanyOption = { id: string; name: string };
 type SalaryGrade = { id: string; code: string; kind: string; min_gross: number | string; max_gross: number | string; employee_count?: number | string };
-type Division = { id: string; code: string | null; name: string; description: string | null; is_active: number | boolean };
+type Division = { id: string; code: string | null; name: string; description: string | null; department_id: string | null; department_name?: string | null; is_active: number | boolean };
 type Designation = {
   id: string;
   code: string | null;
@@ -207,6 +207,7 @@ export function DivisionMasterPage() {
       columns={[
         { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
         { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Department', render: (row) => row.department_name ?? '—' },
         { header: 'Description', render: (row) => row.description ?? '—' },
         { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
       ]}
@@ -218,7 +219,7 @@ export function DivisionMasterPage() {
       ]}
       rowToValues={(row) => row ? { code: row.code ?? '', name: row.name, description: row.description ?? '', isActive: Boolean(row.is_active) } : { code: '', name: '', description: '', isActive: true }}
       buildPayload={(values) => ({ code: values.code || undefined, name: values.name, description: values.description || undefined, isActive: Boolean(values.isActive) })}
-      searchKeys={['code', 'name', 'description']}
+      searchKeys={['code', 'name', 'description', 'department_name']}
     />
   );
 }
@@ -946,18 +947,20 @@ export function DddMasterPage() {
               columns={[
                 { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
                 { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+                { header: 'Department', render: (row) => row.department_name ?? '—' },
                 { header: 'Description', render: (row) => row.description ?? '—' },
                 { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
               ]}
               buildFields={() => [
                 { name: 'code', label: 'Code', type: 'text', placeholder: 'DIV001' },
                 { name: 'name', label: 'Name', type: 'text', placeholder: 'Operations', required: true },
+                { name: 'departmentId', label: 'Department', type: 'select', options: departmentOptions },
                 { name: 'description', label: 'Description', type: 'textarea', span: true },
                 { name: 'isActive', label: 'Active', type: 'checkbox', span: true },
               ]}
-              rowToValues={(row) => row ? { code: row.code ?? '', name: row.name, description: row.description ?? '', isActive: Boolean(row.is_active) } : { code: '', name: '', description: '', isActive: true }}
-              buildPayload={(values) => ({ code: values.code || undefined, name: values.name, description: values.description || undefined, isActive: Boolean(values.isActive) })}
-              searchKeys={['code', 'name', 'description']}
+              rowToValues={(row) => row ? { code: row.code ?? '', name: row.name, departmentId: row.department_id ?? '', description: row.description ?? '', isActive: Boolean(row.is_active) } : { code: '', name: '', departmentId: '', description: '', isActive: true }}
+              buildPayload={(values) => ({ code: values.code || undefined, name: values.name, departmentId: values.departmentId || undefined, description: values.description || undefined, isActive: Boolean(values.isActive) })}
+              searchKeys={['code', 'name', 'description', 'department_name']}
             />
           )}
           {tab === 'designation' && (

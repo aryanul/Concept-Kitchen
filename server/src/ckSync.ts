@@ -21,7 +21,7 @@
 
 import { ulid } from 'ulid';
 import { query } from './db';
-import { ckList, type CkRow } from './ckApi';
+import { ckList, ckDepartments, ckDivisions, ckDesignations, type CkRow } from './ckApi';
 
 export type DomainStat = { inserted: number; updated: number };
 export type CkSyncSummary = {
@@ -263,36 +263,57 @@ export async function ckSyncAll(): Promise<CkSyncSummary> {
     }
   } catch (e) { errors.push(`locations: ${msg(e)}`); }
 
+  // 4-6. DDD (department → division → designation).
+  //
+  // CK's flat DDD endpoints now carry the parent links on every row
+  // (division.departmentCode, designation.divisionCode + departmentCode), so the whole
+  // hierarchy arrives in three calls — the per-parent crawls (/Division/ByDepartmentId,
+  // /Designation/ByDivisionId) return the same rows and are not needed.
+  //
+  // Order matters: each level's local ids are needed to resolve the next level's FK.
+  // CK's `isActive` seeds is_active on INSERT only — it is a locally-editable column, so a
+  // re-sync must never overwrite what someone toggled here. (`departments` is a name-only
+  // table with no is_active column, so its flag is dropped.)
+  const resolve = (map: Map<number, string>, ckId: number | null) =>
+    (ckId == null ? null : map.get(ckId) ?? null);
+
   // 4. Departments → departments
+  const departmentMap = new Map<number, string>();
   try {
-    const rows = await ckList('/Department');
+    const rows = await ckDepartments();
     const mirror = await loadMirror('departments');
     await mapLimit(rows, CONCURRENCY, async (d) => {
-      const { created } = await upsertByCk('departments', mirror, d.id, trim(d.name));
+      const { id, created } = await upsertByCk('departments', mirror, d.id, trim(d.name));
+      departmentMap.set(d.id, id);
       bump('departments', created);
     });
   } catch (e) { errors.push(`departments: ${msg(e)}`); }
 
-  // 5. Divisions → divisions. The flat /Division already contains every division
-  // (verified: ids 1..32 incl. the department-scoped ones), and our divisions table
-  // has no department_id column, so /Division/ByDepartmentId is intentionally not crawled.
+  // 5. Divisions → divisions (+ department_id, new in migration 0040)
+  const divisionMap = new Map<number, string>();
   try {
-    const rows = await ckList('/Division');
-    const mirror = await loadMirror('divisions');
+    const rows = await ckDivisions();
+    const mirror = await loadMirror('divisions', ['department_id']);
     await mapLimit(rows, CONCURRENCY, async (d) => {
-      const { created } = await upsertByCk('divisions', mirror, d.id, trim(d.name));
+      const { id, created } = await upsertByCk('divisions', mirror, d.id, trim(d.name), {
+        is_active: d.isActive ? 1 : 0,
+      });
+      divisionMap.set(d.id, id);
+      await setLink('divisions', mirror, d.id, 'department_id', resolve(departmentMap, d.departmentId));
       bump('divisions', created);
     });
   } catch (e) { errors.push(`divisions: ${msg(e)}`); }
 
-  // 6. Designations → designations. Flat list imports the base set. CK's
-  // designation→division link (/Designation/ByDivisionId/{id}) is currently empty and
-  // its contract is unconfirmed (pending Vishal), so division_id is left for a later pass.
+  // 6. Designations → designations (+ division_id and department_id)
   try {
-    const rows = await ckList('/Designation');
-    const mirror = await loadMirror('designations');
+    const rows = await ckDesignations();
+    const mirror = await loadMirror('designations', ['division_id', 'department_id']);
     await mapLimit(rows, CONCURRENCY, async (g) => {
-      const { created } = await upsertByCk('designations', mirror, g.id, trim(g.name));
+      const { created } = await upsertByCk('designations', mirror, g.id, trim(g.name), {
+        is_active: g.isActive ? 1 : 0,
+      });
+      await setLink('designations', mirror, g.id, 'division_id', resolve(divisionMap, g.divisionId));
+      await setLink('designations', mirror, g.id, 'department_id', resolve(departmentMap, g.departmentId));
       bump('designations', created);
     });
   } catch (e) { errors.push(`designations: ${msg(e)}`); }

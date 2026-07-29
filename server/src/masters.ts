@@ -338,7 +338,12 @@ export function registerMasterRoutes(app: Application) {
   // DDD masters
   app.get('/api/v1/divisions', authRequired, async (_req, res, next) => {
     try {
-      const rows = await query('SELECT * FROM divisions ORDER BY name');
+      const rows = await query(
+        `SELECT d.*, dept.name AS department_name
+         FROM divisions d
+         LEFT JOIN departments dept ON dept.id = d.department_id
+         ORDER BY d.name`
+      );
       res.json({ data: rows });
     } catch (err) {
       next(err);
@@ -347,15 +352,16 @@ export function registerMasterRoutes(app: Application) {
 
   app.post('/api/v1/divisions', authRequired, async (req, res, next) => {
     try {
-      const { code, name, description, isActive } = req.body ?? {};
+      const { code, name, description, departmentId, isActive } = req.body ?? {};
       if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
       const id = ulid();
       const divisionCode = typeof code === 'string' && code.trim() ? code.trim() : await nextCode('divisions', 'code', 'DIV');
-      await query('INSERT INTO divisions (id, code, name, description, is_active) VALUES (?, ?, ?, ?, ?)', [
+      await query('INSERT INTO divisions (id, code, name, description, department_id, is_active) VALUES (?, ?, ?, ?, ?, ?)', [
         id,
         divisionCode,
         name,
         description || null,
+        departmentId || null,
         parseBool(isActive),
       ]);
       res.status(201).json({ data: { id, code: divisionCode } });
@@ -370,6 +376,7 @@ export function registerMasterRoutes(app: Application) {
         { key: 'code', column: 'code' },
         { key: 'name', column: 'name' },
         { key: 'description', column: 'description' },
+        { key: 'departmentId', column: 'department_id' },
         { key: 'isActive', column: 'is_active' },
       ]);
       if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
