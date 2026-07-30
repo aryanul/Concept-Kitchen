@@ -15,6 +15,7 @@ import { writeAudit } from './audit';
 import { enrollFace, deletePerson, faceApiConfigured, FaceApiError } from './faceApi';
 import { ckApiConfigured } from './ckApi';
 import { ckSyncAll } from './ckSync';
+import { initCkSchedule, maybeSyncOnLogin } from './ckSchedule';
 
 const multerUpload = multer({
   storage: multer.memoryStorage(),
@@ -128,6 +129,10 @@ app.post('/api/v1/auth/login', async (req, res, next) => {
 
     // Fire-and-forget — don't let audit failure block the login response
     writeAudit(user.id, 'login', 'auth', user.id, null, { email: user.email }).catch(() => {});
+
+    // Fire-and-forget — refresh CK masters at most once per IST half-day window.
+    // Never blocks or slows the login response (see ckSchedule.ts).
+    maybeSyncOnLogin(user.id);
 
     res.json({
       data: {
@@ -4512,4 +4517,6 @@ app.use(errorHandler);
 
 app.listen(port, () => {
   console.log(`[server] listening on http://localhost:${port}`);
+  // Arm unattended CK master-data syncs (twice-daily on login + midnight IST).
+  initCkSchedule().catch((e) => console.error('[ck-sync] schedule init failed:', e));
 });
