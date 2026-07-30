@@ -6,6 +6,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { Avatar } from '../ui/Avatar';
 import { Tooltip } from '../ui/Tooltip';
+import { SyncIndicator } from './SyncIndicator';
 import { useAuth } from '../../stores/auth';
 import { api } from '../../lib/api';
 
@@ -109,6 +110,9 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         />
       </div>
       <div className="ck-topbar-spacer" />
+
+      {/* Non-blocking master-data sync indicator (login/manual/midnight syncs) */}
+      <SyncIndicator />
 
       <div className="ck-topbar-chips">
         <Chip icon={Clock} label={tStr} />

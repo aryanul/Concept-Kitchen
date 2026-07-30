@@ -35,7 +35,24 @@ const IST_OFFSET_MS = (5 * 60 + 30) * 60_000;
 // The actor recorded for unattended syncs (audit_logs.actor_id is CHAR(26) NOT NULL).
 const SYSTEM_ACTOR = '0'.repeat(26);
 
-let syncing = false;
+// Shared "a sync is running" flag — set by BOTH the manual route and the auto-syncs,
+// so it's the single source of truth the UI polls (GET /ck/sync-state) to show a loader.
+let inFlight = false;
+/** Whether any CK sync (manual or automatic) is currently running. */
+export function isSyncing(): boolean {
+  return inFlight;
+}
+/** Acquire the sync lock. Returns false if a sync is already running. */
+export function tryBeginSync(): boolean {
+  if (inFlight) return false;
+  inFlight = true;
+  return true;
+}
+/** Release the sync lock. Always call from a finally after tryBeginSync() returned true. */
+export function endSync(): void {
+  inFlight = false;
+}
+
 // The window key (`YYYY-MM-DD:AM|PM`, IST) of the last SUCCESSFUL sync. Null until the
 // first sync or until recovered from the DB on boot. Only ever advanced on success, so a
 // failed sync leaves the window open for the next login to retry.
@@ -86,8 +103,7 @@ async function loadLastSyncedWindow(): Promise<string | null> {
  * window marker and writes an audit row only on success.
  */
 async function runGuardedSync(actorId: string, trigger: 'login' | 'cron-midnight'): Promise<void> {
-  if (syncing || !ckApiConfigured()) return;
-  syncing = true;
+  if (!ckApiConfigured() || !tryBeginSync()) return;
   try {
     const summary = await ckSyncAll();
     lastSyncedWindow = windowKey(new Date());
@@ -103,7 +119,7 @@ async function runGuardedSync(actorId: string, trigger: 'login' | 'cron-midnight
   } catch (e) {
     console.error(`[ck-sync] ${trigger} sync failed:`, e);
   } finally {
-    syncing = false;
+    endSync();
   }
 }
 
@@ -114,7 +130,7 @@ async function runGuardedSync(actorId: string, trigger: 'login' | 'cron-midnight
  */
 export function maybeSyncOnLogin(actorId: string): void {
   if (!ckApiConfigured()) return;
-  if (syncing || windowKey(new Date()) === lastSyncedWindow) return;
+  if (isSyncing() || windowKey(new Date()) === lastSyncedWindow) return;
   void runGuardedSync(actorId, 'login');
 }
 

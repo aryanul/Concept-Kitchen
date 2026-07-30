@@ -72,6 +72,8 @@ export function SyncSettingsPage() {
         toast.error('CK API is not configured on the server (CK_API_URL missing).');
       } else if (e.response?.status === 403) {
         toast.error('Only HR Admins can run a master sync.');
+      } else if (e.response?.status === 409) {
+        toast.info('A sync is already running (auto-sync). Please wait for it to finish.');
       } else {
         toast.error(e.response?.data?.error?.message ?? 'Sync failed. Please try again.');
       }
@@ -101,6 +103,18 @@ export function SyncSettingsPage() {
           </Button>
         }
       />
+
+      {syncing && (
+        <Card style={{ marginBottom: 16, borderColor: 'var(--ck-accent)' }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
+            <RefreshCw size={16} className="ck-spin" style={{ color: 'var(--ck-accent)', flexShrink: 0 }} />
+            <div style={{ fontSize: 13, color: 'var(--ck-ink-soft)' }}>
+              Syncing masters from Concept Kitchen… this usually takes a few seconds. You can keep working — it runs in the background.
+            </div>
+          </div>
+          <div className="ck-progress"><span /></div>
+        </Card>
+      )}
 
       {!configured && (
         <Card style={{ marginBottom: 16, borderColor: 'var(--ck-warn, #d97706)' }}>

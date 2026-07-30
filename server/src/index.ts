@@ -15,7 +15,7 @@ import { writeAudit } from './audit';
 import { enrollFace, deletePerson, faceApiConfigured, FaceApiError } from './faceApi';
 import { ckApiConfigured } from './ckApi';
 import { ckSyncAll } from './ckSync';
-import { initCkSchedule, maybeSyncOnLogin } from './ckSchedule';
+import { initCkSchedule, maybeSyncOnLogin, isSyncing, tryBeginSync, endSync } from './ckSchedule';
 
 const multerUpload = multer({
   storage: multer.memoryStorage(),
@@ -76,6 +76,12 @@ app.get('/api/v1/ck/status', authRequired, async (_req, res, next) => {
   }
 });
 
+// Lightweight, in-memory sync-state probe (no DB) — polled by the UI to show a
+// non-blocking "syncing master data" loader for manual AND auto (login/midnight) syncs.
+app.get('/api/v1/ck/sync-state', authRequired, (_req, res) => {
+  res.json({ data: { syncing: isSyncing() } });
+});
+
 app.post('/api/v1/ck/sync', authRequired, requireRole('HR_ADMIN'), async (req, res, next) => {
   try {
     if (!ckApiConfigured()) {
@@ -83,9 +89,20 @@ app.post('/api/v1/ck/sync', authRequired, requireRole('HR_ADMIN'), async (req, r
         error: { code: 'NOT_CONFIGURED', message: 'CK_API_URL is not set on the server' },
       });
     }
-    const summary = await ckSyncAll();
-    writeAudit(req.user!.id, 'run', 'ck-sync', ulid(), null, summary).catch(() => {});
-    res.json({ data: summary });
+    // Share the one lock with the auto-syncs so a manual run can't overlap a login/
+    // midnight run (and vice versa); the UI surfaces this as "already running".
+    if (!tryBeginSync()) {
+      return res.status(409).json({
+        error: { code: 'SYNC_IN_PROGRESS', message: 'A master data sync is already running. Please wait for it to finish.' },
+      });
+    }
+    try {
+      const summary = await ckSyncAll();
+      writeAudit(req.user!.id, 'run', 'ck-sync', ulid(), null, { ...summary, trigger: 'manual' }).catch(() => {});
+      res.json({ data: summary });
+    } finally {
+      endSync();
+    }
   } catch (err) {
     next(err);
   }
