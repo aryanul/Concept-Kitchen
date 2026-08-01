@@ -2,15 +2,19 @@
 // Base URL + auth key come from env (CK_API_URL / CK_API_KEY); auth is a single
 // `AuthKey` header. Uses Node 20 global fetch — no extra deps (mirrors faceApi.ts).
 //
-// Two response shapes are in play:
-//   * Most endpoints (/Company, /Branch, /Location/ByBranch, /SkillMaster,
-//     /Specification/*) return a flat array of { id:number, name:string } — `ckList`.
+// Three response shapes are in play:
+//   * Most endpoints (/Company, /Branch, /Location/ByBranch, /Specification/*)
+//     return a flat array of { id:number, name:string } — `ckList`.
 //   * The DDD endpoints (/Department, /Division, /Designation) return domain-named
 //     fields instead (departmentCode/departmentName/…) and carry the parent links
 //     (division→department, designation→division+department) plus isActive —
 //     `ckDepartments` / `ckDivisions` / `ckDesignations`.
-// The DDD readers accept the legacy { id, name } shape too, so a CK rollback or a
-// partially-migrated endpoint still imports (just without links).
+//   * The Skill endpoints (/SkillHead, /SkillType, /SkillMaster) use their own
+//     id/name field naming (headId/headName, typeId/typeName, skillsId/skillsName)
+//     plus a parent link (headId on SkillType, typeId on SkillMaster) and a raw
+//     imageId — `ckSkillHeads` / `ckSkillTypes` / `ckSkillMasters`.
+// The DDD and Skill readers accept the legacy { id, name } shape too, so a CK
+// rollback or a partially-migrated endpoint still imports (just without links).
 
 const BASE = (process.env.CK_API_URL || '').replace(/\/$/, '');
 const KEY = process.env.CK_API_KEY || '';
@@ -117,6 +121,51 @@ export async function ckDesignations(path = '/Designation'): Promise<CkDesignati
     const base = ddd(r, 'designationCode', 'designationName');
     return base
       ? [{ ...base, divisionId: ref(r.divisionCode), departmentId: ref(r.departmentCode) }]
+      : [];
+  });
+}
+
+// --- Skill hierarchy (SkillHead / SkillType / SkillMaster) -----------------
+
+export type CkSkillHead = { id: number; name: string; isActive: boolean; imageId: number | null };
+export type CkSkillType = CkSkillHead & { headId: number | null };
+export type CkSkillMaster = CkSkillHead & { typeId: number | null; description: string | null };
+
+/** Shared id/name/isActive/imageId extraction for the Skill* endpoints (id/name field, not xxxCode/xxxName). */
+function skillBase(row: Record<string, unknown>, idKey: string, nameKey: string): CkSkillHead | null {
+  const id = ref(pick(row, idKey, 'id'));
+  const rawName = pick(row, nameKey, 'name');
+  if (id == null || typeof rawName !== 'string') return null;
+  return {
+    id,
+    name: rawName,
+    isActive: row.isActive !== false,
+    imageId: ref(row.imageId),
+  };
+}
+
+export async function ckSkillHeads(path = '/SkillHead'): Promise<CkSkillHead[]> {
+  const rows = await ckFetchArray(path);
+  return rows.flatMap((r) => {
+    const base = skillBase(r, 'headId', 'headName');
+    return base ? [base] : [];
+  });
+}
+
+export async function ckSkillTypes(path = '/SkillType'): Promise<CkSkillType[]> {
+  const rows = await ckFetchArray(path);
+  return rows.flatMap((r) => {
+    const base = skillBase(r, 'typeId', 'typeName');
+    return base ? [{ ...base, headId: ref(r.headId) }] : [];
+  });
+}
+
+export async function ckSkillMasters(path = '/SkillMaster'): Promise<CkSkillMaster[]> {
+  const rows = await ckFetchArray(path);
+  return rows.flatMap((r) => {
+    const base = skillBase(r, 'skillsId', 'skillsName');
+    return base
+      ? [{ ...base, typeId: ref(r.typeId), description: typeof r.description === 'string' ? r.description : null }]
       : [];
   });
 }

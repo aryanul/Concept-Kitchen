@@ -330,7 +330,8 @@ const RESOURCE_LABELS: Record<string, string> = {
   // Masters (masters.ts)
   branches: 'Branch', departments: 'Department', designations: 'Designation',
   divisions: 'Division', locations: 'Location', shifts: 'Shift',
-  'salary-grades': 'Salary Grade', skills: 'Skill', 'training-modules': 'Training Module',
+  'salary-grades': 'Salary Grade', 'skill-heads': 'Skill Head', 'skill-types': 'Skill Type',
+  skills: 'Skill', 'training-modules': 'Training Module',
   'induction-templates': 'Induction Template', 'onboarding-templates': 'Onboarding Template',
   'attendance-rules': 'Attendance Rule', lookups: 'Lookup', tags: 'Tag',
   users: 'User', holidays: 'Holiday (Master)',

@@ -61,7 +61,7 @@ app.get('/api/v1/ck/status', authRequired, async (_req, res, next) => {
   try {
     const tables = [
       'hiring_companies', 'branches', 'locations', 'departments',
-      'divisions', 'designations', 'skills', 'lookups',
+      'divisions', 'designations', 'skill_heads', 'skill_types', 'skills', 'lookups',
     ];
     const counts: Record<string, number> = {};
     for (const t of tables) {
@@ -208,7 +208,7 @@ app.get('/api/v1/auth/me', authRequired, async (req, res, next) => {
 app.get('/api/v1/branches', authRequired, async (_req, res, next) => {
   try {
     const rows = await query(
-      `SELECT b.id, b.code, b.name, b.city, b.kind, b.company_id,
+      `SELECT b.id, b.ck_id, b.code, b.name, b.city, b.kind, b.company_id,
               c.name AS company_name, c.lc_no AS company_lc_no
        FROM branches b
        LEFT JOIN hiring_companies c ON c.id = b.company_id
@@ -222,7 +222,7 @@ app.get('/api/v1/branches', authRequired, async (_req, res, next) => {
 
 app.get('/api/v1/departments', authRequired, async (_req, res, next) => {
   try {
-    const rows = await query('SELECT id, name FROM departments ORDER BY name');
+    const rows = await query('SELECT id, ck_id, name FROM departments ORDER BY name');
     res.json({ data: rows });
   } catch (err) {
     next(err);

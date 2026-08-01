@@ -27,6 +27,8 @@ const TABLE_LABELS: Record<string, string> = {
   departments: 'Departments',
   divisions: 'Divisions',
   designations: 'Designations',
+  skill_heads: 'Skill Heads',
+  skill_types: 'Skill Types',
   skills: 'Skills',
   lookups: 'Specifications (lookups)',
 };

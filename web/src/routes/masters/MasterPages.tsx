@@ -11,16 +11,18 @@ import { Modal } from '../../components/ui/Modal';
 import { IconAction } from '../../components/ui/IconAction';
 import { inrPaiseToRupeesShort } from '../../lib/format';
 import { MasterCrudPage } from '../../components/masters/MasterCrudPage';
+import { SkillHierarchyTree } from '../../components/masters/SkillHierarchyTree';
 import { HolidaysPage } from '../holidays/HolidaysPage';
 import { ShiftsPage } from '../shifts/ShiftsPage';
 
-type Branch = { id: string; code: string; name: string; city: string; kind: string; company_id: string | null; company_name: string | null };
+type Branch = { id: string; ck_id: number | null; code: string; name: string; city: string; kind: string; company_id: string | null; company_name: string | null };
 type AttendanceRule = { id: string; code: string | null; name: string; description: string | null; is_active: number | boolean };
 type CompanyOption = { id: string; name: string };
 type SalaryGrade = { id: string; code: string; kind: string; min_gross: number | string; max_gross: number | string; employee_count?: number | string };
-type Division = { id: string; code: string | null; name: string; description: string | null; department_id: string | null; department_name?: string | null; is_active: number | boolean };
+type Division = { id: string; ck_id: number | null; code: string | null; name: string; description: string | null; department_id: string | null; department_name?: string | null; is_active: number | boolean };
 type Designation = {
   id: string;
+  ck_id: number | null;
   code: string | null;
   name: string;
   department_id: string | null;
@@ -32,14 +34,43 @@ type Designation = {
   division_name?: string | null;
   parent_designation_name?: string | null;
 };
-type Location = { id: string; code: string | null; name: string; city: string | null; state: string | null; branch_id: string | null; branch_name?: string | null; is_active: number | boolean };
-type Skill = { id: string; code: string | null; name: string; category: string | null; description: string | null; is_active: number | boolean };
+type Location = { id: string; ck_id: number | null; code: string | null; name: string; city: string | null; state: string | null; branch_id: string | null; branch_name?: string | null; is_active: number | boolean };
+type SkillHead = { id: string; ck_id: number | null; name: string; is_active: number | boolean; skill_type_count?: number | string; image_ck_id?: number | null };
+type SkillType = {
+  id: string;
+  ck_id: number | null;
+  name: string;
+  skill_head_id: string | null;
+  skill_head_name?: string | null;
+  is_active: number | boolean;
+  skill_count?: number | string;
+  image_ck_id?: number | null;
+};
+type Skill = {
+  id: string;
+  ck_id: number | null;
+  code: string | null;
+  name: string;
+  category: string | null;
+  description: string | null;
+  is_active: number | boolean;
+  skill_type_id?: string | null;
+  skill_type_name?: string | null;
+  skill_head_id?: string | null;
+  skill_head_name?: string | null;
+  image_ck_id?: number | null;
+};
 type TrainingModule = { id: string; code: string; name: string; description: string | null; cover_image_url: string | null; chapter_count: number | string; duration_hours: number | string | null; is_active: number | boolean };
-type Company = { id: string; lc_no: string; name: string; branch: string | null; city: string | null; location: string | null };
+type Company = { id: string; ck_id: number | null; lc_no: string; name: string; branch: string | null; city: string | null; location: string | null };
 type InterviewTemplate = { id: string; title: string; description: string | null; image_url: string | null; is_default: number | boolean };
 type GiveawayTemplate = { id: string; name: string; is_default: number | boolean };
 type UserRow = { id: string; email: string; role: string; employee_id: string | null; employee_code?: string | null; first_name?: string | null; last_name?: string | null };
-type Department = { id: string; name: string };
+type Department = { id: string; ck_id: number | null; name: string };
+
+/** True for rows mirrored in from Concept Kitchen's sync — their CK-owned fields are
+ * locked and re-overwritten on every sync, so editing/deleting them here would be
+ * silently reverted (or, for delete, just recreated) on the next run. */
+const isCkSynced = (row: { ck_id?: number | string | null }) => row.ck_id != null;
 
 export function MastersHomePage() {
   const cards = [
@@ -102,6 +133,7 @@ export function BranchMasterPage() {
       title="Branch Master"
       subtitle="Branches sit under a parent Company. Manage codes, cities and branch kinds here."
       endpoint="/branches"
+      canDelete={(row) => !isCkSynced(row)}
       columns={[
         { header: 'Code', render: (row) => <Mono>{row.code}</Mono> },
         { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
@@ -109,13 +141,16 @@ export function BranchMasterPage() {
         { header: 'City', render: (row) => row.city },
         { header: 'Kind', render: (row) => row.kind },
       ]}
-      buildFields={() => [
-        { name: 'code', label: 'Code', type: 'text', placeholder: 'BR001' },
-        { name: 'name', label: 'Name', type: 'text', placeholder: 'Mumbai Head Office', required: true },
-        { name: 'companyId', label: 'Company', type: 'select', options: companies.map((c) => ({ label: c.name, value: c.id })) },
-        { name: 'city', label: 'City', type: 'text', placeholder: 'Mumbai', required: true },
-        { name: 'kind', label: 'Kind', type: 'text', placeholder: 'HQ / Plant / Office', required: true },
-      ]}
+      buildFields={(_rows, editing) => {
+        const locked = Boolean(editing && isCkSynced(editing));
+        return [
+          { name: 'code', label: 'Code', type: 'text', placeholder: 'BR001' },
+          { name: 'name', label: 'Name', type: 'text', placeholder: 'Mumbai Head Office', required: true, disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+          { name: 'companyId', label: 'Company', type: 'select', options: companies.map((c) => ({ label: c.name, value: c.id })), disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+          { name: 'city', label: 'City', type: 'text', placeholder: 'Mumbai', required: true },
+          { name: 'kind', label: 'Kind', type: 'text', placeholder: 'HQ / Plant / Office', required: true },
+        ];
+      }}
       rowToValues={(row) => row
         ? { code: row.code, name: row.name, companyId: row.company_id ?? '', city: row.city, kind: row.kind }
         : { code: '', name: '', companyId: '', city: '', kind: '' }}
@@ -224,30 +259,166 @@ export function DivisionMasterPage() {
   );
 }
 
-export function SkillsMasterPage() {
+function SkillImageCell({ name, imageCkId }: { name: string; imageCkId?: number | null }) {
+  // CK's imageId is always null today and there's no known CK image-asset URL scheme
+  // to resolve it against, so this always falls back to the label text for now.
+  // imageCkId is threaded through so a real image can be wired in later without
+  // touching the 3 tabs' column definitions.
+  void imageCkId;
   return (
-    <MasterCrudPage<Skill>
-      title="Skill Master"
-      subtitle="Manage the skill dictionary used in designation and role setup."
-      endpoint="/skills"
-      columns={[
-        { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
-        { header: 'Category', render: (row) => row.category ?? '—' },
-        { header: 'Description', render: (row) => row.description ?? '—' },
-        { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
-      ]}
-      buildFields={() => [
-        { name: 'code', label: 'Code', type: 'text', placeholder: 'SK001' },
-        { name: 'name', label: 'Name', type: 'text', placeholder: 'Leadership', required: true },
-        { name: 'category', label: 'Category', type: 'text', placeholder: 'Soft skill / Technical' },
-        { name: 'description', label: 'Description', type: 'textarea', span: true },
-        { name: 'isActive', label: 'Active', type: 'checkbox', span: true },
-      ]}
-      rowToValues={(row) => row ? { code: row.code ?? '', name: row.name, category: row.category ?? '', description: row.description ?? '', isActive: Boolean(row.is_active) } : { code: '', name: '', category: '', description: '', isActive: true }}
-      buildPayload={(values) => ({ code: values.code || undefined, name: values.name, category: values.category || undefined, description: values.description || undefined, isActive: Boolean(values.isActive) })}
-      searchKeys={['code', 'name', 'category', 'description']}
-    />
+    <span style={{ fontSize: 11.5, fontWeight: 600, textTransform: 'uppercase', color: 'var(--ck-ink-soft)' }}>
+      {name}
+    </span>
+  );
+}
+
+export function SkillMasterPage() {
+  const [tab, setTab] = useState<'head' | 'type' | 'master' | 'hierarchy'>('head');
+  const [heads, setHeads] = useState<SkillHead[]>([]);
+  const [types, setTypes] = useState<SkillType[]>([]);
+  const [skills, setSkills] = useState<Skill[]>([]);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [typeFilterHeadId, setTypeFilterHeadId] = useState('');
+
+  useEffect(() => {
+    api.get('/skill-heads').then((r) => setHeads(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => setHeads([]));
+    api.get('/skill-types').then((r) => setTypes(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => setTypes([]));
+    api.get('/skills').then((r) => setSkills(Array.isArray(r.data?.data) ? r.data.data : [])).catch(() => setSkills([]));
+  }, [reloadToken]);
+
+  const skillHeadOptions = heads.map((h) => ({ label: h.name, value: h.id }));
+  const skillTypeOptions = types.map((t) => ({ label: t.name, value: t.id }));
+
+  return (
+    <div>
+      <PageHeader title="Skill Master" subtitle="Skill heads, types and the skill dictionary, synced from Concept Kitchen." />
+      <Card padding={0}>
+        <div style={{ display: 'flex', gap: 4, padding: 12, borderBottom: '1px solid var(--ck-line)', flexWrap: 'wrap' }}>
+          {[
+            { key: 'head', label: 'Skill Head' },
+            { key: 'type', label: 'Skill Type' },
+            { key: 'master', label: 'Skill Master' },
+            { key: 'hierarchy', label: 'Hierarchy' },
+          ].map((item) => (
+            <button
+              key={item.key}
+              onClick={() => setTab(item.key as typeof tab)}
+              style={{
+                padding: '8px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                background: tab === item.key ? 'var(--ck-ink)' : 'transparent',
+                color: tab === item.key ? '#fff' : 'var(--ck-muted)', fontWeight: 600,
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <div>
+          {tab === 'head' && (
+            <MasterCrudPage<SkillHead>
+              title="Skill Head"
+              subtitle="Top-level skill grouping, synced from Concept Kitchen."
+              endpoint="/skill-heads"
+              onChanged={() => setReloadToken((v) => v + 1)}
+              addLabel="Add Skill Head"
+              canEdit={(row) => !isCkSynced(row)}
+              canDelete={(row) => !isCkSynced(row)}
+              columns={[
+                { header: 'Image', render: (row) => <SkillImageCell name={row.name} imageCkId={row.image_ck_id} /> },
+                { header: 'Skill Head', render: (row) => <Strong>{row.name}</Strong> },
+                { header: 'Skill Types', render: (row) => String(row.skill_type_count ?? 0) },
+                { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+              ]}
+              buildFields={() => [
+                { name: 'name', label: 'Name', type: 'text', placeholder: 'Hard Skills', required: true },
+                { name: 'isActive', label: 'Active', type: 'checkbox', span: true },
+              ]}
+              rowToValues={(row) => row ? { name: row.name, isActive: Boolean(row.is_active) } : { name: '', isActive: true }}
+              buildPayload={(values) => ({ name: values.name, isActive: Boolean(values.isActive) })}
+              searchKeys={['name']}
+            />
+          )}
+          {tab === 'type' && (
+            <MasterCrudPage<SkillType>
+              title="Skill Type"
+              subtitle="Mid-level skill grouping under a Skill Head."
+              endpoint={`/skill-types${typeFilterHeadId ? `?skillHeadId=${typeFilterHeadId}` : ''}`}
+              onChanged={() => setReloadToken((v) => v + 1)}
+              addLabel="Add Skill Type"
+              canEdit={(row) => !isCkSynced(row)}
+              canDelete={(row) => !isCkSynced(row)}
+              filterBar={(
+                <select
+                  value={typeFilterHeadId}
+                  onChange={(e) => setTypeFilterHeadId(e.target.value)}
+                  style={{ height: 40, padding: '0 12px', border: '1px solid var(--ck-line)', borderRadius: 8, fontSize: 13, background: 'var(--ck-surface)' }}
+                >
+                  <option value="">All Skill Heads</option>
+                  {skillHeadOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              )}
+              columns={[
+                { header: 'Image', render: (row) => <SkillImageCell name={row.name} imageCkId={row.image_ck_id} /> },
+                { header: 'Skill Type', render: (row) => <Strong>{row.name}</Strong> },
+                { header: 'Skill Head', render: (row) => row.skill_head_name ?? '—' },
+                { header: 'Skills', render: (row) => String(row.skill_count ?? 0) },
+                { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+              ]}
+              buildFields={() => [
+                { name: 'name', label: 'Name', type: 'text', placeholder: 'Accuracy', required: true },
+                { name: 'skillHeadId', label: 'Skill Head', type: 'select', options: skillHeadOptions },
+                { name: 'isActive', label: 'Active', type: 'checkbox', span: true },
+              ]}
+              rowToValues={(row) => row ? { name: row.name, skillHeadId: row.skill_head_id ?? '', isActive: Boolean(row.is_active) } : { name: '', skillHeadId: '', isActive: true }}
+              buildPayload={(values) => ({ name: values.name, skillHeadId: values.skillHeadId || undefined, isActive: Boolean(values.isActive) })}
+              searchKeys={['name', 'skill_head_name']}
+            />
+          )}
+          {tab === 'master' && (
+            <MasterCrudPage<Skill>
+              title="Skill"
+              subtitle="Individual skills used in designation and role setup."
+              endpoint="/skills"
+              onChanged={() => setReloadToken((v) => v + 1)}
+              addLabel="Add Skill"
+              canDelete={(row) => !isCkSynced(row)}
+              columns={[
+                { header: 'Image', render: (row) => <SkillImageCell name={row.name} imageCkId={row.image_ck_id} /> },
+                { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
+                { header: 'Skill', render: (row) => <Strong>{row.name}</Strong> },
+                { header: 'Category', render: (row) => row.category ?? '—' },
+                { header: 'Skill Type', render: (row) => row.skill_type_name ?? '—' },
+                { header: 'Skill Head', render: (row) => row.skill_head_name ?? '—' },
+                { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
+              ]}
+              buildFields={(_rows, editing) => {
+                const locked = Boolean(editing && isCkSynced(editing));
+                return [
+                  { name: 'code', label: 'Code', type: 'text', placeholder: 'SK001' },
+                  { name: 'name', label: 'Name', type: 'text', placeholder: 'Leadership', required: true, disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+                  { name: 'category', label: 'Category', type: 'text', placeholder: 'Soft skill / Technical' },
+                  { name: 'skillTypeId', label: 'Skill Type', type: 'select', options: skillTypeOptions, disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+                  { name: 'description', label: 'Description', type: 'textarea', span: true },
+                  { name: 'isActive', label: 'Active', type: 'checkbox', span: true },
+                ];
+              }}
+              rowToValues={(row) => row ? {
+                code: row.code ?? '', name: row.name, category: row.category ?? '',
+                skillTypeId: row.skill_type_id ?? '', description: row.description ?? '', isActive: Boolean(row.is_active),
+              } : { code: '', name: '', category: '', skillTypeId: '', description: '', isActive: true }}
+              buildPayload={(values) => ({
+                code: values.code || undefined, name: values.name, category: values.category || undefined,
+                skillTypeId: values.skillTypeId || undefined, description: values.description || undefined, isActive: Boolean(values.isActive),
+              })}
+              searchKeys={['code', 'name', 'category', 'description', 'skill_type_name', 'skill_head_name']}
+            />
+          )}
+          {tab === 'hierarchy' && <SkillHierarchyTree heads={heads} types={types} skills={skills} />}
+        </div>
+      </Card>
+    </div>
   );
 }
 
@@ -307,6 +478,7 @@ export function LocationMasterPage() {
       title="Location Master"
       subtitle="Maintain branch-linked location records."
       endpoint="/locations"
+      canDelete={(row) => !isCkSynced(row)}
       columns={[
         { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
         { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
@@ -314,14 +486,17 @@ export function LocationMasterPage() {
         { header: 'State', render: (row) => row.state ?? '—' },
         { header: 'Branch', render: (row) => row.branch_name ?? '—' },
       ]}
-      buildFields={() => [
-        { name: 'code', label: 'Code', type: 'text', placeholder: 'LOC001' },
-        { name: 'name', label: 'Name', type: 'text', placeholder: 'Andheri Office', required: true },
-        { name: 'city', label: 'City', type: 'text', placeholder: 'Mumbai' },
-        { name: 'state', label: 'State', type: 'text', placeholder: 'Maharashtra' },
-        { name: 'branchId', label: 'Branch', type: 'select', options: branches.map((branch) => ({ label: `${branch.name} (${branch.code})`, value: branch.id })) },
-        { name: 'isActive', label: 'Active', type: 'checkbox', span: true },
-      ]}
+      buildFields={(_rows, editing) => {
+        const locked = Boolean(editing && isCkSynced(editing));
+        return [
+          { name: 'code', label: 'Code', type: 'text', placeholder: 'LOC001' },
+          { name: 'name', label: 'Name', type: 'text', placeholder: 'Andheri Office', required: true, disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+          { name: 'city', label: 'City', type: 'text', placeholder: 'Mumbai' },
+          { name: 'state', label: 'State', type: 'text', placeholder: 'Maharashtra' },
+          { name: 'branchId', label: 'Branch', type: 'select', options: branches.map((branch) => ({ label: `${branch.name} (${branch.code})`, value: branch.id })), disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+          { name: 'isActive', label: 'Active', type: 'checkbox', span: true },
+        ];
+      }}
       rowToValues={(row) => row ? { code: row.code ?? '', name: row.name, city: row.city ?? '', state: row.state ?? '', branchId: row.branch_id ?? '', isActive: Boolean(row.is_active) } : { code: '', name: '', city: '', state: '', branchId: '', isActive: true }}
       buildPayload={(values) => ({ code: values.code || undefined, name: values.name, city: values.city || undefined, state: values.state || undefined, branchId: values.branchId || undefined, isActive: Boolean(values.isActive) })}
       searchKeys={['code', 'name', 'city', 'state']}
@@ -336,6 +511,7 @@ export function CompanyMasterPage() {
       subtitle="Manage hiring companies used in vacancy and alumni flows."
       endpoint="/hiring/companies"
       pageSize={1000}
+      canDelete={(row) => !isCkSynced(row)}
       columns={[
         { header: 'LC No.', render: (row) => <Mono>{row.lc_no}</Mono> },
         { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
@@ -343,13 +519,16 @@ export function CompanyMasterPage() {
         { header: 'City', render: (row) => row.city ?? '—' },
         { header: 'Location', render: (row) => row.location ?? '—' },
       ]}
-      buildFields={() => [
-        { name: 'lcNo', label: 'LC No.', type: 'text', placeholder: 'LC001' },
-        { name: 'name', label: 'Name', type: 'text', placeholder: 'Concept Kitchen', required: true },
-        { name: 'branch', label: 'Branch', type: 'text', placeholder: 'Head Office' },
-        { name: 'city', label: 'City', type: 'text', placeholder: 'Mumbai' },
-        { name: 'location', label: 'Location', type: 'textarea', span: true },
-      ]}
+      buildFields={(_rows, editing) => {
+        const locked = Boolean(editing && isCkSynced(editing));
+        return [
+          { name: 'lcNo', label: 'LC No.', type: 'text', placeholder: 'LC001' },
+          { name: 'name', label: 'Name', type: 'text', placeholder: 'Concept Kitchen', required: true, disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+          { name: 'branch', label: 'Branch', type: 'text', placeholder: 'Head Office' },
+          { name: 'city', label: 'City', type: 'text', placeholder: 'Mumbai' },
+          { name: 'location', label: 'Location', type: 'textarea', span: true },
+        ];
+      }}
       rowToValues={(row) => row ? { lcNo: row.lc_no, name: row.name, branch: row.branch ?? '', city: row.city ?? '', location: row.location ?? '' } : { lcNo: '', name: '', branch: '', city: '', location: '' }}
       buildPayload={(values) => ({ lcNo: values.lcNo || undefined, name: values.name, branch: values.branch || undefined, city: values.city || undefined, location: values.location || undefined })}
       searchKeys={['lc_no', 'name', 'branch', 'city', 'location']}
@@ -926,6 +1105,8 @@ export function DddMasterPage() {
               endpoint="/departments"
               onChanged={() => setReloadToken((v) => v + 1)}
               addLabel="Add Department"
+              canEdit={(row) => !isCkSynced(row)}
+              canDelete={(row) => !isCkSynced(row)}
               columns={[
                 { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
               ]}
@@ -944,6 +1125,7 @@ export function DddMasterPage() {
               endpoint="/divisions"
               onChanged={() => setReloadToken((v) => v + 1)}
               addLabel="Add Division"
+              canDelete={(row) => !isCkSynced(row)}
               columns={[
                 { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
                 { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
@@ -951,13 +1133,16 @@ export function DddMasterPage() {
                 { header: 'Description', render: (row) => row.description ?? '—' },
                 { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
               ]}
-              buildFields={() => [
-                { name: 'code', label: 'Code', type: 'text', placeholder: 'DIV001' },
-                { name: 'name', label: 'Name', type: 'text', placeholder: 'Operations', required: true },
-                { name: 'departmentId', label: 'Department', type: 'select', options: departmentOptions },
-                { name: 'description', label: 'Description', type: 'textarea', span: true },
-                { name: 'isActive', label: 'Active', type: 'checkbox', span: true },
-              ]}
+              buildFields={(_rows, editing) => {
+                const locked = Boolean(editing && isCkSynced(editing));
+                return [
+                  { name: 'code', label: 'Code', type: 'text', placeholder: 'DIV001' },
+                  { name: 'name', label: 'Name', type: 'text', placeholder: 'Operations', required: true, disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+                  { name: 'departmentId', label: 'Department', type: 'select', options: departmentOptions, disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+                  { name: 'description', label: 'Description', type: 'textarea', span: true },
+                  { name: 'isActive', label: 'Active', type: 'checkbox', span: true, disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+                ];
+              }}
               rowToValues={(row) => row ? { code: row.code ?? '', name: row.name, departmentId: row.department_id ?? '', description: row.description ?? '', isActive: Boolean(row.is_active) } : { code: '', name: '', departmentId: '', description: '', isActive: true }}
               buildPayload={(values) => ({ code: values.code || undefined, name: values.name, departmentId: values.departmentId || undefined, description: values.description || undefined, isActive: Boolean(values.isActive) })}
               searchKeys={['code', 'name', 'description', 'department_name']}
@@ -970,6 +1155,7 @@ export function DddMasterPage() {
               endpoint="/designations"
               onChanged={() => setReloadToken((v) => v + 1)}
               addLabel="Add Designation"
+              canDelete={(row) => !isCkSynced(row)}
               columns={[
                 { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
                 { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
@@ -978,15 +1164,18 @@ export function DddMasterPage() {
                 { header: 'Level', render: (row) => String(row.hierarchy_level) },
                 { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
               ]}
-              buildFields={() => [
-                { name: 'code', label: 'Code', type: 'text', placeholder: 'DES001' },
-                { name: 'name', label: 'Name', type: 'text', placeholder: 'Team Leader', required: true },
-                { name: 'departmentId', label: 'Department', type: 'select', options: departmentOptions },
-                { name: 'divisionId', label: 'Division', type: 'select', options: divisionOptions },
-                { name: 'parentDesignationId', label: 'Parent Designation', type: 'select', options: designationOptions },
-                { name: 'hierarchyLevel', label: 'Hierarchy Level', type: 'number', placeholder: '0' },
-                { name: 'isActive', label: 'Active', type: 'checkbox', span: true },
-              ]}
+              buildFields={(_rows, editing) => {
+                const locked = Boolean(editing && isCkSynced(editing));
+                return [
+                  { name: 'code', label: 'Code', type: 'text', placeholder: 'DES001' },
+                  { name: 'name', label: 'Name', type: 'text', placeholder: 'Team Leader', required: true, disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+                  { name: 'departmentId', label: 'Department', type: 'select', options: departmentOptions, disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+                  { name: 'divisionId', label: 'Division', type: 'select', options: divisionOptions, disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+                  { name: 'parentDesignationId', label: 'Parent Designation', type: 'select', options: designationOptions },
+                  { name: 'hierarchyLevel', label: 'Hierarchy Level', type: 'number', placeholder: '0' },
+                  { name: 'isActive', label: 'Active', type: 'checkbox', span: true, disabled: locked, help: locked ? 'Synced from Concept Kitchen' : undefined },
+                ];
+              }}
               rowToValues={(row) => row ? { code: row.code ?? '', name: row.name, departmentId: row.department_id ?? '', divisionId: row.division_id ?? '', parentDesignationId: row.parent_designation_id ?? '', hierarchyLevel: row.hierarchy_level, isActive: Boolean(row.is_active) } : { code: '', name: '', departmentId: '', divisionId: '', parentDesignationId: '', hierarchyLevel: 0, isActive: true }}
               buildPayload={(values) => ({ code: values.code || undefined, name: values.name, departmentId: values.departmentId || undefined, divisionId: values.divisionId || undefined, parentDesignationId: values.parentDesignationId || undefined, hierarchyLevel: Number(values.hierarchyLevel || 0), isActive: Boolean(values.isActive) })}
               searchKeys={['code', 'name', 'department_name', 'division_name']}
@@ -1098,7 +1287,7 @@ export function HolidayMasterPage() {
 // ─── Lookup Master (generic enum sets used by Vacancy/Listing) ─────────────
 type LookupCategory = { id: string; code: string; name: string; description: string | null; is_system: number | boolean };
 type LookupValue = {
-  id: string; category_id: string; category_code?: string; code: string; label: string;
+  id: string; ck_id: number | null; category_id: string; category_code?: string; code: string; label: string;
   color: string | null; sort_order: number | string; is_default: number | boolean; is_active: number | boolean;
 };
 type LookupTag = { id: string; name: string; color: string | null; description: string | null; is_active: number | boolean };
@@ -1222,7 +1411,9 @@ export function LookupMasterPage() {
                   <td style={{ padding: '10px 16px' }}>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <Button size="sm" variant="ghost" onClick={() => openEdit(row)}>Edit</Button>
-                      <Button size="sm" variant="ghost" onClick={() => remove(row)}>Delete</Button>
+                      {!isCkSynced(row) && (
+                        <Button size="sm" variant="ghost" onClick={() => remove(row)}>Delete</Button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -1239,7 +1430,9 @@ export function LookupMasterPage() {
         </>}>
         <div className="ck-form-grid-2">
           <LF label="Code *"><input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="In Progress" style={lfInp} /></LF>
-          <LF label="Label *"><input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="Display label" style={lfInp} /></LF>
+          <LF label={editing && isCkSynced(editing) ? 'Label * (synced from Concept Kitchen)' : 'Label *'}>
+            <input value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="Display label" style={lfInp} disabled={Boolean(editing && isCkSynced(editing))} />
+          </LF>
           <LF label="Color (hex)"><input value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} placeholder="#888888" style={lfInp} /></LF>
           <LF label="Sort order"><input type="number" value={form.sortOrder} onChange={(e) => setForm({ ...form, sortOrder: Number(e.target.value) || 0 })} style={lfInp} /></LF>
           <LF label="Default" full>

@@ -47,7 +47,7 @@ type Props<Row extends { id: string }> = {
   /** Optional suffix appended to PATCH URL after the id (e.g. "/full"). */
   patchPathSuffix?: string;
   columns: MasterColumn<Row>[];
-  buildFields: (rows: Row[]) => MasterField<Row>[];
+  buildFields: (rows: Row[], editing: Row | null) => MasterField<Row>[];
   rowToValues: (row: Row | null) => Record<string, RowValue>;
   buildPayload: (values: Record<string, RowValue>, mode: 'create' | 'edit', row?: Row | null) => Record<string, unknown>;
   searchKeys?: string[];
@@ -56,6 +56,12 @@ type Props<Row extends { id: string }> = {
   onChanged?: () => void;
   /** Optional extra inline action buttons rendered before Edit/Delete. */
   extraActions?: (row: Row) => React.ReactNode;
+  /** Optional filter control rendered next to the search box (e.g. a parent-entity dropdown). */
+  filterBar?: React.ReactNode;
+  /** Whether the Edit action is shown for a given row. Defaults to always true. */
+  canEdit?: (row: Row) => boolean;
+  /** Whether the Delete action is shown for a given row. Defaults to always true. */
+  canDelete?: (row: Row) => boolean;
 };
 
 export function MasterCrudPage<Row extends { id: string }>({
@@ -76,6 +82,9 @@ export function MasterCrudPage<Row extends { id: string }>({
   addLabel = 'Add',
   onChanged,
   extraActions,
+  filterBar,
+  canEdit = () => true,
+  canDelete = () => true,
 }: Props<Row>) {
   const getUrl    = listEndpoint    ?? endpoint;
   const postUrl   = addEndpoint     ?? endpoint;
@@ -114,7 +123,7 @@ export function MasterCrudPage<Row extends { id: string }>({
     });
   }, [rows, search, searchKeys]);
 
-  const fields = useMemo(() => buildFields(rows), [buildFields, rows]);
+  const fields = useMemo(() => buildFields(rows, editing), [buildFields, rows, editing]);
 
   const openCreate = () => {
     setEditing(null);
@@ -180,6 +189,7 @@ export function MasterCrudPage<Row extends { id: string }>({
               style={{ width: '100%', height: 40, padding: '0 12px 0 36px', border: '1px solid var(--ck-line)', borderRadius: 8, fontSize: 13, background: 'var(--ck-surface)' }}
             />
           </div>
+          {filterBar}
           <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>
             {loading ? 'Loading…' : `${filteredRows.length.toLocaleString('en-IN')} result${filteredRows.length === 1 ? '' : 's'}`}
           </div>
@@ -220,19 +230,23 @@ export function MasterCrudPage<Row extends { id: string }>({
                   <td style={{ padding: '14px 16px' }}>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                       {extraActions?.(row)}
-                      <IconAction
-                        icon={Pencil}
-                        label="Edit"
-                        hint={`Edit this ${title.toLowerCase()}`}
-                        onClick={() => openEdit(row)}
-                      />
-                      <IconAction
-                        icon={Trash2}
-                        label="Delete"
-                        hint={`Delete this ${title.toLowerCase()}`}
-                        tone="danger"
-                        onClick={() => onDelete(row)}
-                      />
+                      {canEdit(row) && (
+                        <IconAction
+                          icon={Pencil}
+                          label="Edit"
+                          hint={`Edit this ${title.toLowerCase()}`}
+                          onClick={() => openEdit(row)}
+                        />
+                      )}
+                      {canDelete(row) && (
+                        <IconAction
+                          icon={Trash2}
+                          label="Delete"
+                          hint={`Delete this ${title.toLowerCase()}`}
+                          tone="danger"
+                          onClick={() => onDelete(row)}
+                        />
+                      )}
                     </div>
                   </td>
                 </tr>

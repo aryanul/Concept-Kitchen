@@ -37,8 +37,8 @@ function updateSets(body: Record<string, unknown>, allowed: Array<{ key: string;
 const MASTER_SEGMENTS = new Set([
   'atm-tasks', 'attendance-rules', 'branches', 'departments', 'designations',
   'divisions', 'holidays', 'induction-templates', 'locations', 'lookups',
-  'onboarding-templates', 'salary-grades', 'shifts', 'skills', 'tags',
-  'training-modules', 'users',
+  'onboarding-templates', 'salary-grades', 'shifts', 'skill-heads', 'skill-types',
+  'skills', 'tags', 'training-modules', 'users',
 ]);
 
 export function registerMasterRoutes(app: Application) {
@@ -534,9 +534,132 @@ export function registerMasterRoutes(app: Application) {
     }
   });
 
+  // Skill hierarchy: Skill Head → Skill Type → Skill (skills).
+  app.get('/api/v1/skill-heads', authRequired, async (_req, res, next) => {
+    try {
+      const rows = await query(
+        `SELECT h.*, (SELECT COUNT(*) FROM skill_types t WHERE t.skill_head_id = h.id) AS skill_type_count
+         FROM skill_heads h ORDER BY h.name`
+      );
+      res.json({ data: rows });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post('/api/v1/skill-heads', authRequired, async (req, res, next) => {
+    try {
+      const { name, isActive } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
+      const id = ulid();
+      await query('INSERT INTO skill_heads (id, name, is_active) VALUES (?, ?, ?)', [
+        id,
+        name,
+        parseBool(isActive ?? true),
+      ]);
+      res.status(201).json({ data: { id } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.patch('/api/v1/skill-heads/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'name', column: 'name' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isActive !== undefined) values[values.length - 1] = parseBool(req.body.isActive);
+      values.push(req.params.id);
+      await query(`UPDATE skill_heads SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.delete('/api/v1/skill-heads/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM skill_heads WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.get('/api/v1/skill-types', authRequired, async (req, res, next) => {
+    try {
+      const { skillHeadId } = req.query;
+      const where = typeof skillHeadId === 'string' && skillHeadId ? 'WHERE t.skill_head_id = ?' : '';
+      const params = where ? [skillHeadId] : [];
+      const rows = await query(
+        `SELECT t.*, h.name AS skill_head_name,
+                (SELECT COUNT(*) FROM skills s WHERE s.skill_type_id = t.id) AS skill_count
+         FROM skill_types t
+         LEFT JOIN skill_heads h ON h.id = t.skill_head_id
+         ${where}
+         ORDER BY t.name`,
+        params
+      );
+      res.json({ data: rows });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post('/api/v1/skill-types', authRequired, async (req, res, next) => {
+    try {
+      const { name, skillHeadId, isActive } = req.body ?? {};
+      if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
+      const id = ulid();
+      await query('INSERT INTO skill_types (id, name, skill_head_id, is_active) VALUES (?, ?, ?, ?)', [
+        id,
+        name,
+        skillHeadId || null,
+        parseBool(isActive ?? true),
+      ]);
+      res.status(201).json({ data: { id } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.patch('/api/v1/skill-types/:id', authRequired, async (req, res, next) => {
+    try {
+      const { sets, values } = updateSets(req.body ?? {}, [
+        { key: 'name', column: 'name' },
+        { key: 'skillHeadId', column: 'skill_head_id' },
+        { key: 'isActive', column: 'is_active' },
+      ]);
+      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
+      if (req.body?.isActive !== undefined) values[values.length - 1] = parseBool(req.body.isActive);
+      values.push(req.params.id);
+      await query(`UPDATE skill_types SET ${sets.join(', ')} WHERE id = ?`, values);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.delete('/api/v1/skill-types/:id', authRequired, async (req, res, next) => {
+    try {
+      await query('DELETE FROM skill_types WHERE id = ?', [req.params.id]);
+      res.json({ data: { id: req.params.id } });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   app.get('/api/v1/skills', authRequired, async (_req, res, next) => {
     try {
-      const rows = await query('SELECT * FROM skills ORDER BY name');
+      const rows = await query(
+        `SELECT s.*, st.name AS skill_type_name, sh.id AS skill_head_id, sh.name AS skill_head_name
+         FROM skills s
+         LEFT JOIN skill_types st ON st.id = s.skill_type_id
+         LEFT JOIN skill_heads sh ON sh.id = st.skill_head_id
+         ORDER BY s.name`
+      );
       res.json({ data: rows });
     } catch (err) {
       next(err);
@@ -545,15 +668,16 @@ export function registerMasterRoutes(app: Application) {
 
   app.post('/api/v1/skills', authRequired, async (req, res, next) => {
     try {
-      const { code, name, category, description, isActive } = req.body ?? {};
+      const { code, name, category, skillTypeId, description, isActive } = req.body ?? {};
       if (!name) return res.status(400).json({ error: { code: 'VALIDATION', message: 'name required' } });
       const id = ulid();
       const skillCode = typeof code === 'string' && code.trim() ? code.trim() : await nextCode('skills', 'code', 'SK');
-      await query('INSERT INTO skills (id, code, name, category, description, is_active) VALUES (?, ?, ?, ?, ?, ?)', [
+      await query('INSERT INTO skills (id, code, name, category, skill_type_id, description, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)', [
         id,
         skillCode,
         name,
         category || null,
+        skillTypeId || null,
         description || null,
         parseBool(isActive),
       ]);
@@ -569,6 +693,7 @@ export function registerMasterRoutes(app: Application) {
         { key: 'code', column: 'code' },
         { key: 'name', column: 'name' },
         { key: 'category', column: 'category' },
+        { key: 'skillTypeId', column: 'skill_type_id' },
         { key: 'description', column: 'description' },
         { key: 'isActive', column: 'is_active' },
       ]);
@@ -928,7 +1053,7 @@ export function registerMasterRoutes(app: Application) {
       if (categoryId) { where = 'WHERE c.id = ?'; params.push(categoryId); }
       else if (cat)   { where = 'WHERE c.code = ?'; params.push(cat); }
       const rows = await query(
-        `SELECT l.id, l.category_id, c.code AS category_code, l.code, l.label, l.color,
+        `SELECT l.id, l.ck_id, l.category_id, c.code AS category_code, l.code, l.label, l.color,
                 l.sort_order, l.is_default, l.is_active
          FROM lookups l
          JOIN lookup_categories c ON c.id = l.category_id

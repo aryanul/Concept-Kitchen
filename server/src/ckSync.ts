@@ -21,7 +21,10 @@
 
 import { ulid } from 'ulid';
 import { query } from './db';
-import { ckList, ckDepartments, ckDivisions, ckDesignations, type CkRow } from './ckApi';
+import {
+  ckList, ckDepartments, ckDivisions, ckDesignations,
+  ckSkillHeads, ckSkillTypes, ckSkillMasters, type CkRow,
+} from './ckApi';
 
 export type DomainStat = { inserted: number; updated: number };
 export type CkSyncSummary = {
@@ -333,15 +336,49 @@ export async function ckSyncAll(): Promise<CkSyncSummary> {
     }
   } catch (e) { errors.push(`specs: ${msg(e)}`); }
 
-  // 8. Skills — import the actual skills (SkillMaster) into `skills`. CK's grouping
-  // (SkillHead→SkillType→SkillMaster via /SkillType/ByHeadId + /SkillMaster/ByTypeId)
-  // returns empty today; skill_head/skill_type columns exist to receive it once CK
-  // populates those links (pending Vishal). Names only for now.
+  // 8-10. Skill hierarchy (SkillHead → SkillType → SkillMaster), same shape as the
+  // DDD block above: each level's local ids are needed to resolve the next level's FK.
+
+  // 8. Skill Heads → skill_heads
+  const skillHeadMap = new Map<number, string>();
   try {
-    const rows = await ckList('/SkillMaster');
-    const mirror = await loadMirror('skills');
+    const rows = await ckSkillHeads();
+    const mirror = await loadMirror('skill_heads');
+    await mapLimit(rows, CONCURRENCY, async (h) => {
+      const { id, created } = await upsertByCk('skill_heads', mirror, h.id, trim(h.name), {
+        is_active: h.isActive ? 1 : 0,
+        image_ck_id: h.imageId,
+      });
+      skillHeadMap.set(h.id, id);
+      bump('skill-heads', created);
+    });
+  } catch (e) { errors.push(`skill-heads: ${msg(e)}`); }
+
+  // 9. Skill Types → skill_types (+ skill_head_id)
+  const skillTypeMap = new Map<number, string>();
+  try {
+    const rows = await ckSkillTypes();
+    const mirror = await loadMirror('skill_types', ['skill_head_id']);
+    await mapLimit(rows, CONCURRENCY, async (t) => {
+      const { id, created } = await upsertByCk('skill_types', mirror, t.id, trim(t.name), {
+        is_active: t.isActive ? 1 : 0,
+        image_ck_id: t.imageId,
+      });
+      skillTypeMap.set(t.id, id);
+      await setLink('skill_types', mirror, t.id, 'skill_head_id', resolve(skillHeadMap, t.headId));
+      bump('skill-types', created);
+    });
+  } catch (e) { errors.push(`skill-types: ${msg(e)}`); }
+
+  // 10. Skill Masters → skills (+ skill_type_id)
+  try {
+    const rows = await ckSkillMasters();
+    const mirror = await loadMirror('skills', ['skill_type_id']);
     await mapLimit(rows, CONCURRENCY, async (m) => {
-      const { created } = await upsertByCk('skills', mirror, m.id, trim(m.name));
+      const { created } = await upsertByCk('skills', mirror, m.id, trim(m.name), {
+        image_ck_id: m.imageId,
+      });
+      await setLink('skills', mirror, m.id, 'skill_type_id', resolve(skillTypeMap, m.typeId));
       bump('skills', created);
     });
   } catch (e) { errors.push(`skills: ${msg(e)}`); }
