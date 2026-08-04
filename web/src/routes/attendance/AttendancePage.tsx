@@ -11,6 +11,7 @@ import { Button } from '../../components/ui/Button';
 import { Avatar } from '../../components/ui/Avatar';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Modal } from '../../components/ui/Modal';
+import { FilterSelect } from '../../components/filters';
 
 type Row = {
   id: string; date: string; in_at: string | null; out_at: string | null;
@@ -18,6 +19,7 @@ type Row = {
   employee_id: string; code: string; first_name: string; last_name: string; branch_name: string;
 };
 type Resp = { data: Row[]; meta: { total: number; page: number; pageSize: number } };
+type Branch = { id: string; name: string };
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const fmtTime = (dt: string | null) => { if (!dt) return '—'; try { return new Date(dt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }); } catch { return '—'; } };
@@ -38,24 +40,33 @@ export function AttendancePage() {
   const [loading, setLoading] = useState(true);
   const [date, setDate] = useState(todayStr);
   const [search, setSearch] = useState('');
+  const [branchId, setBranchId] = useState('');
+  const [source, setSource] = useState('');
   const [page, setPage] = useState(1);
   const [markOpen, setMarkOpen] = useState(false);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const pageSize = 20;
 
-  useEffect(() => { setPage(1); }, [date, search]);
+  useEffect(() => {
+    api.get<{ data: Branch[] }>('/branches').then((r) => setBranches(r.data.data)).catch(() => {});
+  }, []);
+
+  useEffect(() => { setPage(1); }, [date, search, branchId, source]);
 
   const fetchAttendance = () => {
     const ctrl = new AbortController();
     setLoading(true);
     const params: Record<string, unknown> = { date, page, pageSize };
     if (search) params.search = search;
+    if (branchId) params.branchId = branchId;
+    if (source) params.status = source;
     api.get<Resp>('/attendance', { params, signal: ctrl.signal })
       .then((r) => { setRows(r.data.data); setTotal(r.data.meta.total); })
       .catch(() => {}).finally(() => setLoading(false));
     return () => ctrl.abort();
   };
 
-  useEffect(fetchAttendance, [date, search, page]);
+  useEffect(fetchAttendance, [date, search, branchId, source, page]);
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<PunchForm>({
     resolver: zodResolver(punchSchema),
@@ -102,6 +113,14 @@ export function AttendancePage() {
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search employee…"
               style={{ width: '100%', height: 40, padding: '0 12px 0 36px', border: '1px solid var(--ck-line)', borderRadius: 8, fontSize: 13, background: 'var(--ck-surface)' }} />
           </div>
+          <FilterSelect label="Branch" value={branchId} onChange={setBranchId} placeholder="All branches"
+            options={branches.map((b) => ({ label: b.name, value: b.id }))} />
+          <FilterSelect label="Source" value={source} onChange={setSource} placeholder="All sources"
+            options={[
+              { label: 'Biometric', value: 'BIOMETRIC' },
+              { label: 'Manual', value: 'MANUAL' },
+              { label: 'Geo', value: 'GEO' },
+            ]} />
           <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>{loading ? 'Loading…' : `${total} records`}</div>
         </div>
         <div style={{ overflowX: 'auto' }}>

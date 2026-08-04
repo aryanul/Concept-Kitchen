@@ -125,6 +125,38 @@ Conventions enforced across both files:
   separate Cloudinary folders (`cknest/photos`, `cknest/documents`).
 - The mysql2 driver returns `CAST(... AS UNSIGNED)` results as **strings** — coerce with
   `Number()` before arithmetic (see the comment in `nextCode`).
+- **Connection resilience:** [db.ts](server/src/db.ts) enables `enableKeepAlive` (TiDB
+  Serverless drops idle connections) and `query()` transparently retries once on
+  connection-lost error codes (`ECONNRESET`, `PROTOCOL_CONNECTION_LOST`, `EPIPE`,
+  `ETIMEDOUT`). Don't wrap call sites in their own retry logic for these — it's handled
+  centrally.
+
+### Concept Kitchen master-data sync (`server/src/ck*.ts`)
+
+Branches, departments, divisions, designations, and skills are **mirrored** from an
+external system ("Concept Kitchen") rather than owned outright — this is an editable,
+co-owned mirror, not a one-way import:
+
+- [ckApi.ts](server/src/ckApi.ts) — thin fetch wrapper around CK's REST API
+  (`CK_API_URL` / `CK_API_KEY` env vars, single `AuthKey` header). Returns `[]` on 404 or
+  empty body rather than throwing, so a childless parent never aborts a sync.
+- [ckSync.ts](server/src/ckSync.ts) — the sync engine. Matches/dedupes rows on `ck_id`,
+  **never on name** (CK has duplicate names). On UPDATE it only ever sets CK-owned columns
+  (name, CK-derived FK links); locally-owned columns (code, city, kind, description, custom
+  flags) are never named in an UPDATE, so a re-sync can never blob-overwrite a local edit. A
+  CK row that disappears is left in place — rows are never deleted by a sync. Each domain is
+  wrapped in its own try/catch so one failing endpoint degrades only that domain.
+- [ckSchedule.ts](server/src/ckSchedule.ts) — unattended scheduling on top of the manual
+  `POST /api/v1/ck/sync` route: syncs once per IST half-day window (AM/PM) on the first
+  login of that window, plus a daily timer at IST midnight as a backstop for when nobody
+  logs in. A single in-flight guard (`isSyncing()` / `tryBeginSync()` / `endSync()`) is the
+  source of truth the UI polls via `GET /ck/sync-state` (see `SyncIndicator` in the web app).
+  The last-synced window is recovered on boot from the most recent `ck-sync` audit row, so a
+  Render cold-start restart doesn't cause a redundant re-sync.
+
+If you touch synced tables, preserve the "CK-owned columns only" UPDATE discipline in
+`ckSync.ts` — widening an UPDATE to include a locally-owned column will silently blank
+user edits on the next sync.
 
 ### Web (`web/`)
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogOut, Plus, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -7,6 +7,7 @@ import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { MediaUpload } from '../../components/ui/MediaUpload';
 import { api } from '../../lib/api';
+import { useServerListQuery, Pagination } from '../../components/filters';
 
 export type ExitRow = {
   id: string; code: string; exit_type: string; reason: string | null;
@@ -45,27 +46,24 @@ export function StatusBadge({ status }: { status: string }) {
 
 const NOTICE_TYPES = ['FULL', 'WAIVED', 'BUYOUT', 'GARDEN_LEAVE'];
 
+type Filters = { stage: string; status: string };
+
 export function ExitListPage() {
   const navigate = useNavigate();
-  const [rows, setRows] = useState<ExitRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [q, setQ] = useState('');
-  const [qInput, setQInput] = useState('');
-  const [stage, setStage] = useState('');
   const [showModal, setShowModal] = useState(false);
 
-  const fetchRows = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (q) params.set('q', q);
-      if (stage) params.set('stage', stage);
-      const r = await api.get<{ data: ExitRow[] }>(`/exits?${params}`);
-      setRows(r.data.data);
-    } catch { /* silent */ } finally { setLoading(false); }
-  }, [q, stage]);
-
-  useEffect(() => { fetchRows(); }, [fetchRows]);
+  const {
+    rows, loading, total, totalPages, page, setPage,
+    searchInput: qInput, setSearchInput: setQInput, applySearch,
+    filters, setFilter, hasActiveFilters, clearAll,
+  } = useServerListQuery<ExitRow, Filters>({
+    endpoint: '/exits',
+    defaultFilters: { stage: '', status: '' },
+    searchParamName: 'q',
+    pageSize: 20,
+  });
+  const stage = filters.stage;
+  const status = filters.status;
 
   const th: React.CSSProperties = {
     padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--ck-faint)',
@@ -87,22 +85,28 @@ export function ExitListPage() {
             <Search size={14} style={{ position: 'absolute', left: 10, top: 10, color: 'var(--ck-faint)', pointerEvents: 'none' }} />
             <input
               value={qInput} onChange={(e) => setQInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && setQ(qInput)}
+              onKeyDown={(e) => e.key === 'Enter' && applySearch()}
               placeholder="Search employee, code…"
               style={{ height: 34, padding: '0 10px 0 32px', width: 260, borderRadius: 7, border: '1px solid var(--ck-line)', background: 'var(--ck-bg)', fontSize: 13, fontFamily: 'inherit', outline: 'none' }}
             />
           </div>
-          <select value={stage} onChange={(e) => setStage(e.target.value)}
+          <select value={stage} onChange={(e) => setFilter('stage', e.target.value)}
             style={{ height: 34, padding: '0 10px', borderRadius: 7, border: '1px solid var(--ck-line)', background: 'var(--ck-bg)', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>
             <option value="">All stages</option>
             {Object.entries(STAGE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
-          {(q || stage) && (
-            <button onClick={() => { setQ(''); setQInput(''); setStage(''); }}
+          <select value={status} onChange={(e) => setFilter('status', e.target.value)}
+            style={{ height: 34, padding: '0 10px', borderRadius: 7, border: '1px solid var(--ck-line)', background: 'var(--ck-bg)', fontSize: 13, fontFamily: 'inherit', cursor: 'pointer' }}>
+            <option value="">All statuses</option>
+            {Object.keys(STATUS_STYLE).map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+          </select>
+          {hasActiveFilters && (
+            <button onClick={clearAll}
               style={{ display: 'flex', alignItems: 'center', gap: 5, height: 34, padding: '0 12px', borderRadius: 7, border: '1px solid var(--ck-line)', background: 'var(--ck-bg)', color: 'var(--ck-muted)', cursor: 'pointer', fontSize: 12.5, fontFamily: 'inherit' }}>
               <X size={13} /> Clear
             </button>
           )}
+          <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>{loading ? 'Loading…' : `${total.toLocaleString('en-IN')} result${total === 1 ? '' : 's'}`}</div>
         </div>
       </Card>
 
@@ -118,7 +122,7 @@ export function ExitListPage() {
             <tbody>
               {rows.length === 0 && !loading ? (
                 <tr><td colSpan={7} style={{ ...td, textAlign: 'center', padding: '40px', color: 'var(--ck-muted)' }}>
-                  No exit cases yet. Click “Initiate Exit” to start one.
+                  {hasActiveFilters ? 'No exit cases match the current filters.' : 'No exit cases yet. Click "Initiate Exit" to start one.'}
                 </td></tr>
               ) : rows.map((r) => (
                 <tr key={r.id} onClick={() => navigate(`/exit-clearance/${r.id}`)} style={{ cursor: 'pointer' }}
@@ -145,6 +149,7 @@ export function ExitListPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} totalPages={totalPages} total={total} pageSize={20} onPageChange={setPage} />
       </Card>
 
       {showModal && <InitiateModal onClose={() => setShowModal(false)} onCreated={(id) => navigate(`/exit-clearance/${id}`)} />}

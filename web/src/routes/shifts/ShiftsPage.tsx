@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Clock, MapPin, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Clock, MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, apiErrorMessage } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { IconAction } from '../../components/ui/IconAction';
+import { useServerListQuery, Pagination, SearchInput, FilterSelect, ClearFiltersButton, SortableTh } from '../../components/filters';
 
 type ShiftBreak = {
   id?: string;
@@ -88,14 +89,11 @@ const inp: React.CSSProperties = {
 
 const inpReadonly: React.CSSProperties = { ...inp, background: 'var(--ck-bg)', color: 'var(--ck-ink-soft)' };
 
+type Filters = { branchId: string; status: string; kind: string };
+type SortKey = 'code' | 'name' | 'branch_name';
+
 export function ShiftsPage() {
-  const [shifts, setShifts] = useState<Shift[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'' | 'ACTIVE' | 'INACTIVE'>('');
-  const [page, setPage] = useState(1);
-  const pageSize = 5;
 
   const [editing, setEditing] = useState<Shift | null>(null);
   const [creating, setCreating] = useState(false);
@@ -108,40 +106,23 @@ export function ShiftsPage() {
   const [rotationOpen, setRotationOpen] = useState(false);
   const [rotation, setRotation] = useState<string[]>([]);
 
-  const fetchShifts = () => {
-    setLoading(true);
-    api
-      .get<{ data: Shift[] }>('/shifts')
-      .then((r) => setShifts(r.data.data))
-      .catch(() => toast.error('Failed to load shifts'))
-      .finally(() => setLoading(false));
-  };
+  const {
+    rows: pageRows, loading, total, totalPages, page, setPage,
+    searchInput, setSearchInput, applySearch,
+    filters, setFilter, sortBy, sortDir, toggleSort,
+    hasActiveFilters, clearAll, refetch,
+  } = useServerListQuery<Shift, Filters>({
+    endpoint: '/shifts',
+    defaultFilters: { branchId: '', status: '', kind: '' },
+    defaultSort: { sortBy: 'code', sortDir: 'asc' },
+    pageSize: 5,
+  });
+
+  const fetchShifts = refetch;
 
   useEffect(() => {
-    fetchShifts();
     api.get<{ data: Branch[] }>('/branches').then((r) => setBranches(r.data.data ?? [])).catch(() => setBranches([]));
   }, []);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return shifts.filter((s) => {
-      if (statusFilter && s.status !== statusFilter) return false;
-      if (!q) return true;
-      return (
-        s.name.toLowerCase().includes(q) ||
-        s.code.toLowerCase().includes(q) ||
-        (s.branch_name ?? '').toLowerCase().includes(q) ||
-        (s.location ?? '').toLowerCase().includes(q) ||
-        (s.company ?? '').toLowerCase().includes(q)
-      );
-    });
-  }, [shifts, search, statusFilter]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const safePage = Math.min(page, totalPages);
-  const pageRows = filtered.slice((safePage - 1) * pageSize, safePage * pageSize);
-
-  useEffect(() => { setPage(1); }, [search, statusFilter]);
 
   const openCreate = () => {
     setEditing(null);
@@ -266,25 +247,14 @@ export function ShiftsPage() {
       />
 
       <Card padding={0}>
-        <div style={{ display: 'flex', gap: 12, padding: 16, borderBottom: '1px solid var(--ck-line)', flexWrap: 'wrap', alignItems: 'center' }}>
-          <div style={{ position: 'relative', flex: 1, minWidth: 280 }}>
-            <Search size={16} style={{ position: 'absolute', left: 12, top: 12, color: 'var(--ck-muted)', pointerEvents: 'none' }} />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search Employees by Designation, Department…"
-              style={{ width: '100%', height: 40, padding: '0 12px 0 36px', border: '1px solid var(--ck-line)', borderRadius: 8, fontSize: 13, background: 'var(--ck-surface)' }}
-            />
-          </div>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as '' | 'ACTIVE' | 'INACTIVE')}
-            style={{ height: 40, padding: '0 12px', border: '1px solid var(--ck-line)', borderRadius: 8, background: 'var(--ck-surface)', fontSize: 13, minWidth: 140, color: statusFilter ? 'var(--ck-ink)' : 'var(--ck-muted)' }}
-          >
-            <option value="">All Status</option>
-            <option value="ACTIVE">Active</option>
-            <option value="INACTIVE">Inactive</option>
-          </select>
+        <div style={{ display: 'flex', gap: 12, padding: 16, borderBottom: '1px solid var(--ck-line)', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <SearchInput value={searchInput} onChange={setSearchInput} onSubmit={applySearch} placeholder="Search shift name, code, or branch…" width={280} />
+          <FilterSelect label="Branch" value={filters.branchId} onChange={(v) => setFilter('branchId', v)} placeholder="All branches"
+            options={branches.map((b) => ({ label: b.name, value: b.id }))} />
+          <FilterSelect label="Status" value={filters.status} onChange={(v) => setFilter('status', v)} placeholder="All statuses"
+            options={[{ label: 'Active', value: 'ACTIVE' }, { label: 'Inactive', value: 'INACTIVE' }]} />
+          <ClearFiltersButton onClick={clearAll} visible={hasActiveFilters} />
+          <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>{loading ? 'Loading…' : `${total.toLocaleString('en-IN')} result${total === 1 ? '' : 's'}`}</div>
         </div>
 
         <div style={{ padding: '14px 22px 4px', fontSize: 14, fontWeight: 600, color: 'var(--ck-ink)' }}>
@@ -295,7 +265,19 @@ export function ShiftsPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ textAlign: 'left' }}>
-                {['SHIFT DETAILS', 'COMPANY', 'LOCATION', 'TIMING', 'STATUS', 'ACTIONS'].map((h) => (
+                <SortableTh<SortKey> label="SHIFT DETAILS" sortKey="name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort}
+                  style={{ padding: '12px 22px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.06em', textTransform: 'none', borderTop: '1px solid var(--ck-line)', borderBottom: '1px solid var(--ck-line)', background: 'transparent' }} />
+                {['COMPANY'].map((h) => (
+                  <th
+                    key={h}
+                    style={{ padding: '12px 22px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.06em', borderTop: '1px solid var(--ck-line)', borderBottom: '1px solid var(--ck-line)' }}
+                  >
+                    {h}
+                  </th>
+                ))}
+                <SortableTh<SortKey> label="LOCATION" sortKey="branch_name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort}
+                  style={{ padding: '12px 22px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.06em', textTransform: 'none', borderTop: '1px solid var(--ck-line)', borderBottom: '1px solid var(--ck-line)', background: 'transparent' }} />
+                {['TIMING', 'STATUS', 'ACTIONS'].map((h) => (
                   <th
                     key={h}
                     style={{ padding: '12px 22px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.06em', borderTop: '1px solid var(--ck-line)', borderBottom: '1px solid var(--ck-line)' }}
@@ -309,7 +291,7 @@ export function ShiftsPage() {
               {!loading && pageRows.length === 0 && (
                 <tr>
                   <td colSpan={6} style={{ padding: 56, textAlign: 'center', color: 'var(--ck-muted)' }}>
-                    No shifts match this filter.
+                    No shifts match the current filters.
                   </td>
                 </tr>
               )}
@@ -365,18 +347,7 @@ export function ShiftsPage() {
           </table>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 22px', fontSize: 12.5, color: 'var(--ck-muted)' }}>
-          <span>
-            Showing {filtered.length === 0 ? 0 : (safePage - 1) * pageSize + 1} to {Math.min(safePage * pageSize, filtered.length)} of {filtered.length} results
-          </span>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <PagerButton disabled={safePage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</PagerButton>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).slice(0, 5).map((n) => (
-              <PagerButton key={n} active={n === safePage} onClick={() => setPage(n)}>{n}</PagerButton>
-            ))}
-            <PagerButton disabled={safePage >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>Next</PagerButton>
-          </div>
-        </div>
+        <Pagination page={page} totalPages={totalPages} total={total} pageSize={5} onPageChange={setPage} />
       </Card>
 
       <Modal
@@ -640,27 +611,6 @@ function CheckboxRow({ label, checked, onChange }: { label: string; checked: boo
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
       {label}
     </label>
-  );
-}
-
-function PagerButton({ children, onClick, disabled, active }: { children: ReactNode; onClick?: () => void; disabled?: boolean; active?: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        height: 30, padding: '0 12px',
-        border: '1px solid var(--ck-line)',
-        background: active ? 'var(--ck-ink)' : 'var(--ck-surface)',
-        color: active ? '#fff' : 'var(--ck-ink-soft)',
-        borderRadius: 8, fontSize: 12.5, fontWeight: 600,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.5 : 1,
-      }}
-    >
-      {children}
-    </button>
   );
 }
 

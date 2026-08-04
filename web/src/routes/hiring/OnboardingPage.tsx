@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Search, SlidersHorizontal, Mail, Phone, Eye, Play, Printer, Ban, Archive,
+  Mail, Phone, Eye, Play, Printer, Ban, Archive,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '../../lib/api';
@@ -11,6 +11,7 @@ import { Button } from '../../components/ui/Button';
 import { Avatar } from '../../components/ui/Avatar';
 import { Modal } from '../../components/ui/Modal';
 import { ActionBar } from '../../components/ui/ActionBar';
+import { useServerListQuery, Pagination, SearchInput, FilterSelect, ClearFiltersButton } from '../../components/filters';
 
 type HiredApplicant = {
   id: string; app_no: string | null; image_url: string | null;
@@ -41,22 +42,25 @@ const STATUS_STYLE: Record<string, { background: string; color: string; border: 
   completed:  { background: '#f0fdf4', color: '#166534', border: '1px solid #bbf7d0' },
 };
 
+type Filters = { onboardingStatus: string };
+
 export function OnboardingPage() {
   const navigate = useNavigate();
-  const [applicants, setApplicants] = useState<HiredApplicant[]>([]);
-  const [loading,    setLoading]    = useState(true);
-  const [search,     setSearch]     = useState('');
   const [viewTarget, setViewTarget] = useState<HiredApplicant | null>(null);
   const [closeTarget, setCloseTarget] = useState<HiredApplicant | null>(null);
   const [grades, setGrades] = useState<SalaryGrade[]>([]);
 
-  const fetchApplicants = () => {
-    setLoading(true);
-    const params = search ? { search } : {};
-    api.get<{ data: HiredApplicant[] }>('/applicants/hired', { params })
-      .then((r) => setApplicants(r.data.data)).catch(() => {}).finally(() => setLoading(false));
-  };
-  useEffect(fetchApplicants, [search]);
+  const {
+    rows: applicants, loading, total, totalPages, page, setPage,
+    searchInput, setSearchInput, applySearch,
+    filters, setFilter, hasActiveFilters, clearAll, refetch,
+  } = useServerListQuery<HiredApplicant, Filters>({
+    endpoint: '/applicants/hired',
+    defaultFilters: { onboardingStatus: '' },
+    pageSize: 20,
+  });
+  const fetchApplicants = refetch;
+
   useEffect(() => {
     api.get<{ data: SalaryGrade[] }>('/salary-grades', { params: { pageSize: 200 } })
       .then((r) => setGrades(r.data.data ?? [])).catch(() => {});
@@ -77,13 +81,17 @@ export function OnboardingPage() {
         subtitle="Onboarding process begins here. Manage giveaways, induction, account opening, and training." />
 
       <Card padding={0}>
-        <div style={{ display: 'flex', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--ck-line)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <div style={{ position: 'relative', flex: '1 1 280px', maxWidth: 420 }}>
-            <Search size={14} style={{ position: 'absolute', left: 11, top: 12, color: 'var(--ck-muted)', pointerEvents: 'none' }} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search Candidates...."
-              style={{ width: '100%', height: 36, padding: '0 12px 0 32px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 12.5, background: 'var(--ck-surface)' }} />
-          </div>
-          <Button variant="ghost" size="sm" icon={SlidersHorizontal}>Filters</Button>
+        <div style={{ display: 'flex', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--ck-line)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <SearchInput value={searchInput} onChange={setSearchInput} onSubmit={applySearch} placeholder="Search candidates…" width={280} />
+          <FilterSelect label="Onboarding status" value={filters.onboardingStatus} onChange={(v) => setFilter('onboardingStatus', v)} placeholder="All statuses"
+            options={[
+              { label: 'Pending', value: 'pending' },
+              { label: 'Onboarding', value: 'onboarding' },
+              { label: 'Onboarded', value: 'onboarded' },
+              { label: 'Completed', value: 'completed' },
+            ]} />
+          <ClearFiltersButton onClick={clearAll} visible={hasActiveFilters} />
+          <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>{loading ? 'Loading…' : `${total.toLocaleString('en-IN')} result${total === 1 ? '' : 's'}`}</div>
         </div>
 
         <div className="ck-table-wrap">
@@ -102,7 +110,7 @@ export function OnboardingPage() {
               )}
               {!loading && applicants.length === 0 && (
                 <tr><td colSpan={9} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
-                  No hired candidates yet. Complete the hiring pipeline to see candidates here.
+                  No hired candidates match the current filters.
                 </td></tr>
               )}
               {applicants.map((a, i) => {
@@ -206,6 +214,7 @@ export function OnboardingPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} totalPages={totalPages} total={total} pageSize={20} onPageChange={setPage} />
       </Card>
 
       {viewTarget && <ViewApplicantModal applicant={viewTarget} onClose={() => setViewTarget(null)} />}

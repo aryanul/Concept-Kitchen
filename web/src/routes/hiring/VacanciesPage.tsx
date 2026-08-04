@@ -11,7 +11,7 @@
 
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, SlidersHorizontal, Briefcase, Users, UserSearch } from 'lucide-react';
+import { Search, Briefcase, Users, UserSearch } from 'lucide-react';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -22,6 +22,7 @@ import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { IconAction } from '../../components/ui/IconAction';
+import { Pagination } from '../../components/filters';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Vacancy = {
@@ -55,6 +56,7 @@ type JobListing = {
 
 type Lookup = { id: string; code: string; label: string; color: string | null; sort_order: number | string; is_default: number | boolean; is_active: number | boolean };
 type Department = { id: string; name: string };
+type Branch = { id: string; name: string };
 type UserRow = { id: string; email: string; first_name: string | null; last_name: string | null };
 
 const inp: React.CSSProperties = { width: '100%', height: 38, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' };
@@ -67,7 +69,13 @@ export function VacanciesPage() {
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState('');
   const [deptFilter, setDeptFilter] = useState('');
+  const [branchFilter, setBranchFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const pageSize = 20;
 
   // Lookups (so picklists are always master-driven)
   const [listingStatuses, setListingStatuses] = useState<Lookup[]>([]);
@@ -81,29 +89,32 @@ export function VacanciesPage() {
 
   const fetchVacancies = () => {
     setLoading(true);
-    api.get<{ data: Vacancy[] }>('/vacancies', { params: { search, departmentId: deptFilter || undefined } })
-      .then((r) => setVacancies(r.data.data))
-      .catch(() => setVacancies([]))
+    api.get<{ data: Vacancy[]; meta: { total: number } }>('/vacancies', { params: { search, departmentId: deptFilter || undefined, branchId: branchFilter || undefined, page, pageSize } })
+      .then((r) => { setVacancies(r.data.data); setTotal(r.data.meta.total); })
+      .catch(() => { setVacancies([]); setTotal(0); })
       .finally(() => setLoading(false));
   };
   const fetchListings = () => {
-    api.get<{ data: JobListing[] }>('/job-listings', { params: { search, departmentId: deptFilter || undefined } })
+    api.get<{ data: JobListing[] }>('/job-listings', { params: { search, departmentId: deptFilter || undefined, status: statusFilter || undefined } })
       .then((r) => setListings(r.data.data))
       .catch(() => setListings([]));
   };
 
   useEffect(() => {
     api.get<{ data: Department[] }>('/departments').then((r) => setDepartments(r.data.data)).catch(() => {});
+    api.get<{ data: Branch[] }>('/branches').then((r) => setBranches(r.data.data)).catch(() => {});
     api.get<{ data: Lookup[] }>('/lookups', { params: { category: 'listing_status' } }).then((r) => setListingStatuses(r.data.data)).catch(() => {});
     api.get<{ data: Lookup[] }>('/lookups', { params: { category: 'hiring_status' } }).then((r) => setHiringStatuses(r.data.data)).catch(() => {});
     api.get<{ data: UserRow[] }>('/users').then((r) => setUsers(r.data.data)).catch(() => {});
   }, []);
 
+  useEffect(() => { setPage(1); }, [tab, search, deptFilter, branchFilter, statusFilter]);
+
   useEffect(() => {
     if (tab === 'vacancy') fetchVacancies();
     else fetchListings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, search, deptFilter]);
+  }, [tab, search, deptFilter, branchFilter, statusFilter, page]);
 
   const onCreateClicked = (v: Vacancy) => { setCreateTarget(v); setCreateOpen(true); };
 
@@ -146,10 +157,22 @@ export function VacanciesPage() {
               <option value="">All Departments</option>
               {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
-            <Button variant="ghost" size="sm" icon={SlidersHorizontal}>Filters</Button>
+            {tab === 'vacancy' ? (
+              <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)}
+                style={{ height: 36, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, background: 'var(--ck-surface)', fontSize: 12.5, minWidth: 160 }}>
+                <option value="">All Branches</option>
+                {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            ) : (
+              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+                style={{ height: 36, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, background: 'var(--ck-surface)', fontSize: 12.5, minWidth: 160 }}>
+                <option value="">All Statuses</option>
+                {listingStatuses.map((s) => <option key={s.id} value={s.code}>{s.label}</option>)}
+              </select>
+            )}
             <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>
               {tab === 'vacancy'
-                ? `${vacancies.length} vacancies · ${totalPositions} positions`
+                ? `${total} vacancies · ${totalPositions} positions (this page)`
                 : `${listings.length} listings · ${publishedCount} published · ${openCount} open`}
             </div>
           </div>
@@ -158,6 +181,9 @@ export function VacanciesPage() {
         {tab === 'vacancy'
           ? <VacancyTable rows={vacancies} loading={loading} onCreate={onCreateClicked} onProspects={(v) => setProspectsTarget(v)} />
           : <ListingTable rows={listings} loading={loading} listingStatuses={listingStatuses} hiringStatuses={hiringStatuses} />}
+        {tab === 'vacancy' && (
+          <Pagination page={page} totalPages={Math.max(1, Math.ceil(total / pageSize))} total={total} pageSize={pageSize} onPageChange={setPage} />
+        )}
       </Card>
 
       {createTarget && (

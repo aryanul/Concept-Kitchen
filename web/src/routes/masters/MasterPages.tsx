@@ -14,6 +14,7 @@ import { MasterCrudPage } from '../../components/masters/MasterCrudPage';
 import { SkillHierarchyTree } from '../../components/masters/SkillHierarchyTree';
 import { HolidaysPage } from '../holidays/HolidaysPage';
 import { ShiftsPage } from '../shifts/ShiftsPage';
+import { SearchInput, FilterSelect, SortableTh } from '../../components/filters';
 
 type Branch = { id: string; ck_id: number | null; code: string; name: string; city: string; kind: string; company_id: string | null; company_name: string | null };
 type AttendanceRule = { id: string; code: string | null; name: string; description: string | null; is_active: number | boolean };
@@ -135,8 +136,8 @@ export function BranchMasterPage() {
       endpoint="/branches"
       canDelete={(row) => !isCkSynced(row)}
       columns={[
-        { header: 'Code', render: (row) => <Mono>{row.code}</Mono> },
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Code', render: (row) => <Mono>{row.code}</Mono>, sortable: true, sortValue: (row) => row.code },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
         { header: 'Company', render: (row) => row.company_name ?? '—' },
         { header: 'City', render: (row) => row.city },
         { header: 'Kind', render: (row) => row.kind },
@@ -172,9 +173,15 @@ export function AttendanceRuleMasterPage() {
       title="Attendance Rule Master"
       subtitle="Attendance rules referenced from Employee Master → Attendance & Leaves (e.g. Standard, Flexi, Field-staff)."
       endpoint="/attendance-rules"
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+        predicate: (row, v) => String(Number(row.is_active)) === v,
+      }]}
       columns={[
-        { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono>, sortable: true, sortValue: (row) => row.code },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
         { header: 'Description', render: (row) => row.description ?? '—' },
         { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
       ]}
@@ -209,8 +216,8 @@ export function SalaryGradeMasterPage() {
       subtitle="Maintain salary bands used by employees and payroll."
       endpoint="/salary-grades"
       columns={[
-        { header: 'Code', render: (row) => <Mono>{row.code}</Mono> },
-        { header: 'Kind', render: (row) => row.kind },
+        { header: 'Code', render: (row) => <Mono>{row.code}</Mono>, sortable: true, sortValue: (row) => row.code },
+        { header: 'Kind', render: (row) => row.kind, sortable: true, sortValue: (row) => row.kind },
         { header: 'Min Gross', render: (row) => inrPaiseToRupeesShort(row.min_gross) },
         { header: 'Max Gross', render: (row) => inrPaiseToRupeesShort(row.max_gross) },
         { header: 'Headcount', render: (row) => Number(row.employee_count ?? 0) },
@@ -239,9 +246,15 @@ export function DivisionMasterPage() {
       title="Division Master"
       subtitle="Maintain divisions used by the DDD master and job profiles."
       endpoint="/divisions"
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+        predicate: (row, v) => String(Number(row.is_active)) === v,
+      }]}
       columns={[
-        { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono>, sortable: true, sortValue: (row) => row.code },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
         { header: 'Department', render: (row) => row.department_name ?? '—' },
         { header: 'Description', render: (row) => row.description ?? '—' },
         { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
@@ -323,9 +336,15 @@ export function SkillMasterPage() {
               addLabel="Add Skill Head"
               canEdit={(row) => !isCkSynced(row)}
               canDelete={(row) => !isCkSynced(row)}
+              filters={[{
+                key: 'status',
+                placeholder: 'All statuses',
+                options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+                predicate: (row, v) => String(Number(row.is_active)) === v,
+              }]}
               columns={[
                 { header: 'Image', render: (row) => <SkillImageCell name={row.name} imageCkId={row.image_ck_id} /> },
-                { header: 'Skill Head', render: (row) => <Strong>{row.name}</Strong> },
+                { header: 'Skill Head', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
                 { header: 'Skill Types', render: (row) => String(row.skill_type_count ?? 0) },
                 { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
               ]}
@@ -359,9 +378,15 @@ export function SkillMasterPage() {
                   ))}
                 </select>
               )}
+              filters={[{
+                key: 'status',
+                placeholder: 'All statuses',
+                options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+                predicate: (row, v) => String(Number(row.is_active)) === v,
+              }]}
               columns={[
                 { header: 'Image', render: (row) => <SkillImageCell name={row.name} imageCkId={row.image_ck_id} /> },
-                { header: 'Skill Type', render: (row) => <Strong>{row.name}</Strong> },
+                { header: 'Skill Type', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
                 { header: 'Skill Head', render: (row) => row.skill_head_name ?? '—' },
                 { header: 'Skills', render: (row) => String(row.skill_count ?? 0) },
                 { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
@@ -384,10 +409,16 @@ export function SkillMasterPage() {
               onChanged={() => setReloadToken((v) => v + 1)}
               addLabel="Add Skill"
               canDelete={(row) => !isCkSynced(row)}
+              filters={[{
+                key: 'status',
+                placeholder: 'All statuses',
+                options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+                predicate: (row, v) => String(Number(row.is_active)) === v,
+              }]}
               columns={[
                 { header: 'Image', render: (row) => <SkillImageCell name={row.name} imageCkId={row.image_ck_id} /> },
-                { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
-                { header: 'Skill', render: (row) => <Strong>{row.name}</Strong> },
+                { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono>, sortable: true, sortValue: (row) => row.code },
+                { header: 'Skill', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
                 { header: 'Category', render: (row) => row.category ?? '—' },
                 { header: 'Skill Type', render: (row) => row.skill_type_name ?? '—' },
                 { header: 'Skill Head', render: (row) => row.skill_head_name ?? '—' },
@@ -428,9 +459,15 @@ export function TrainingModuleMasterPage() {
       title="Training Module Master"
       subtitle="Manage course modules referenced from Job Profiles (Step 6)."
       endpoint="/training-modules"
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+        predicate: (row, v) => String(Number(row.is_active)) === v,
+      }]}
       columns={[
-        { header: 'Code',        render: (row) => <Mono>{row.code}</Mono> },
-        { header: 'Name',        render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Code',        render: (row) => <Mono>{row.code}</Mono>, sortable: true, sortValue: (row) => row.code },
+        { header: 'Name',        render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
         { header: 'Description', render: (row) => row.description ?? '—' },
         { header: 'Chapters',    render: (row) => String(row.chapter_count ?? 0).padStart(2, '0') },
         { header: 'Hours',       render: (row) => row.duration_hours != null ? `${row.duration_hours}h` : '—' },
@@ -480,8 +517,8 @@ export function LocationMasterPage() {
       endpoint="/locations"
       canDelete={(row) => !isCkSynced(row)}
       columns={[
-        { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono>, sortable: true, sortValue: (row) => row.code },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
         { header: 'City', render: (row) => row.city ?? '—' },
         { header: 'State', render: (row) => row.state ?? '—' },
         { header: 'Branch', render: (row) => row.branch_name ?? '—' },
@@ -513,8 +550,8 @@ export function CompanyMasterPage() {
       pageSize={1000}
       canDelete={(row) => !isCkSynced(row)}
       columns={[
-        { header: 'LC No.', render: (row) => <Mono>{row.lc_no}</Mono> },
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'LC No.', render: (row) => <Mono>{row.lc_no}</Mono>, sortable: true, sortValue: (row) => row.lc_no },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
         { header: 'Branch', render: (row) => row.branch ?? '—' },
         { header: 'City', render: (row) => row.city ?? '—' },
         { header: 'Location', render: (row) => row.location ?? '—' },
@@ -545,7 +582,7 @@ export function InterviewTemplateMasterPage() {
       subtitle="Scorecard templates used by the Interviews tab on a Job Listing."
       endpoint="/hiring/interview-templates"
       columns={[
-        { header: 'Title', render: (row) => <Strong>{row.title}</Strong> },
+        { header: 'Title', render: (row) => <Strong>{row.title}</Strong>, sortable: true, sortValue: (row) => row.title },
         { header: 'Description', render: (row) => row.description ?? '—' },
         { header: 'Fields', render: (row) => `${countTplFields(row.fields_json)} field(s)` },
         { header: 'Default', render: (row) => <StatusPill status={Number(row.is_default) ? 'Default' : 'Custom'} /> },
@@ -599,8 +636,14 @@ export function ScreeningTemplateMasterPage() {
       title="Screening Templates"
       subtitle="HR-defined screening questionnaires (salary, notice, location, fit)."
       endpoint="/hiring/screening-templates"
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+        predicate: (row, v) => String(Number(row.is_active)) === v,
+      }]}
       columns={[
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
         { header: 'Description', render: (row) => row.description ?? '—' },
         { header: 'Fields', render: (row) => `${countTplFields(row.fields_json)} field(s)` },
         { header: 'Default', render: (row) => <StatusPill status={Number(row.is_default) ? 'Default' : 'Custom'} /> },
@@ -636,8 +679,14 @@ export function OfferTemplateMasterPage() {
       title="Offer Letter Templates"
       subtitle="Offer letter bodies with merge tokens: {{candidate_name}}, {{designation}}, {{ctc}}, {{joining_date}}, {{branch}}, {{company}}."
       endpoint="/hiring/offer-templates"
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+        predicate: (row, v) => String(Number(row.is_active)) === v,
+      }]}
       columns={[
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
         { header: 'Description', render: (row) => row.description ?? '—' },
         { header: 'Default', render: (row) => <StatusPill status={Number(row.is_default) ? 'Default' : 'Custom'} /> },
         { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
@@ -683,7 +732,7 @@ export function GiveawayTemplateMasterPage() {
           ? <img src={row.thumbnail_url} alt="" style={{ width: 36, height: 36, borderRadius: 6, objectFit: 'cover', border: '1px solid var(--ck-line)' }} />
           : <span style={{ width: 36, height: 36, borderRadius: 6, background: 'var(--ck-line-soft)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>🎁</span>
         },
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
         { header: 'Category', render: (row) => row.category ?? '—' },
         { header: 'Occasion', render: (row) => row.occasion ?? '—' },
         { header: 'Default', render: (row) => <StatusPill status={Number(row.is_default) ? 'Default' : 'Custom'} /> },
@@ -735,8 +784,18 @@ export function PhonePoolMasterPage() {
       title="Phone Number Pool"
       subtitle="Company-owned phone numbers assigned to employees during onboarding."
       endpoint="/onboarding/phone-pool"
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [
+          { label: 'Available', value: 'available' },
+          { label: 'Assigned', value: 'assigned' },
+          { label: 'Blocked', value: 'blocked' },
+        ],
+        predicate: (row, v) => row.status === v,
+      }]}
       columns={[
-        { header: 'Number', render: (row) => <Mono>{row.number}</Mono> },
+        { header: 'Number', render: (row) => <Mono>{row.number}</Mono>, sortable: true, sortValue: (row) => row.number },
         { header: 'Carrier', render: (row) => row.carrier ?? '—' },
         { header: 'Status', render: (row) => <StatusPill status={row.status} /> },
         { header: 'Assigned To', render: (row) => row.assigned_employee_name ?? '—' },
@@ -765,9 +824,15 @@ export function ErpModuleMasterPage() {
       title="ERP Module Master"
       subtitle="Modules (SWORD, Infurnia, etc.) that get activated per designation during onboarding."
       endpoint="/onboarding/erp-modules"
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+        predicate: (row, v) => String(Number(row.is_active)) === v,
+      }]}
       columns={[
-        { header: 'Code', render: (row) => <Mono>{row.code}</Mono> },
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Code', render: (row) => <Mono>{row.code}</Mono>, sortable: true, sortValue: (row) => row.code },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
         { header: 'Icon', render: (row) => row.icon ?? '—' },
         { header: 'Sort', render: (row) => Number(row.sort_order) },
         { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
@@ -793,8 +858,14 @@ export function AssetCategoryMasterPage() {
       title="Asset Categories"
       subtitle="Categorize allocatable assets (Laptop, Mobile, Furniture, etc.)."
       endpoint="/onboarding/asset-categories"
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+        predicate: (row, v) => String(Number(row.is_active)) === v,
+      }]}
       columns={[
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
         { header: 'Description', render: (row) => row.description ?? '—' },
         { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
       ]}
@@ -821,9 +892,20 @@ export function AssetMasterPage() {
       title="Asset Master"
       subtitle="Allocatable company assets used during onboarding."
       endpoint="/onboarding/assets"
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [
+          { label: 'Available', value: 'available' },
+          { label: 'Allocated', value: 'allocated' },
+          { label: 'Maintenance', value: 'maintenance' },
+          { label: 'Retired', value: 'retired' },
+        ],
+        predicate: (row, v) => row.status === v,
+      }]}
       columns={[
-        { header: 'Tag', render: (row) => <Mono>{row.asset_tag}</Mono> },
-        { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+        { header: 'Tag', render: (row) => <Mono>{row.asset_tag}</Mono>, sortable: true, sortValue: (row) => row.asset_tag },
+        { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
         { header: 'Category', render: (row) => row.category_name ?? '—' },
         { header: 'Sub Category', render: (row) => row.sub_category ?? '—' },
         { header: 'Serial #', render: (row) => row.serial_no ?? '—' },
@@ -873,8 +955,14 @@ export function PresentationMasterPage() {
       title="Presentation Master"
       subtitle="Induction presentations shown to new joiners."
       endpoint="/onboarding/presentations"
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+        predicate: (row, v) => String(Number(row.is_active)) === v,
+      }]}
       columns={[
-        { header: 'Title', render: (row) => <Strong>{row.title}</Strong> },
+        { header: 'Title', render: (row) => <Strong>{row.title}</Strong>, sortable: true, sortValue: (row) => row.title },
         { header: 'Category', render: (row) => row.category ?? '—' },
         { header: 'Sub Category', render: (row) => row.sub_category ?? '—' },
         { header: 'Duration', render: (row) => row.duration_minutes != null ? `${row.duration_minutes} min` : '—' },
@@ -913,8 +1001,14 @@ export function OnboardingDocMasterPage() {
       title="Onboarding Documents"
       subtitle="Forms, policies and NDAs presented during induction."
       endpoint="/onboarding/docs"
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+        predicate: (row, v) => String(Number(row.is_active)) === v,
+      }]}
       columns={[
-        { header: 'Title', render: (row) => <Strong>{row.title}</Strong> },
+        { header: 'Title', render: (row) => <Strong>{row.title}</Strong>, sortable: true, sortValue: (row) => row.title },
         { header: 'Category', render: (row) => row.category ?? '—' },
         { header: 'Sub Category', render: (row) => row.sub_category ?? '—' },
         { header: 'Signature', render: (row) => Number(row.requires_signature) ? 'Required' : '—' },
@@ -978,8 +1072,14 @@ function OnboardingItemList({ kind }: { kind: 'program' | 'tour' | 'activity' })
       subtitle={`Onboarding ${kind} library.`}
       endpoint="/onboarding/items"
       listEndpoint={`/onboarding/items?kind=${kind}`}
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+        predicate: (row, v) => String(Number(row.is_active)) === v,
+      }]}
       columns={[
-        { header: 'Title', render: (row) => <Strong>{row.title}</Strong> },
+        { header: 'Title', render: (row) => <Strong>{row.title}</Strong>, sortable: true, sortValue: (row) => row.title },
         { header: 'Category', render: (row) => row.category ?? '—' },
         { header: 'Sub Category', render: (row) => row.sub_category ?? '—' },
         { header: 'Duration', render: (row) => row.duration_minutes != null ? `${row.duration_minutes} min` : '—' },
@@ -1029,7 +1129,7 @@ export function UserConsolePage() {
       subtitle="Manage app users, roles and employee links."
       endpoint="/users"
       columns={[
-        { header: 'Email', render: (row) => <Strong>{row.email}</Strong> },
+        { header: 'Email', render: (row) => <Strong>{row.email}</Strong>, sortable: true, sortValue: (row) => row.email },
         { header: 'Role', render: (row) => row.role },
         { header: 'Employee', render: (row) => row.employee_code ? `${row.employee_code}` : '—' },
       ]}
@@ -1108,7 +1208,7 @@ export function DddMasterPage() {
               canEdit={(row) => !isCkSynced(row)}
               canDelete={(row) => !isCkSynced(row)}
               columns={[
-                { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+                { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
               ]}
               buildFields={() => [
                 { name: 'name', label: 'Name', type: 'text', placeholder: 'Operations', required: true },
@@ -1126,9 +1226,15 @@ export function DddMasterPage() {
               onChanged={() => setReloadToken((v) => v + 1)}
               addLabel="Add Division"
               canDelete={(row) => !isCkSynced(row)}
+              filters={[{
+                key: 'status',
+                placeholder: 'All statuses',
+                options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+                predicate: (row, v) => String(Number(row.is_active)) === v,
+              }]}
               columns={[
-                { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
-                { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+                { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono>, sortable: true, sortValue: (row) => row.code },
+                { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
                 { header: 'Department', render: (row) => row.department_name ?? '—' },
                 { header: 'Description', render: (row) => row.description ?? '—' },
                 { header: 'Status', render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },
@@ -1156,9 +1262,15 @@ export function DddMasterPage() {
               onChanged={() => setReloadToken((v) => v + 1)}
               addLabel="Add Designation"
               canDelete={(row) => !isCkSynced(row)}
+              filters={[{
+                key: 'status',
+                placeholder: 'All statuses',
+                options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+                predicate: (row, v) => String(Number(row.is_active)) === v,
+              }]}
               columns={[
-                { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono> },
-                { header: 'Name', render: (row) => <Strong>{row.name}</Strong> },
+                { header: 'Code', render: (row) => <Mono>{row.code ?? '—'}</Mono>, sortable: true, sortValue: (row) => row.code },
+                { header: 'Name', render: (row) => <Strong>{row.name}</Strong>, sortable: true, sortValue: (row) => row.name },
                 { header: 'Department', render: (row) => row.department_name ?? '—' },
                 { header: 'Division', render: (row) => row.division_name ?? '—' },
                 { header: 'Level', render: (row) => String(row.hierarchy_level) },
@@ -1292,6 +1404,8 @@ type LookupValue = {
 };
 type LookupTag = { id: string; name: string; color: string | null; description: string | null; is_active: number | boolean };
 
+type LookupSortKey = 'code' | 'label' | 'sort_order';
+
 export function LookupMasterPage() {
   const [cats, setCats] = useState<LookupCategory[]>([]);
   const [activeCat, setActiveCat] = useState<string>('');
@@ -1301,6 +1415,10 @@ export function LookupMasterPage() {
   const [editing, setEditing] = useState<LookupValue | null>(null);
   const [form, setForm] = useState({ code: '', label: '', color: '', sortOrder: 0, isDefault: false, isActive: true });
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [sortBy, setSortBy] = useState<LookupSortKey>('sort_order');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   useEffect(() => {
     api.get<{ data: LookupCategory[] }>('/lookup-categories')
@@ -1320,6 +1438,25 @@ export function LookupMasterPage() {
       .finally(() => setLoading(false));
   };
   useEffect(() => { if (activeCat) fetchValues(activeCat); }, [activeCat]);
+
+  const visibleValues = (() => {
+    const q = search.trim().toLowerCase();
+    let out = !q ? values : values.filter((v) =>
+      v.code.toLowerCase().includes(q) || v.label.toLowerCase().includes(q));
+    if (statusFilter) out = out.filter((v) => String(Number(v.is_active)) === statusFilter);
+    out = [...out].sort((a, b) => {
+      const av = sortBy === 'sort_order' ? Number(a.sort_order) : a[sortBy];
+      const bv = sortBy === 'sort_order' ? Number(b.sort_order) : b[sortBy];
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+    return out;
+  })();
+
+  const toggleSort = (key: LookupSortKey) => {
+    if (sortBy === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortBy(key); setSortDir('asc'); }
+  };
 
   const openCreate = () => {
     setEditing(null);
@@ -1374,26 +1511,40 @@ export function LookupMasterPage() {
       </div>
 
       <Card padding={0}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--ck-line)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--ck-line)', flexWrap: 'wrap', gap: 10 }}>
           <div>
             <div style={{ fontSize: 15, fontWeight: 700 }}>{cat?.name ?? '—'}</div>
             <div style={{ fontSize: 12.5, color: 'var(--ck-muted)' }}>{cat?.description ?? ''}</div>
           </div>
-          <Button icon={Plus} variant="primary" onClick={openCreate} disabled={!cat}>Add</Button>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <SearchInput value={search} onChange={setSearch} placeholder="Search code or label…" showButton={false} width={200} />
+            <FilterSelect value={statusFilter} onChange={setStatusFilter} placeholder="All statuses"
+              options={[{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }]} />
+            <Button icon={Plus} variant="primary" onClick={openCreate} disabled={!cat}>Add</Button>
+          </div>
         </div>
         <div className="ck-table-wrap">
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: 'var(--ck-bg)', textAlign: 'left' }}>
-                {['CODE','LABEL','COLOR','SORT','DEFAULT','ACTIVE','ACTIONS'].map((h) => (
+                <SortableTh label="CODE" sortKey="code" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort}
+                  style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', textTransform: 'none', background: 'transparent', border: 'none' }} />
+                <SortableTh label="LABEL" sortKey="label" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort}
+                  style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', textTransform: 'none', background: 'transparent', border: 'none' }} />
+                {['COLOR'].map((h) => (
+                  <th key={h} style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em' }}>{h}</th>
+                ))}
+                <SortableTh label="SORT" sortKey="sort_order" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort}
+                  style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', textTransform: 'none', background: 'transparent', border: 'none' }} />
+                {['DEFAULT','ACTIVE','ACTIONS'].map((h) => (
                   <th key={h} style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading && <tr><td colSpan={7} style={{ padding: 24, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading…</td></tr>}
-              {!loading && values.length === 0 && <tr><td colSpan={7} style={{ padding: 24, textAlign: 'center', color: 'var(--ck-muted)' }}>No values yet.</td></tr>}
-              {values.map((row) => (
+              {!loading && visibleValues.length === 0 && <tr><td colSpan={7} style={{ padding: 24, textAlign: 'center', color: 'var(--ck-muted)' }}>No values yet.</td></tr>}
+              {visibleValues.map((row) => (
                 <tr key={row.id} style={{ borderTop: '1px solid var(--ck-line)' }}>
                   <td style={{ padding: '10px 16px' }}><Mono>{row.code}</Mono></td>
                   <td style={{ padding: '10px 16px' }}><Strong>{row.label}</Strong></td>
@@ -1467,13 +1618,19 @@ export function TagMasterPage() {
       title="Tag Master"
       subtitle="Define tags for marking applicants (Hot Lead, Cultural Fit, etc.)."
       endpoint="/tags"
+      filters={[{
+        key: 'status',
+        placeholder: 'All statuses',
+        options: [{ label: 'Active', value: '1' }, { label: 'Inactive', value: '0' }],
+        predicate: (row, v) => String(Number(row.is_active)) === v,
+      }]}
       columns={[
         { header: 'Name', render: (row) => (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
             {row.color && <span style={{ width: 12, height: 12, borderRadius: 4, background: row.color, border: '1px solid var(--ck-line)' }} />}
             <Strong>{row.name}</Strong>
           </span>
-        )},
+        ), sortable: true, sortValue: (row) => row.name },
         { header: 'Color',       render: (row) => row.color ? <Mono>{row.color}</Mono> : '—' },
         { header: 'Description', render: (row) => row.description ?? '—' },
         { header: 'Status',      render: (row) => <StatusPill status={Number(row.is_active) ? 'Active' : 'Inactive'} /> },

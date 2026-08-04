@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Play, FileText, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { useForm } from 'react-hook-form';
@@ -11,13 +11,13 @@ import { Button } from '../../components/ui/Button';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { inrPaiseToRupeesShort } from '../../lib/format';
 import { Modal } from '../../components/ui/Modal';
+import { useServerListQuery, Pagination, FilterSelect, ClearFiltersButton } from '../../components/filters';
 
 type Period = {
   id: string; month: number; year: number; status: string;
   employee_count: number | string; total_gross: number | string; total_net: number | string;
   run_at: string | null;
 };
-type Resp = { data: Period[] };
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const STATUS_LABELS: Record<string, string> = { DRAFT: 'Draft', APPROVED: 'Approved', DISBURSED: 'Disbursed' };
@@ -28,22 +28,23 @@ const runSchema = z.object({
 });
 type RunForm = z.infer<typeof runSchema>;
 
+type Filters = { status: string; year: string };
+
 export function PayrollPage() {
-  const [periods, setPeriods] = useState<Period[]>([]);
-  const [loading, setLoading] = useState(true);
   const [runOpen, setRunOpen] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
 
-  const fetchPeriods = () => {
-    api.get<Resp>('/payroll/periods')
-      .then((r) => setPeriods(r.data.data))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  };
+  const {
+    rows: periods, loading, total, totalPages, page, setPage,
+    filters, setFilter, hasActiveFilters, clearAll, refetch,
+  } = useServerListQuery<Period, Filters>({
+    endpoint: '/payroll/periods',
+    defaultFilters: { status: '', year: '' },
+    defaultSort: { sortBy: 'period', sortDir: 'desc' },
+    pageSize: 24,
+  });
 
-  useEffect(fetchPeriods, []);
-
-  const latest = periods[0];
+  const latest = page === 1 && !hasActiveFilters ? periods[0] : undefined;
 
   const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<RunForm>({
     resolver: zodResolver(runSchema),
@@ -54,7 +55,7 @@ export function PayrollPage() {
     try {
       await api.post('/payroll/periods', data);
       toast.success('Payroll run started');
-      reset(data); setRunOpen(false); fetchPeriods();
+      reset(data); setRunOpen(false); refetch();
     } catch (err) {
       const msg = (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ?? 'Failed to run payroll';
       toast.error(msg);
@@ -63,14 +64,14 @@ export function PayrollPage() {
 
   const approve = async (id: string) => {
     setActionId(id);
-    try { await api.post(`/payroll/periods/${id}/approve`); toast.success('Payroll approved'); fetchPeriods(); }
+    try { await api.post(`/payroll/periods/${id}/approve`); toast.success('Payroll approved'); refetch(); }
     catch { toast.error('Failed to approve'); }
     finally { setActionId(null); }
   };
 
   const disburse = async (id: string) => {
     setActionId(id);
-    try { await api.post(`/payroll/periods/${id}/disburse`); toast.success('Payroll disbursed'); fetchPeriods(); }
+    try { await api.post(`/payroll/periods/${id}/disburse`); toast.success('Payroll disbursed'); refetch(); }
     catch { toast.error('Failed to disburse'); }
     finally { setActionId(null); }
   };
@@ -108,7 +109,17 @@ export function PayrollPage() {
             <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ck-ink)' }}>Payroll history</div>
             <div style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginTop: 2 }}>All processed payroll periods.</div>
           </div>
-          <div style={{ fontSize: 12.5, color: 'var(--ck-muted)' }}>{loading ? 'Loading…' : `${periods.length} periods`}</div>
+          <div style={{ fontSize: 12.5, color: 'var(--ck-muted)' }}>{loading ? 'Loading…' : `${total.toLocaleString('en-IN')} period${total === 1 ? '' : 's'}`}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, padding: 16, borderBottom: '1px solid var(--ck-line)', flexWrap: 'wrap' }}>
+          <FilterSelect label="Status" value={filters.status} onChange={(v) => setFilter('status', v)} placeholder="All statuses"
+            options={Object.entries(STATUS_LABELS).map(([value, label]) => ({ label, value }))} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 11, color: 'var(--ck-faint)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Year</span>
+            <input type="number" value={filters.year} onChange={(e) => setFilter('year', e.target.value)} placeholder="2026"
+              style={{ height: 34, padding: '0 10px', borderRadius: 7, border: '1px solid var(--ck-line)', background: 'var(--ck-bg)', fontSize: 13, width: 90 }} />
+          </div>
+          <ClearFiltersButton onClick={clearAll} visible={hasActiveFilters} />
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -155,6 +166,7 @@ export function PayrollPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} totalPages={totalPages} total={total} pageSize={24} onPageChange={setPage} />
       </Card>
 
       <Modal open={runOpen} onClose={() => { reset(); setRunOpen(false); }} title="Run Payroll" width={420}

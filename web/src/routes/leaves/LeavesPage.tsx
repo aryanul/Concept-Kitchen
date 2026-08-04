@@ -11,6 +11,7 @@ import { Button } from '../../components/ui/Button';
 import { Avatar } from '../../components/ui/Avatar';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Modal } from '../../components/ui/Modal';
+import { FilterSelect } from '../../components/filters';
 
 type Leave = {
   id: string; type: string; from_date: string; to_date: string; days: number;
@@ -37,6 +38,7 @@ type ApplyForm = z.infer<typeof applySchema>;
 
 export function LeavesPage() {
   const [tab, setTab] = useState('All');
+  const [type, setType] = useState('');
   const [leaves, setLeaves] = useState<Leave[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -49,6 +51,7 @@ export function LeavesPage() {
     const params: Record<string, string> = {};
     const s = STATUS_MAP[tab];
     if (s) params.status = s;
+    if (type) params.type = type;
     api.get<Resp>('/leaves', { params, signal: ctrl.signal })
       .then((r) => { setLeaves(r.data.data); setTotal(r.data.meta.total); })
       .catch(() => {})
@@ -56,7 +59,7 @@ export function LeavesPage() {
     return () => ctrl.abort();
   };
 
-  useEffect(fetchLeaves, [tab]);
+  useEffect(fetchLeaves, [tab, type]);
 
   const decide = async (id: string, decision: 'APPROVED' | 'REJECTED') => {
     setDeciding(id);
@@ -109,6 +112,8 @@ export function LeavesPage() {
               {t}
             </button>
           ))}
+          <FilterSelect value={type} onChange={setType} placeholder="All types"
+            options={LEAVE_TYPES_OPTS.map((t) => ({ label: t, value: t }))} />
           <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>{loading ? 'Loading…' : `${total} requests`}</div>
         </div>
         <div style={{ overflowX: 'auto' }}>

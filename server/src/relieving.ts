@@ -81,6 +81,10 @@ export function registerRelievingRoutes(app: Application) {
         const like = `%${req.query.q}%`;
         params.push(like, like, like);
       }
+      const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+      const page = Math.max(1, Number(req.query.page) || 1);
+      const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+
       const rows = await query(
         `SELECT x.id, x.code, x.exit_type, x.reason, x.stage, x.status,
                 x.proposed_last_working_day, x.actual_last_working_day, x.notice_period_type,
@@ -91,11 +95,16 @@ export function registerRelievingRoutes(app: Application) {
          FROM exit_cases x
          JOIN employees e ON e.id = x.employee_id
          LEFT JOIN departments d ON d.id = e.department_id
-         ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
-         ORDER BY x.created_at DESC`,
+         ${whereSql}
+         ORDER BY x.created_at DESC
+         LIMIT ? OFFSET ?`,
+        [...params, pageSize, (page - 1) * pageSize]
+      );
+      const [cnt] = await query<{ total: number }>(
+        `SELECT COUNT(*) AS total FROM exit_cases x JOIN employees e ON e.id = x.employee_id ${whereSql}`,
         params
       );
-      res.json({ data: rows });
+      res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
     } catch (err) { next(err); }
   });
 

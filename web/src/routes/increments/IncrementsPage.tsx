@@ -11,19 +11,26 @@ import { Button } from '../../components/ui/Button';
 import { Avatar } from '../../components/ui/Avatar';
 import { inrPaiseToRupeesShort } from '../../lib/format';
 import { Modal } from '../../components/ui/Modal';
+import { useServerListQuery, Pagination, SearchInput, FilterSelect, ClearFiltersButton } from '../../components/filters';
 
 type Increment = {
   id: string; cycle_year: number; current_ctc: number|string; proposed_ctc: number|string;
   hike_pct: number|string; rating: string; stage: string; effective: string|null;
   employee_id: string; code: string; first_name: string; last_name: string; designation: string;
 };
-type Resp = { data: Increment[] };
 
 const TABS = ['In-flight', 'Approved', 'History'];
 const STAGE_MAP: Record<string, string> = {
   manager_review: 'Manager Review', hr: 'HR', finance: 'Finance', done: 'Done',
 };
 const PIPELINE = ['manager_review', 'hr', 'finance', 'done'];
+const RATINGS = ['Outstanding', 'Exceeds', 'Meets'];
+const SORT_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'created_at', label: 'Date' },
+  { value: 'hike_pct', label: 'Hike %' },
+  { value: 'proposed_ctc', label: 'Proposed CTC' },
+  { value: 'cycle_year', label: 'Cycle year' },
+];
 
 const decisionSchema = z.object({
   decision: z.enum(['approve', 'reject']),
@@ -31,29 +38,31 @@ const decisionSchema = z.object({
 });
 type DecisionForm = z.infer<typeof decisionSchema>;
 
+type Filters = { rating: string };
+
 export function IncrementsPage() {
   const [tab, setTab] = useState('In-flight');
-  const [items, setItems] = useState<Increment[]>([]);
-  const [loading, setLoading] = useState(true);
   const [deciding, setDeciding] = useState<Increment | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const fetchIncrements = () => {
-    const ctrl = new AbortController();
-    setLoading(true);
-    const stageFilter = tab === 'In-flight' ? undefined : tab === 'Approved' ? 'done' : undefined;
-    api.get<Resp>('/increments', { params: stageFilter ? { stage: stageFilter } : {}, signal: ctrl.signal })
-      .then((r) => setItems(r.data.data))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-    return () => ctrl.abort();
-  };
+  const {
+    rows: items, loading, total, totalPages, page, setPage,
+    searchInput, setSearchInput, applySearch,
+    filters, setFilter, sortBy, sortDir, toggleSort,
+    hasActiveFilters, clearAll, refetch,
+  } = useServerListQuery<Increment, Filters>({
+    endpoint: '/increments',
+    defaultFilters: { rating: '' },
+    defaultSort: { sortBy: 'created_at', sortDir: 'desc' },
+    pageSize: 12,
+    extraParams: tab === 'In-flight' ? { stageExclude: 'done' } : tab === 'Approved' ? { stage: 'done' } : undefined,
+  });
 
-  useEffect(fetchIncrements, [tab]);
+  // Tab changes narrow the stage server-side (via extraParams) — reset to page 1 so a
+  // deep page from one tab doesn't carry over as an empty/out-of-range page on another.
+  useEffect(() => { setPage(1); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const displayed = tab === 'Approved' ? items.filter((i) => i.stage === 'done')
-    : tab === 'In-flight' ? items.filter((i) => i.stage !== 'done')
-    : items;
+  const fetchIncrements = refetch;
 
   const { register, handleSubmit, reset } = useForm<DecisionForm>({
     resolver: zodResolver(decisionSchema),
@@ -85,18 +94,39 @@ export function IncrementsPage() {
               style={{ padding: '7px 16px', borderRadius: 8, border: 'none', fontSize: 13, fontWeight: 600, cursor: 'pointer',
                 background: tab === t ? 'var(--ck-ink)' : 'transparent',
                 color: tab === t ? '#fff' : 'var(--ck-muted)' }}>
-              {t} {!loading && t !== 'History' && `(${displayed.length})`}
+              {t} {tab === t && !loading && `(${total})`}
             </button>
           ))}
         </div>
 
-        {!loading && displayed.length === 0 ? (
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, padding: 16, borderBottom: '1px solid var(--ck-line)', flexWrap: 'wrap' }}>
+          <SearchInput value={searchInput} onChange={setSearchInput} onSubmit={applySearch} placeholder="Search employee name or code…" />
+          <FilterSelect label="Rating" value={filters.rating} onChange={(v) => setFilter('rating', v)} placeholder="All ratings"
+            options={RATINGS.map((r) => ({ label: r, value: r }))} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 11, color: 'var(--ck-faint)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Sort by</span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <select value={sortBy} onChange={(e) => toggleSort(e.target.value)}
+                style={{ height: 34, padding: '0 10px', borderRadius: 7, border: '1px solid var(--ck-line)', background: 'var(--ck-bg)', fontSize: 13, minWidth: 130 }}>
+                {SORT_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <button type="button" onClick={() => toggleSort(sortBy ?? 'created_at')}
+                title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+                style={{ height: 34, width: 34, borderRadius: 7, border: '1px solid var(--ck-line)', background: 'var(--ck-bg)', color: 'var(--ck-ink-soft)', cursor: 'pointer' }}>
+                {sortDir === 'asc' ? '↑' : '↓'}
+              </button>
+            </div>
+          </div>
+          <ClearFiltersButton onClick={clearAll} visible={hasActiveFilters} />
+        </div>
+
+        {!loading && items.length === 0 ? (
           <div style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
-            No increments in this stage. Start an appraisal cycle to add.
+            No increments match the current filters.
           </div>
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 14, padding: 16 }}>
-            {displayed.map((inc, i) => {
+            {items.map((inc, i) => {
               const hike = Number(inc.hike_pct);
               const stageIdx = PIPELINE.indexOf(inc.stage);
               return (
@@ -149,6 +179,7 @@ export function IncrementsPage() {
             })}
           </div>
         )}
+        <Pagination page={page} totalPages={totalPages} total={total} pageSize={12} onPageChange={setPage} />
       </Card>
 
       <Modal open={!!deciding} onClose={() => setDeciding(null)} title="Decision" subtitle={deciding ? `${deciding.first_name} ${deciding.last_name}` : undefined} width={420}

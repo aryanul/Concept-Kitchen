@@ -12,13 +12,13 @@ import { Avatar } from '../../components/ui/Avatar';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { inrPaiseToRupeesShort } from '../../lib/format';
 import { Modal } from '../../components/ui/Modal';
+import { useServerListQuery, Pagination, SearchInput, FilterSelect, ClearFiltersButton, SortableTh } from '../../components/filters';
 
 type Incentive = {
   id: string; kind: string; month: number; year: number; amount: number|string;
   status: string; pushed: number|boolean; pushed_at: string|null; created_at: string;
   employee_id: string; code: string; first_name: string; last_name: string; designation: string;
 };
-type Resp = { data: Incentive[] };
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const STATUS_LABELS: Record<string,string> = { draft: 'Draft', approved: 'Approved', rejected: 'Rejected' };
 
@@ -31,19 +31,31 @@ const schema = z.object({
 });
 type FormValues = z.infer<typeof schema>;
 
+type Filters = { status: string; kind: string; month: string; year: string };
+type SortKey = 'created_at' | 'amount' | 'month' | 'year';
+
 export function IncentivesPage() {
-  const [items, setItems] = useState<Incentive[]>([]);
-  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
   const [deciding, setDeciding] = useState<string | null>(null);
   const [pushing, setPushing] = useState(false);
 
-  const fetchIncentives = () => {
-    api.get<Resp>('/incentives').then((r) => setItems(r.data.data)).catch(() => {}).finally(() => setLoading(false));
-  };
+  const {
+    rows: items, loading, total, totalPages, page, setPage,
+    search, searchInput, setSearchInput, applySearch,
+    filters, setFilter, sortBy, sortDir, toggleSort,
+    hasActiveFilters, clearAll, refetch,
+  } = useServerListQuery<Incentive, Filters>({
+    endpoint: '/incentives',
+    defaultFilters: { status: '', kind: '', month: '', year: '' },
+    defaultSort: { sortBy: 'created_at', sortDir: 'desc' },
+    pageSize: 20,
+  });
 
-  useEffect(fetchIncentives, []);
+  // Selection is page-scoped: toggleAll only ever touches the currently-visible page, and
+  // any change to page/filters/search/sort drops the (now off-screen) selection entirely
+  // rather than silently carrying stale ids into the "Push to Payroll" bulk action.
+  useEffect(() => { setSelected(new Set()); }, [page, filters, search, sortBy, sortDir]);
 
   const toggleAll = () => {
     if (selected.size === items.length) setSelected(new Set());
@@ -56,7 +68,7 @@ export function IncentivesPage() {
     try {
       await api.post(`/incentives/${id}/decide`, { decision });
       toast.success(`Incentive ${decision === 'approve' ? 'approved' : 'rejected'}`);
-      fetchIncentives();
+      refetch();
     } catch { toast.error('Action failed'); }
     finally { setDeciding(null); }
   };
@@ -68,7 +80,7 @@ export function IncentivesPage() {
       await api.post('/incentives/push-to-payroll', { ids: Array.from(selected) });
       toast.success('Incentives pushed to payroll');
       setSelected(new Set());
-      fetchIncentives();
+      refetch();
     } catch { toast.error('Failed to push incentives'); }
     finally { setPushing(false); }
   };
@@ -82,7 +94,7 @@ export function IncentivesPage() {
     try {
       await api.post('/incentives', data);
       toast.success('Incentive added');
-      reset(); setAddOpen(false); fetchIncentives();
+      reset(); setAddOpen(false); refetch();
     } catch { toast.error('Failed to add incentive'); }
   };
 
@@ -95,7 +107,7 @@ export function IncentivesPage() {
 
       {selected.size > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', background: 'var(--ck-ink)', borderRadius: 10, marginBottom: 14, color: '#fff' }}>
-          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{selected.size} selected</span>
+          <span style={{ fontSize: 13.5, fontWeight: 600 }}>{selected.size} selected (this page)</span>
           <Button size="sm" variant="accent" icon={CheckCircle} disabled={pushing} onClick={pushSelected}>
             {pushing ? 'Pushing…' : 'Push to Payroll'}
           </Button>
@@ -104,6 +116,25 @@ export function IncentivesPage() {
       )}
 
       <Card padding={0}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, padding: 16, borderBottom: '1px solid var(--ck-line)', flexWrap: 'wrap' }}>
+          <SearchInput value={searchInput} onChange={setSearchInput} onSubmit={applySearch} placeholder="Search employee name or code…" />
+          <FilterSelect label="Status" value={filters.status} onChange={(v) => setFilter('status', v)} placeholder="All statuses"
+            options={Object.entries(STATUS_LABELS).map(([value, label]) => ({ label, value }))} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 11, color: 'var(--ck-faint)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Kind</span>
+            <input value={filters.kind} onChange={(e) => setFilter('kind', e.target.value)} placeholder="e.g. Spot bonus"
+              style={{ height: 34, padding: '0 10px', borderRadius: 7, border: '1px solid var(--ck-line)', background: 'var(--ck-bg)', fontSize: 13, minWidth: 140 }} />
+          </div>
+          <FilterSelect label="Month" value={filters.month} onChange={(v) => setFilter('month', v)} placeholder="All months"
+            options={MONTHS.map((m, i) => ({ label: m, value: String(i + 1) }))} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <span style={{ fontSize: 11, color: 'var(--ck-faint)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Year</span>
+            <input type="number" value={filters.year} onChange={(e) => setFilter('year', e.target.value)} placeholder="2026"
+              style={{ height: 34, padding: '0 10px', borderRadius: 7, border: '1px solid var(--ck-line)', background: 'var(--ck-bg)', fontSize: 13, width: 90 }} />
+          </div>
+          <ClearFiltersButton onClick={clearAll} visible={hasActiveFilters} />
+          <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>{loading ? 'Loading…' : `${total.toLocaleString('en-IN')} result${total === 1 ? '' : 's'}`}</div>
+        </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -111,7 +142,13 @@ export function IncentivesPage() {
                 <th style={{ padding: '10px 16px', width: 44 }}>
                   <input type="checkbox" checked={items.length > 0 && selected.size === items.length} onChange={toggleAll} style={{ cursor: 'pointer' }} />
                 </th>
-                {['Employee', 'Kind', 'Month', 'Amount', 'Status', 'In Payroll', 'Actions'].map((h) => (
+                <th style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Employee</th>
+                <th style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Kind</th>
+                <SortableTh<SortKey> label="Month" sortKey="month" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort}
+                  style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', textTransform: 'none', background: 'transparent', border: 'none' }} />
+                <SortableTh<SortKey> label="Amount" sortKey="amount" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort}
+                  style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', textTransform: 'none', background: 'transparent', border: 'none' }} />
+                {['Status', 'In Payroll', 'Actions'].map((h) => (
                   <th key={h} style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
                 ))}
               </tr>
@@ -120,7 +157,7 @@ export function IncentivesPage() {
               {!loading && items.length === 0 && (
                 <tr><td colSpan={8} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
                   <Gift size={40} strokeWidth={1.4} style={{ display: 'block', margin: '0 auto 12px', color: 'var(--ck-faint)' }} />
-                  No incentive records yet.
+                  No incentive records match the current filters.
                 </td></tr>
               )}
               {items.map((it, i) => (
@@ -165,6 +202,7 @@ export function IncentivesPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} totalPages={totalPages} total={total} pageSize={20} onPageChange={setPage} />
       </Card>
 
       <Modal open={addOpen} onClose={() => { reset(); setAddOpen(false); }} title="Add Incentive" width={460}

@@ -25,7 +25,7 @@ export function WorkShiftsEditor({
   const [draft, setDraft] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    api.get<{ data: ShiftOption[] }>('/shifts').then((r) => setAllShifts(r.data.data)).catch(() => {});
+    api.get<{ data: ShiftOption[] }>('/shifts', { params: { pageSize: 1000 } }).then((r) => setAllShifts(r.data.data)).catch(() => {});
   }, []);
 
   const openModal = () => {

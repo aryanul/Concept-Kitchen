@@ -77,7 +77,7 @@ export function EmployeeCreatePage() {
       api.get<{ data: Named[] }>('/divisions'),
       api.get<{ data: Designation[] }>('/designations'),
       api.get<{ data: Grade[] }>('/salary-grades'),
-      api.get<{ data: Shift[] }>('/shifts'),
+      api.get<{ data: Shift[] }>('/shifts', { params: { pageSize: 1000 } }),
       api.get<{ data: LookupOpt[] }>('/lookups', { params: { category: 'gender' } }),
       api.get<{ data: LookupOpt[] }>('/lookups', { params: { category: 'marital_status' } }),
       api.get<{ data: LookupOpt[] }>('/lookups', { params: { category: 'blood_group' } }),

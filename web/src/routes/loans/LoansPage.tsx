@@ -11,16 +11,22 @@ import { Button } from '../../components/ui/Button';
 import { Avatar } from '../../components/ui/Avatar';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { Modal } from '../../components/ui/Modal';
-import { inrPaiseToRupeesShort } from '../../lib/format';
+import { inrPaiseToRupeesShort, formatDate } from '../../lib/format';
+import { useServerListQuery, Pagination, SearchInput, FilterSelect, ClearFiltersButton, SortableTh } from '../../components/filters';
 
 type Loan = {
   id: string; kind: string; principal: number|string; outstanding: number|string;
   emi: number|string; tenure_months: number; remaining: number; status: string; purpose: string|null;
+  started_at: string;
   employee_id: string; code: string; first_name: string; last_name: string; designation: string;
 };
 type Stats = { total_principal: number|string; total_outstanding: number|string; active: number|string };
-type Resp = { data: Loan[]; meta: { total: number }; stats: Stats };
+type StatsResp = { data: Loan[]; meta: { total: number }; stats: Stats };
 const STATUS_LABELS: Record<string,string> = { ACTIVE: 'Active', CLOSED: 'Closed', DEFAULTED: 'Defaulted' };
+const KIND_LABELS: Record<string,string> = { LOAN: 'Loan', ADVANCE: 'Advance' };
+
+type Filters = { kind: string; status: string };
+type SortKey = 'started_at' | 'outstanding' | 'principal';
 
 const schema = z.object({
   employeeId: z.string().min(1, 'Required'),
@@ -34,22 +40,33 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 export function LoansPage() {
-  const [loans, setLoans] = useState<Loan[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [closing, setClosing] = useState<string | null>(null);
 
-  const fetchLoans = () => {
-    api.get<Resp>('/loans').then((r) => { setLoans(r.data.data); setTotal(r.data.meta.total); setStats(r.data.stats); }).catch(() => {}).finally(() => setLoading(false));
-  };
+  const {
+    rows: loans, loading, total, totalPages, page, setPage,
+    searchInput, setSearchInput, applySearch,
+    filters, setFilter, sortBy, sortDir, toggleSort,
+    hasActiveFilters, clearAll, refetch,
+  } = useServerListQuery<Loan, Filters>({
+    endpoint: '/loans',
+    defaultFilters: { kind: '', status: '' },
+    defaultSort: { sortBy: 'started_at', sortDir: 'desc' },
+    pageSize: 20,
+  });
 
-  useEffect(fetchLoans, []);
+  // Loan stats are a global, unfiltered KPI summary the backend always returns alongside
+  // the (possibly filtered) rows — fetch it once independently so it never flickers/changes
+  // as the table below is filtered or paginated.
+  const [stats, setStats] = useState<Stats | null>(null);
+  const fetchStats = () => {
+    api.get<StatsResp>('/loans', { params: { pageSize: 1 } }).then((r) => setStats(r.data.stats)).catch(() => {});
+  };
+  useEffect(fetchStats, []);
 
   const closeLoan = async (id: string) => {
     setClosing(id);
-    try { await api.post(`/loans/${id}/close`); toast.success('Loan closed'); fetchLoans(); }
+    try { await api.post(`/loans/${id}/close`); toast.success('Loan closed'); refetch(); fetchStats(); }
     catch { toast.error('Failed to close loan'); }
     finally { setClosing(null); }
   };
@@ -60,7 +77,7 @@ export function LoansPage() {
   });
 
   const onSubmit = async (data: FormValues) => {
-    try { await api.post('/loans', data); toast.success('Loan/advance created'); reset(); setAddOpen(false); fetchLoans(); }
+    try { await api.post('/loans', data); toast.success('Loan/advance created'); reset(); setAddOpen(false); refetch(); fetchStats(); }
     catch { toast.error('Failed to create loan'); }
   };
 
@@ -86,18 +103,37 @@ export function LoansPage() {
       </div>
 
       <Card padding={0}>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, padding: 16, borderBottom: '1px solid var(--ck-line)', flexWrap: 'wrap' }}>
+          <SearchInput value={searchInput} onChange={setSearchInput} onSubmit={applySearch} placeholder="Search employee or purpose…" />
+          <FilterSelect label="Kind" value={filters.kind} onChange={(v) => setFilter('kind', v)} placeholder="All kinds"
+            options={Object.entries(KIND_LABELS).map(([value, label]) => ({ label, value }))} />
+          <FilterSelect label="Status" value={filters.status} onChange={(v) => setFilter('status', v)} placeholder="All statuses"
+            options={Object.entries(STATUS_LABELS).map(([value, label]) => ({ label, value }))} />
+          <ClearFiltersButton onClick={clearAll} visible={hasActiveFilters} />
+          <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>{loading ? 'Loading…' : `${total.toLocaleString('en-IN')} result${total === 1 ? '' : 's'}`}</div>
+        </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
               <tr style={{ background: 'var(--ck-bg)', textAlign: 'left' }}>
-                {['Employee','Kind','Principal','Outstanding','EMI','Remaining','Status','Actions'].map((h) => (
+                {['Employee','Kind'].map((h) => (
                   <th key={h} style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
                 ))}
+                <SortableTh<SortKey> label="Principal" sortKey="principal" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort}
+                  style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', textTransform: 'none', background: 'transparent', border: 'none' }} />
+                <SortableTh<SortKey> label="Outstanding" sortKey="outstanding" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort}
+                  style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', textTransform: 'none', background: 'transparent', border: 'none' }} />
+                {['EMI','Remaining','Status'].map((h) => (
+                  <th key={h} style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{h}</th>
+                ))}
+                <SortableTh<SortKey> label="Started" sortKey="started_at" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort}
+                  style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', textTransform: 'none', background: 'transparent', border: 'none' }} />
+                <th style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {!loading && loans.length === 0 && (
-                <tr><td colSpan={8} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>No loan records yet.</td></tr>
+                <tr><td colSpan={9} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>No loan records match the current filters.</td></tr>
               )}
               {loans.map((l, i) => (
                 <tr key={l.id} style={{ borderTop: '1px solid var(--ck-line)' }}
@@ -118,6 +154,7 @@ export function LoansPage() {
                   <td style={{ padding: '12px 16px' }}>{inrPaiseToRupeesShort(l.emi)}/mo</td>
                   <td style={{ padding: '12px 16px', color: 'var(--ck-muted)' }}>{l.remaining} left</td>
                   <td style={{ padding: '12px 16px' }}><StatusPill status={STATUS_LABELS[l.status] ?? l.status} /></td>
+                  <td style={{ padding: '12px 16px', color: 'var(--ck-muted)' }}>{formatDate(l.started_at)}</td>
                   <td style={{ padding: '12px 16px' }}>
                     {l.status === 'ACTIVE' && (
                       <Button size="sm" variant="ghost" disabled={closing === l.id} onClick={() => closeLoan(l.id)}>
@@ -130,6 +167,7 @@ export function LoansPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} totalPages={totalPages} total={total} pageSize={20} onPageChange={setPage} />
       </Card>
 
       <Modal open={addOpen} onClose={() => { reset(); setAddOpen(false); }} title="New Loan / Advance" width={480}

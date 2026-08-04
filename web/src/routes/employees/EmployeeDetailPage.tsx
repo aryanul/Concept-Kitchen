@@ -285,7 +285,7 @@ export function EmployeeDetailPage() {
       api.get<{ data: Array<{ id: string; number: string; status: string; assigned_employee_id: string | null }> }>('/onboarding/phone-pool'),
       api.get<{ data: Array<{ id: string; code: string | null; name: string; category: string | null; is_active: number | boolean }> }>('/skills'),
       api.get<{ data: JobProfileOption[] }>('/job-profiles', { params: { pageSize: 1000 } }),
-      api.get<{ data: Array<{ id: string; code: string; name: string }> }>('/shifts'),
+      api.get<{ data: Array<{ id: string; code: string; name: string }> }>('/shifts', { params: { pageSize: 1000 } }),
       api.get<{ data: Array<{ id: string; name: string; is_active?: number | boolean }> }>('/attendance-rules'),
     ]).then(([d, dv, p, sk, jp, sh, ar]) => {
       setDepartments(d.data.data ?? []);

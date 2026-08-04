@@ -8,6 +8,7 @@ import { Button } from '../ui/Button';
 import { IconAction } from '../ui/IconAction';
 import { Modal } from '../ui/Modal';
 import { MediaUpload } from '../ui/MediaUpload';
+import { SortableTh, FilterSelect } from '../filters';
 
 type RowValue = string | number | boolean;
 
@@ -30,6 +31,18 @@ export type MasterField<Row> = {
 export type MasterColumn<Row> = {
   header: string;
   render: (row: Row) => React.ReactNode;
+  /** Opt into client-side sorting for this column. Requires sortValue. */
+  sortable?: boolean;
+  /** Comparable value extractor — required when sortable is true. */
+  sortValue?: (row: Row) => string | number | null | undefined;
+};
+
+export type MasterFilterDef<Row> = {
+  key: string;
+  placeholder: string;
+  options: Array<{ label: string; value: string }>;
+  /** Client-side predicate matched against the current filter value. */
+  predicate: (row: Row, value: string) => boolean;
 };
 
 type Props<Row extends { id: string }> = {
@@ -56,8 +69,12 @@ type Props<Row extends { id: string }> = {
   onChanged?: () => void;
   /** Optional extra inline action buttons rendered before Edit/Delete. */
   extraActions?: (row: Row) => React.ReactNode;
-  /** Optional filter control rendered next to the search box (e.g. a parent-entity dropdown). */
+  /** Optional filter control rendered next to the search box (e.g. a parent-entity dropdown that
+   * changes the fetch endpoint itself — for pure client-side filtering of already-fetched rows,
+   * use `filters` instead). */
   filterBar?: React.ReactNode;
+  /** Declarative client-side dropdown filters, ANDed with search against the already-fetched rows. */
+  filters?: MasterFilterDef<Row>[];
   /** Whether the Edit action is shown for a given row. Defaults to always true. */
   canEdit?: (row: Row) => boolean;
   /** Whether the Delete action is shown for a given row. Defaults to always true. */
@@ -83,6 +100,7 @@ export function MasterCrudPage<Row extends { id: string }>({
   onChanged,
   extraActions,
   filterBar,
+  filters,
   canEdit = () => true,
   canDelete = () => true,
 }: Props<Row>) {
@@ -97,6 +115,9 @@ export function MasterCrudPage<Row extends { id: string }>({
   const [editing, setEditing] = useState<Row | null>(null);
   const [values, setValues] = useState<Record<string, RowValue>>(rowToValues(null));
   const [saving, setSaving] = useState(false);
+  const [filterValues, setFilterValues] = useState<Record<string, string>>({});
+  const [sortCol, setSortCol] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
 
   const fetchRows = () => {
     setLoading(true);
@@ -114,14 +135,32 @@ export function MasterCrudPage<Row extends { id: string }>({
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((row) => {
+    let out = !q ? rows : rows.filter((row) => {
       if (searchKeys?.length) {
         return searchKeys.some((key) => String((row as Record<string, unknown>)[key] ?? '').toLowerCase().includes(q));
       }
       return JSON.stringify(row).toLowerCase().includes(q);
     });
-  }, [rows, search, searchKeys]);
+
+    if (filters?.length) {
+      out = out.filter((row) => filters.every((f) => !filterValues[f.key] || f.predicate(row, filterValues[f.key])));
+    }
+
+    if (sortCol) {
+      const col = columns.find((c) => c.header === sortCol);
+      if (col?.sortValue) {
+        const sortValue = col.sortValue;
+        out = [...out].sort((a, b) => {
+          const av = sortValue(a);
+          const bv = sortValue(b);
+          const cmp = av == null ? -1 : bv == null ? 1 : av < bv ? -1 : av > bv ? 1 : 0;
+          return sortDir === 'asc' ? cmp : -cmp;
+        });
+      }
+    }
+
+    return out;
+  }, [rows, search, searchKeys, filters, filterValues, sortCol, sortDir, columns]);
 
   const fields = useMemo(() => buildFields(rows, editing), [buildFields, rows, editing]);
 
@@ -190,6 +229,15 @@ export function MasterCrudPage<Row extends { id: string }>({
             />
           </div>
           {filterBar}
+          {filters?.map((f) => (
+            <FilterSelect
+              key={f.key}
+              value={filterValues[f.key] ?? ''}
+              onChange={(v) => setFilterValues((prev) => ({ ...prev, [f.key]: v }))}
+              options={f.options}
+              placeholder={f.placeholder}
+            />
+          ))}
           <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>
             {loading ? 'Loading…' : `${filteredRows.length.toLocaleString('en-IN')} result${filteredRows.length === 1 ? '' : 's'}`}
           </div>
@@ -200,12 +248,27 @@ export function MasterCrudPage<Row extends { id: string }>({
             <thead>
               <tr style={{ background: 'var(--ck-bg)', textAlign: 'left' }}>
                 {columns.map((column) => (
-                  <th
-                    key={column.header}
-                    style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em' }}
-                  >
-                    {column.header}
-                  </th>
+                  column.sortable && column.sortValue ? (
+                    <SortableTh
+                      key={column.header}
+                      label={column.header}
+                      sortKey={column.header}
+                      sortBy={sortCol ?? undefined}
+                      sortDir={sortDir}
+                      onSort={(key) => {
+                        if (sortCol === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                        else { setSortCol(key); setSortDir('asc'); }
+                      }}
+                      style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em', textTransform: 'none', background: 'transparent', border: 'none' }}
+                    />
+                  ) : (
+                    <th
+                      key={column.header}
+                      style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em' }}
+                    >
+                      {column.header}
+                    </th>
+                  )
                 ))}
                 <th style={{ padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.04em' }}>Actions</th>
               </tr>

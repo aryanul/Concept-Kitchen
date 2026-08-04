@@ -28,6 +28,8 @@ type RefResp<T> = { data: T[] };
 
 export function EmployeesPage() {
   const navigate = useNavigate();
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('');
   const [companyId, setCompanyId] = useState('');
   const [branchId, setBranchId] = useState('');
   const [locationId, setLocationId] = useState('');
@@ -65,7 +67,7 @@ export function EmployeesPage() {
     }).catch(() => {});
   }, []);
 
-  useEffect(() => { setPage(1); }, [companyId, branchId, locationId, departmentId, divisionId, designation, code]);
+  useEffect(() => { setPage(1); }, [search, status, companyId, branchId, locationId, departmentId, divisionId, designation, code]);
 
   // Narrow the Branch + Location dropdowns based on Company / Branch selection so
   // the picker stays internally consistent (e.g. picking Company A only shows A's branches).
@@ -84,6 +86,8 @@ export function EmployeesPage() {
     setLoading(true);
     setError(null);
     const params: Record<string, string | number> = { page, pageSize };
+    if (search)       params.search       = search;
+    if (status)       params.status       = status;
     if (companyId)    params.companyId    = companyId;
     if (branchId)     params.branchId     = branchId;
     if (locationId)   params.locationId   = locationId;
@@ -96,7 +100,7 @@ export function EmployeesPage() {
       .catch((e: unknown) => { if ((e as { name?: string }).name !== 'CanceledError') setError('Failed to load employees.'); })
       .finally(() => setLoading(false));
     return () => ctrl.abort();
-  }, [companyId, branchId, locationId, departmentId, divisionId, designation, code, page]);
+  }, [search, status, companyId, branchId, locationId, departmentId, divisionId, designation, code, page]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -114,6 +118,13 @@ export function EmployeesPage() {
 
       <Card padding={0}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(180px, 1fr))', gap: 12, padding: 16, borderBottom: '1px solid var(--ck-line)' }}>
+          <FilterText label="Search" value={search} onChange={setSearch} placeholder="Name, code, or email" />
+          <FilterSelect label="Status" value={status} onChange={setStatus} placeholder="All statuses">
+            <option value="ACTIVE">Active</option>
+            <option value="PROBATION">Probation</option>
+            <option value="ON_LEAVE">On leave</option>
+            <option value="EXITED">Exited</option>
+          </FilterSelect>
           <FilterSelect label="Company" value={companyId} onChange={(v) => { setCompanyId(v); setBranchId(''); setLocationId(''); }} placeholder="All companies">
             {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </FilterSelect>

@@ -245,8 +245,31 @@ app.get('/api/v1/salary-grades', authRequired, async (_req, res, next) => {
   }
 });
 
-app.get('/api/v1/shifts', authRequired, async (_req, res, next) => {
+const SHIFT_SORT_EXPRS: Record<string, string> = { code: 's.code', name: 's.name', branch_name: 'b.name' };
+
+app.get('/api/v1/shifts', authRequired, async (req, res, next) => {
   try {
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined;
+    const sortBy = SHIFT_SORT_EXPRS[typeof req.query.sortBy === 'string' ? req.query.sortBy : ''] ?? 's.code';
+    const sortDir = req.query.sortDir === 'desc' ? 'DESC' : 'ASC';
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (search) {
+      where.push('(s.code LIKE ? OR s.name LIKE ? OR b.name LIKE ?)');
+      const like = `%${search}%`;
+      params.push(like, like, like);
+    }
+    if (branchId) { where.push('s.branch_id = ?'); params.push(branchId); }
+    if (status) { where.push('s.status = ?'); params.push(status); }
+    if (kind) { where.push('s.kind = ?'); params.push(kind); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const rows = await query<{
       id: string; code: string; name: string; description: string | null;
       company: string | null; branch_id: string | null; branch_name: string | null;
@@ -265,7 +288,14 @@ app.get('/api/v1/shifts', authRequired, async (_req, res, next) => {
               s.ot_after_min, s.ot_multiplier
          FROM shifts s
          LEFT JOIN branches b ON b.id = s.branch_id
-        ORDER BY s.code`
+         ${whereSql}
+        ORDER BY ${sortBy} ${sortDir}
+        LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
+    );
+    const [cnt] = await query<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM shifts s LEFT JOIN branches b ON b.id = s.branch_id ${whereSql}`,
+      params
     );
     const ids = rows.map((r) => r.id);
     let breaks: Array<{ id: string; shift_id: string; name: string; start_offset_min: number; duration_min: number; is_paid: number; is_mandatory: number; sort_order: number }> = [];
@@ -286,24 +316,60 @@ app.get('/api/v1/shifts', authRequired, async (_req, res, next) => {
       breaksByShift.set(br.shift_id, list);
     }
     const data = rows.map((r) => ({ ...r, breaks: breaksByShift.get(r.id) ?? [] }));
-    res.json({ data });
+    res.json({ data, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
   } catch (err) {
     next(err);
   }
 });
 
-app.get('/api/v1/holidays', authRequired, async (_req, res, next) => {
+const HOLIDAY_SORT_EXPRS: Record<string, string> = { date: 'h.date', name: 'h.name', kind: 'h.kind' };
+
+app.get('/api/v1/holidays', authRequired, async (req, res, next) => {
   try {
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined;
+    const dateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined;
+    const dateTo = typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined;
+    const branchId = typeof req.query.branchId === 'string' ? req.query.branchId : undefined;
+    const sortBy = HOLIDAY_SORT_EXPRS[typeof req.query.sortBy === 'string' ? req.query.sortBy : ''] ?? 'h.date';
+    const sortDir = req.query.sortDir === 'desc' ? 'DESC' : 'ASC';
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (search) { where.push('h.name LIKE ?'); params.push(`%${search}%`); }
+    if (kind) { where.push('h.kind = ?'); params.push(kind); }
+    if (dateFrom) { where.push('h.date >= ?'); params.push(dateFrom); }
+    if (dateTo) { where.push('h.date < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(dateTo); }
+    if (branchId) {
+      where.push('EXISTS (SELECT 1 FROM holiday_branches hb2 WHERE hb2.holiday_id = h.id AND hb2.branch_id = ?)');
+      params.push(branchId);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const rows = await query(
       `SELECT h.id, h.date, h.name, h.kind,
               GROUP_CONCAT(b.name ORDER BY b.code SEPARATOR ', ') AS branch_names
        FROM holidays h
        LEFT JOIN holiday_branches hb ON hb.holiday_id = h.id
        LEFT JOIN branches b ON b.id = hb.branch_id
+       ${whereSql}
        GROUP BY h.id
-       ORDER BY h.date`
+       ORDER BY ${sortBy} ${sortDir}
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
     );
-    res.json({ data: rows });
+    const [cnt] = await query<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM (
+         SELECT h.id FROM holidays h
+         LEFT JOIN holiday_branches hb ON hb.holiday_id = h.id
+         ${whereSql}
+         GROUP BY h.id
+       ) t`,
+      params
+    );
+    res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
   } catch (err) {
     next(err);
   }
@@ -809,8 +875,25 @@ app.get('/api/v1/leaves', authRequired, async (req, res, next) => {
 });
 
 // --- Payroll ---
-app.get('/api/v1/payroll/periods', authRequired, async (_req, res, next) => {
+const PAYROLL_PERIOD_SORT_EXPRS: Record<string, string> = {
+  period: 'p.year, p.month', status: 'p.status',
+};
+
+app.get('/api/v1/payroll/periods', authRequired, async (req, res, next) => {
   try {
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const year = typeof req.query.year === 'string' ? Number(req.query.year) : undefined;
+    const sortBy = PAYROLL_PERIOD_SORT_EXPRS[typeof req.query.sortBy === 'string' ? req.query.sortBy : ''] ?? 'p.year, p.month';
+    const sortDir = req.query.sortDir === 'asc' ? 'ASC' : 'DESC';
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 24));
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (status) { where.push('p.status = ?'); params.push(status); }
+    if (year) { where.push('p.year = ?'); params.push(year); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const rows = await query(
       `SELECT p.id, p.month, p.year, p.status, p.run_at, p.approved_at, p.disbursed_at,
               COUNT(i.id) AS employee_count,
@@ -818,9 +901,17 @@ app.get('/api/v1/payroll/periods', authRequired, async (_req, res, next) => {
               COALESCE(SUM(i.net), 0)   AS total_net
        FROM payroll_periods p
        LEFT JOIN payroll_items i ON i.period_id = p.id
-       GROUP BY p.id ORDER BY p.year DESC, p.month DESC`
+       ${whereSql}
+       GROUP BY p.id
+       ORDER BY ${sortBy} ${sortDir}
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
     );
-    res.json({ data: rows });
+    const [cnt] = await query<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM payroll_periods p ${whereSql}`,
+      params
+    );
+    res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
   } catch (err) { next(err); }
 });
 
@@ -842,69 +933,203 @@ app.get('/api/v1/payroll/periods/:id/items', authRequired, async (req, res, next
 });
 
 // --- Loans ---
+const LOAN_SORT_EXPRS: Record<string, string> = {
+  started_at: 'l.started_at', outstanding: 'l.outstanding', principal: 'l.principal',
+};
+
 app.get('/api/v1/loans', authRequired, async (req, res, next) => {
   try {
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined;
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const employeeId = typeof req.query.employeeId === 'string' ? req.query.employeeId : undefined;
+    const sortBy = LOAN_SORT_EXPRS[typeof req.query.sortBy === 'string' ? req.query.sortBy : ''] ?? 'l.created_at';
+    const sortDir = req.query.sortDir === 'asc' ? 'ASC' : 'DESC';
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (search) {
+      where.push('(e.first_name LIKE ? OR e.last_name LIKE ? OR e.code LIKE ? OR l.purpose LIKE ?)');
+      const like = `%${search}%`;
+      params.push(like, like, like, like);
+    }
+    if (kind) { where.push('l.kind = ?'); params.push(kind); }
+    if (status) { where.push('l.status = ?'); params.push(status); }
+    if (employeeId) { where.push('l.employee_id = ?'); params.push(employeeId); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const rows = await query(
       `SELECT l.id, l.kind, l.principal, l.outstanding, l.emi, l.tenure_months, l.remaining, l.status, l.purpose, l.started_at,
               e.id AS employee_id, e.code, e.first_name, e.last_name, e.designation
        FROM loans l
        JOIN employees e ON e.id = l.employee_id
-       ORDER BY l.created_at DESC LIMIT ? OFFSET ?`,
-      [pageSize, (page - 1) * pageSize]
+       ${whereSql}
+       ORDER BY ${sortBy} ${sortDir}
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
     );
-    const [cnt] = await query<{ total: number }>('SELECT COUNT(*) AS total FROM loans');
+    const [cnt] = await query<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM loans l JOIN employees e ON e.id = l.employee_id ${whereSql}`,
+      params
+    );
+    // Global, unfiltered KPI summary (not "totals for the current filter") — intentionally
+    // never gets whereSql applied, so the stat tiles stay stable while the table is filtered.
     const [stats] = await query<{ total_principal: number; total_outstanding: number; active: number }>(
-      `SELECT COALESCE(SUM(principal),0) AS total_principal, COALESCE(SUM(outstanding),0) AS total_outstanding, SUM(status='ACTIVE') AS active FROM loans`
+      `SELECT COALESCE(SUM(principal),0) AS total_principal, COALESCE(SUM(outstanding),0) AS total_outstanding, COALESCE(SUM(status='ACTIVE'),0) AS active FROM loans`
     );
     res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) }, stats });
   } catch (err) { next(err); }
 });
 
 // --- Increments ---
+const INCREMENT_SORT_EXPRS: Record<string, string> = {
+  created_at: 'i.created_at', hike_pct: 'i.hike_pct', proposed_ctc: 'i.proposed_ctc', cycle_year: 'i.cycle_year',
+};
+
 app.get('/api/v1/increments', authRequired, async (req, res, next) => {
   try {
-    const stage = typeof req.query.stage === 'string' ? req.query.stage : undefined;
-    const where = stage ? 'WHERE i.stage = ?' : '';
-    const params = stage ? [stage] : [];
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    // `stage` is a comma-separated IN-list (e.g. "manager_review,hr"); `stageExclude` is the
+    // complement (e.g. "done" for an "in-flight" view) — both optional and combinable.
+    const stage = typeof req.query.stage === 'string' ? req.query.stage.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    const stageExclude = typeof req.query.stageExclude === 'string' ? req.query.stageExclude.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    const cycleYear = typeof req.query.cycleYear === 'string' ? Number(req.query.cycleYear) : undefined;
+    const rating = typeof req.query.rating === 'string' ? req.query.rating : undefined;
+    const employeeId = typeof req.query.employeeId === 'string' ? req.query.employeeId : undefined;
+    const sortBy = INCREMENT_SORT_EXPRS[typeof req.query.sortBy === 'string' ? req.query.sortBy : ''] ?? 'i.created_at';
+    const sortDir = req.query.sortDir === 'asc' ? 'ASC' : 'DESC';
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (search) {
+      where.push('(e.first_name LIKE ? OR e.last_name LIKE ? OR e.code LIKE ?)');
+      const like = `%${search}%`;
+      params.push(like, like, like);
+    }
+    if (stage.length) { where.push(`i.stage IN (${stage.map(() => '?').join(',')})`); params.push(...stage); }
+    if (stageExclude.length) { where.push(`i.stage NOT IN (${stageExclude.map(() => '?').join(',')})`); params.push(...stageExclude); }
+    if (cycleYear) { where.push('i.cycle_year = ?'); params.push(cycleYear); }
+    if (rating) { where.push('i.rating = ?'); params.push(rating); }
+    if (employeeId) { where.push('i.employee_id = ?'); params.push(employeeId); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const rows = await query(
       `SELECT i.id, i.cycle_year, i.current_ctc, i.proposed_ctc, i.hike_pct, i.rating, i.stage, i.effective, i.remarks, i.created_at,
               e.id AS employee_id, e.code, e.first_name, e.last_name, e.designation
        FROM increments i
        JOIN employees e ON e.id = i.employee_id
-       ${where} ORDER BY i.created_at DESC`,
+       ${whereSql}
+       ORDER BY ${sortBy} ${sortDir}
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
+    );
+    const [cnt] = await query<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM increments i JOIN employees e ON e.id = i.employee_id ${whereSql}`,
       params
     );
-    res.json({ data: rows });
+    res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
   } catch (err) { next(err); }
 });
 
 // --- Tours ---
-app.get('/api/v1/tours', authRequired, async (_req, res, next) => {
+const TOUR_SORT_EXPRS: Record<string, string> = {
+  created_at: 't.created_at', from_date: 't.from_date', status: 't.status', expense: 't.expense',
+};
+
+app.get('/api/v1/tours', authRequired, async (req, res, next) => {
   try {
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const employeeId = typeof req.query.employeeId === 'string' ? req.query.employeeId : undefined;
+    const dateFrom = typeof req.query.dateFrom === 'string' ? req.query.dateFrom : undefined;
+    const dateTo = typeof req.query.dateTo === 'string' ? req.query.dateTo : undefined;
+    const sortBy = TOUR_SORT_EXPRS[typeof req.query.sortBy === 'string' ? req.query.sortBy : ''] ?? 't.created_at';
+    const sortDir = req.query.sortDir === 'asc' ? 'ASC' : 'DESC';
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (search) {
+      where.push('(t.code LIKE ? OR e.first_name LIKE ? OR e.last_name LIKE ? OR e.code LIKE ? OR t.from_city LIKE ? OR t.to_city LIKE ?)');
+      const like = `%${search}%`;
+      params.push(like, like, like, like, like, like);
+    }
+    if (status) { where.push('t.status = ?'); params.push(status); }
+    if (employeeId) { where.push('t.employee_id = ?'); params.push(employeeId); }
+    if (dateFrom) { where.push('t.from_date >= ?'); params.push(dateFrom); }
+    if (dateTo) { where.push('t.from_date < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(dateTo); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const rows = await query(
       `SELECT t.id, t.code, t.from_city, t.to_city, t.from_date, t.to_date, t.advance, t.expense, t.status,
               e.id AS employee_id, e.code AS emp_code, e.first_name, e.last_name, e.designation
        FROM tours t
        JOIN employees e ON e.id = t.employee_id
-       ORDER BY t.created_at DESC`
+       ${whereSql}
+       ORDER BY ${sortBy} ${sortDir}
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
     );
-    res.json({ data: rows });
+    const [cnt] = await query<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM tours t JOIN employees e ON e.id = t.employee_id ${whereSql}`,
+      params
+    );
+    res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
   } catch (err) { next(err); }
 });
 
 // --- Incentives ---
-app.get('/api/v1/incentives', authRequired, async (_req, res, next) => {
+const INCENTIVE_SORT_EXPRS: Record<string, string> = {
+  created_at: 'i.created_at', amount: 'i.amount', month: 'i.month', year: 'i.year',
+};
+
+app.get('/api/v1/incentives', authRequired, async (req, res, next) => {
   try {
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined;
+    const month = typeof req.query.month === 'string' ? Number(req.query.month) : undefined;
+    const year = typeof req.query.year === 'string' ? Number(req.query.year) : undefined;
+    const employeeId = typeof req.query.employeeId === 'string' ? req.query.employeeId : undefined;
+    const sortBy = INCENTIVE_SORT_EXPRS[typeof req.query.sortBy === 'string' ? req.query.sortBy : ''] ?? 'i.created_at';
+    const sortDir = req.query.sortDir === 'asc' ? 'ASC' : 'DESC';
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (search) {
+      where.push('(e.first_name LIKE ? OR e.last_name LIKE ? OR e.code LIKE ?)');
+      const like = `%${search}%`;
+      params.push(like, like, like);
+    }
+    if (status) { where.push('i.status = ?'); params.push(status); }
+    if (kind) { where.push('i.kind LIKE ?'); params.push(`%${kind}%`); }
+    if (month) { where.push('i.month = ?'); params.push(month); }
+    if (year) { where.push('i.year = ?'); params.push(year); }
+    if (employeeId) { where.push('i.employee_id = ?'); params.push(employeeId); }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const rows = await query(
       `SELECT i.id, i.kind, i.month, i.year, i.amount, i.status, i.pushed, i.pushed_at, i.created_at,
               e.id AS employee_id, e.code, e.first_name, e.last_name, e.designation
        FROM incentives i
        JOIN employees e ON e.id = i.employee_id
-       ORDER BY i.created_at DESC`
+       ${whereSql}
+       ORDER BY ${sortBy} ${sortDir}
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
     );
-    res.json({ data: rows });
+    const [cnt] = await query<{ total: number }>(
+      `SELECT COUNT(*) AS total FROM incentives i JOIN employees e ON e.id = i.employee_id ${whereSql}`,
+      params
+    );
+    res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
   } catch (err) { next(err); }
 });
 
@@ -1191,6 +1416,8 @@ app.get('/api/v1/vacancies', authRequired, async (req, res, next) => {
     const departmentId = typeof req.query.departmentId === 'string' ? req.query.departmentId : '';
     const branchId     = typeof req.query.branchId === 'string'     ? req.query.branchId     : '';
     const search       = typeof req.query.search === 'string'       ? req.query.search.trim(): '';
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
     const filters: string[] = [];
     const params:  unknown[] = [];
     if (departmentId) { filters.push('jp.department_id = ?'); params.push(departmentId); }
@@ -1229,10 +1456,20 @@ app.get('/api/v1/vacancies', authRequired, async (req, res, next) => {
        LEFT JOIN locations l ON l.id = jpl.location_id
        JOIN departments d   ON d.id  = jp.department_id
        ${where}
-       ORDER BY d.name, b.name, l.name`,
+       ORDER BY d.name, b.name, l.name
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
+    );
+    const [cnt] = await query<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM job_profile_locations jpl
+       JOIN job_profiles jp ON jp.id = jpl.job_profile_id
+       JOIN branches b      ON b.id  = jpl.branch_id
+       JOIN departments d   ON d.id  = jp.department_id
+       ${where}`,
       params
     );
-    res.json({ data: rows });
+    res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
   } catch (err) { next(err); }
 });
 
@@ -1568,13 +1805,25 @@ app.delete('/api/v1/job-listing-applicants/:id', authRequired, async (req, res, 
 app.get('/api/v1/applicants/hired', authRequired, async (req, res, next) => {
   try {
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const onboardingStatus = typeof req.query.onboardingStatus === 'string' ? req.query.onboardingStatus : undefined;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
+
     // Applicants may come from either the legacy vacancy flow (vacancy_id) or the
     // newer Job Listing flow (job_listing_id). LEFT JOIN both and COALESCE so
     // either source resolves to a branch + job profile.
-    const where = search
-      ? `WHERE (a.stage='hired' OR a.status='Hired') AND (a.full_name LIKE ? OR a.email LIKE ?)`
-      : `WHERE (a.stage='hired' OR a.status='Hired')`;
-    const params = search ? [`%${search}%`, `%${search}%`] : [];
+    const where: string[] = [`(a.stage='hired' OR a.status='Hired')`];
+    const params: unknown[] = [];
+    if (search) {
+      where.push('(a.full_name LIKE ? OR a.email LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    if (onboardingStatus) {
+      where.push('IFNULL(ao.status, \'pending\') = ?');
+      params.push(onboardingStatus);
+    }
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
     const rows = await query(
       `SELECT a.id, a.app_no, a.image_url, a.full_name, a.email, a.phone,
               a.current_company, a.\`current_role\`, a.location,
@@ -1600,10 +1849,19 @@ app.get('/api/v1/applicants/hired', authRequired, async (req, res, next) => {
        LEFT JOIN job_profiles jljp ON jljp.id = jl.job_profile_id
        LEFT JOIN applicant_offers o ON o.applicant_id = a.id
        LEFT JOIN applicant_onboarding ao ON ao.applicant_id = a.id
-       ${where} ORDER BY a.updated_at DESC`,
+       ${whereSql}
+       ORDER BY a.updated_at DESC
+       LIMIT ? OFFSET ?`,
+      [...params, pageSize, (page - 1) * pageSize]
+    );
+    const [cnt] = await query<{ total: number }>(
+      `SELECT COUNT(*) AS total
+       FROM applicants a
+       LEFT JOIN applicant_onboarding ao ON ao.applicant_id = a.id
+       ${whereSql}`,
       params
     );
-    res.json({ data: rows });
+    res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
   } catch (err) { next(err); }
 });
 
