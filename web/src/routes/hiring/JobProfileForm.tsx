@@ -21,8 +21,8 @@ import { NestConnectImportModal } from '../../components/hiring/jp/NestConnectIm
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 type Dept = { id: string; name: string };
-type Division = { id: string; code: string | null; name: string };
-type DesignationOpt = { id: string; code: string | null; name: string; department_id: string | null };
+type Division = { id: string; code: string | null; name: string; department_id: string | null };
+type DesignationOpt = { id: string; code: string | null; name: string; department_id: string | null; division_id: string | null };
 
 export interface StepData {
   // Step 1
@@ -132,7 +132,13 @@ const STEPS = [
 const inp: React.CSSProperties = { width: '100%', height: 38, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' };
 
 // Sections 9–11 are read-only DB lists, so JP completeness only considers the user-editable steps 1–8.
-function computeJpStatus(d: StepData): 'Pending' | 'Partially Done' | 'Done' {
+//
+// Returns the completion ratio alongside the label: the list view shows "Partially
+// Done · 60%" so reviewers can tell a barely-started profile from a nearly-finished
+// one at a glance. `pct` is rounded to a whole number in 0–100.
+type JpCompletion = { status: 'Pending' | 'Partially Done' | 'Done'; pct: number };
+
+function computeJpCompletion(d: StepData): JpCompletion {
   const filled = (s: string) => s.trim().length > 0;
   const checks: boolean[] = [
     // Step 1 — basic info
@@ -161,9 +167,13 @@ function computeJpStatus(d: StepData): 'Pending' | 'Partially Done' | 'Done' {
     d.atmTasks.length > 0,
   ];
   const filledCount = checks.filter(Boolean).length;
-  if (filledCount === 0) return 'Pending';
-  if (filledCount === checks.length) return 'Done';
-  return 'Partially Done';
+  const pct = checks.length === 0 ? 0 : Math.round((filledCount / checks.length) * 100);
+  if (filledCount === 0) return { status: 'Pending', pct: 0 };
+  if (filledCount === checks.length) return { status: 'Done', pct: 100 };
+  // Guard the edges so a profile with one field left never reads as a flat "100%",
+  // and one with a single field filled never reads as "0%" — both would contradict
+  // the "Partially Done" label sitting next to the number.
+  return { status: 'Partially Done', pct: Math.min(99, Math.max(1, pct)) };
 }
 
 // ─── Main form component ───────────────────────────────────────────────────────
@@ -200,6 +210,7 @@ export function JobProfileForm({
     }
     setSaving(true);
     try {
+      const completion = computeJpCompletion(data);
       const payload = {
         title: data.jobTitle || data.designation,
         alternateTitle: data.alternateTitle || undefined,
@@ -211,7 +222,8 @@ export function JobProfileForm({
         reportingDeptId: data.reportingDept || undefined,
         reportingDivision: data.reportingDivision || undefined,
         reportingDesignation: data.reportingDesignation || undefined,
-        jpStatus: computeJpStatus(data),
+        jpStatus: completion.status,
+        jpCompletionPct: completion.pct,
         formData: data,
         locations: data.locations.map((l) => ({
           branchId: l.branchId,
@@ -361,9 +373,28 @@ function Step1({
   allDesignations: DesignationOpt[];
 }) {
   const linkedDept = depts.find((d) => d.id === data.departmentId);
-  const reportingDesignations = data.reportingDept
-    ? allDesignations.filter((d) => d.department_id === data.reportingDept)
-    : allDesignations;
+
+  // Reporting Hierarchy cascades Department → Division → Designation. Each level
+  // is disabled until its parent is chosen and only ever offers children of that
+  // parent — picking a department used to still list every division in the system,
+  // which defeats the point of having the hierarchy at all.
+  const reportingDivisions = data.reportingDept
+    ? divisions.filter((d) => d.department_id === data.reportingDept)
+    : [];
+
+  // reportingDivision stores the division *name*, not its id (that is the shape the
+  // API and the rest of the form already use), so map back to an id to filter
+  // designations. Resolve within the department-scoped subset — division names are
+  // not globally unique in the CK master data.
+  const selectedDivisionId = reportingDivisions.find((d) => d.name === data.reportingDivision)?.id ?? null;
+
+  const reportingDesignations = !data.reportingDept
+    ? []
+    : allDesignations.filter((d) => {
+        if (d.department_id !== data.reportingDept) return false;
+        if (!selectedDivisionId) return false;
+        return d.division_id === selectedDivisionId;
+      });
 
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
@@ -393,20 +424,42 @@ function Step1({
       <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--ck-ink)', marginBottom: 14 }}>Reporting Hierarchy</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 16 }}>
         <FG label="Department*">
-          <select value={data.reportingDept} onChange={(e) => upd({ reportingDept: e.target.value, reportingDesignation: '' })} style={inp}>
+          {/* Changing a level clears everything below it, so the form can never hold
+              a division/designation that does not belong to the chosen department. */}
+          <select
+            value={data.reportingDept}
+            onChange={(e) => upd({ reportingDept: e.target.value, reportingDivision: '', reportingDesignation: '' })}
+            style={inp}
+          >
             <option value="">Select</option>
             {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         </FG>
         <FG label="Division*">
-          <select value={data.reportingDivision} onChange={(e) => upd({ reportingDivision: e.target.value })} style={inp}>
-            <option value="">Select</option>
-            {divisions.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
+          <select
+            value={data.reportingDivision}
+            onChange={(e) => upd({ reportingDivision: e.target.value, reportingDesignation: '' })}
+            style={inp}
+            disabled={!data.reportingDept}
+          >
+            <option value="">{data.reportingDept ? 'Select' : 'Select department first'}</option>
+            {reportingDivisions.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
           </select>
         </FG>
         <FG label="Designation*">
-          <select value={data.reportingDesignation} onChange={(e) => upd({ reportingDesignation: e.target.value })} style={inp}>
-            <option value="">Select</option>
+          <select
+            value={data.reportingDesignation}
+            onChange={(e) => upd({ reportingDesignation: e.target.value })}
+            style={inp}
+            disabled={!data.reportingDivision}
+          >
+            <option value="">
+              {!data.reportingDivision
+                ? 'Select division first'
+                : reportingDesignations.length === 0
+                  ? 'No designations in this division'
+                  : 'Select'}
+            </option>
             {reportingDesignations.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
           </select>
         </FG>

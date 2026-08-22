@@ -22,7 +22,9 @@ import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { IconAction } from '../../components/ui/IconAction';
-import { Pagination } from '../../components/filters';
+import {
+  Pagination, HierarchyFilters, useHierarchyMasters, EMPTY_HIERARCHY, type HierarchyValue,
+} from '../../components/filters';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Vacancy = {
@@ -55,9 +57,7 @@ type JobListing = {
 };
 
 type Lookup = { id: string; code: string; label: string; color: string | null; sort_order: number | string; is_default: number | boolean; is_active: number | boolean };
-type Department = { id: string; name: string };
-type Branch = { id: string; name: string };
-type UserRow = { id: string; email: string; first_name: string | null; last_name: string | null };
+type UserRow ={ id: string; email: string; first_name: string | null; last_name: string | null };
 
 const inp: React.CSSProperties = { width: '100%', height: 38, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' };
 
@@ -68,12 +68,21 @@ export function VacanciesPage() {
   const [listings, setListings]   = useState<JobListing[]>([]);
   const [loading, setLoading]     = useState(true);
   const [search, setSearch]       = useState('');
-  const [deptFilter, setDeptFilter] = useState('');
-  const [branchFilter, setBranchFilter] = useState('');
+  const [filters, setFilters]     = useState<HierarchyValue>(EMPTY_HIERARCHY);
   const [statusFilter, setStatusFilter] = useState('');
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [branches, setBranches] = useState<Branch[]>([]);
+  const masters = useHierarchyMasters();
   const [page, setPage] = useState(1);
+
+  // Serialised so effects key off the filter *values*, not the object identity.
+  const filterKey = JSON.stringify(filters);
+  const hierarchyParams = () => ({
+    companyId:     filters.companyId     || undefined,
+    branchId:      filters.branchId      || undefined,
+    locationId:    filters.locationId    || undefined,
+    departmentId:  filters.departmentId  || undefined,
+    divisionId:    filters.divisionId    || undefined,
+    designationId: filters.designationId || undefined,
+  });
   const [total, setTotal] = useState(0);
   const pageSize = 20;
 
@@ -89,32 +98,37 @@ export function VacanciesPage() {
 
   const fetchVacancies = () => {
     setLoading(true);
-    api.get<{ data: Vacancy[]; meta: { total: number } }>('/vacancies', { params: { search, departmentId: deptFilter || undefined, branchId: branchFilter || undefined, page, pageSize } })
+    api.get<{ data: Vacancy[]; meta: { total: number } }>('/vacancies', { params: { search, ...hierarchyParams(), page, pageSize } })
       .then((r) => { setVacancies(r.data.data); setTotal(r.data.meta.total); })
       .catch(() => { setVacancies([]); setTotal(0); })
       .finally(() => setLoading(false));
   };
   const fetchListings = () => {
-    api.get<{ data: JobListing[] }>('/job-listings', { params: { search, departmentId: deptFilter || undefined, status: statusFilter || undefined } })
+    api.get<{ data: JobListing[] }>('/job-listings', { params: { search, ...hierarchyParams(), status: statusFilter || undefined } })
       .then((r) => setListings(r.data.data))
       .catch(() => setListings([]));
   };
 
   useEffect(() => {
-    api.get<{ data: Department[] }>('/departments').then((r) => setDepartments(r.data.data)).catch(() => {});
-    api.get<{ data: Branch[] }>('/branches').then((r) => setBranches(r.data.data)).catch(() => {});
-    api.get<{ data: Lookup[] }>('/lookups', { params: { category: 'listing_status' } }).then((r) => setListingStatuses(r.data.data)).catch(() => {});
-    api.get<{ data: Lookup[] }>('/lookups', { params: { category: 'hiring_status' } }).then((r) => setHiringStatuses(r.data.data)).catch(() => {});
+    // These two drive required fields on the Create Job Listing form, so a silent
+    // failure here leaves the user with empty dropdowns and a form that refuses to
+    // submit for no visible reason. Surface it instead of swallowing it.
+    api.get<{ data: Lookup[] }>('/lookups', { params: { category: 'listing_status' } })
+      .then((r) => setListingStatuses(r.data.data))
+      .catch(() => toast.error('Could not load listing statuses'));
+    api.get<{ data: Lookup[] }>('/lookups', { params: { category: 'hiring_status' } })
+      .then((r) => setHiringStatuses(r.data.data))
+      .catch(() => toast.error('Could not load hiring statuses'));
     api.get<{ data: UserRow[] }>('/users').then((r) => setUsers(r.data.data)).catch(() => {});
   }, []);
 
-  useEffect(() => { setPage(1); }, [tab, search, deptFilter, branchFilter, statusFilter]);
+  useEffect(() => { setPage(1); }, [tab, search, filterKey, statusFilter]);
 
   useEffect(() => {
     if (tab === 'vacancy') fetchVacancies();
     else fetchListings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, search, deptFilter, branchFilter, statusFilter, page]);
+  }, [tab, search, filterKey, statusFilter, page]);
 
   const onCreateClicked = (v: Vacancy) => { setCreateTarget(v); setCreateOpen(true); };
 
@@ -152,18 +166,11 @@ export function VacanciesPage() {
                 placeholder={tab === 'vacancy' ? 'Search by designation, branch...' : 'Search by JL ID, designation, branch...'}
                 style={{ width: '100%', height: 36, padding: '0 12px 0 32px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 12.5, background: 'var(--ck-surface)' }} />
             </div>
-            <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}
-              style={{ height: 36, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, background: 'var(--ck-surface)', fontSize: 12.5, minWidth: 180 }}>
-              <option value="">All Departments</option>
-              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-            {tab === 'vacancy' ? (
-              <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)}
-                style={{ height: 36, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, background: 'var(--ck-surface)', fontSize: 12.5, minWidth: 160 }}>
-                <option value="">All Branches</option>
-                {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
-            ) : (
+            {/* Both tabs get the full Company → Branch → Location and
+                Department → Division → Designation set; the Job Listing tab keeps
+                its extra status filter on top of that. */}
+            <HierarchyFilters value={filters} onChange={setFilters} masters={masters} />
+            {tab === 'listing' && (
               <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
                 style={{ height: 36, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, background: 'var(--ck-surface)', fontSize: 12.5, minWidth: 160 }}>
                 <option value="">All Statuses</option>
@@ -328,6 +335,14 @@ function StatusBadge({ label, color, muted }: { label: string; color: string | n
 }
 
 // ─── Create Listing Modal ─────────────────────────────────────────────────────
+// A missing lookup category used to surface as a blank dropdown that silently
+// blocked submit. Name the actual cause so it is fixable rather than mysterious.
+function emptyLookupHint(rows: Lookup[], category: string): string | undefined {
+  return rows.length === 0
+    ? `No "${category}" values configured — add them under Masters → Lookups.`
+    : undefined;
+}
+
 const createSchema = z.object({
   positions:     z.coerce.number().int().positive(),
   companyName:   z.string().min(1, 'Required'),
@@ -398,13 +413,15 @@ function CreateListingModal({ open, target, users, listingStatuses, hiringStatus
           <F label="Company name *" error={form.formState.errors.companyName?.message}>
             <input {...form.register('companyName')} style={inp} />
           </F>
-          <F label="Status *" error={form.formState.errors.status?.message}>
-            <select {...form.register('status')} style={inp}>
+          <F label="Status *" error={form.formState.errors.status?.message ?? emptyLookupHint(listingStatuses, 'listing_status')}>
+            <select {...form.register('status')} style={inp} disabled={listingStatuses.length === 0}>
+              {listingStatuses.length === 0 && <option value="">— unavailable —</option>}
               {listingStatuses.map((s) => <option key={s.id} value={s.code}>{s.label}</option>)}
             </select>
           </F>
-          <F label="Hiring status *" error={form.formState.errors.hiringStatus?.message}>
-            <select {...form.register('hiringStatus')} style={inp}>
+          <F label="Hiring status *" error={form.formState.errors.hiringStatus?.message ?? emptyLookupHint(hiringStatuses, 'hiring_status')}>
+            <select {...form.register('hiringStatus')} style={inp} disabled={hiringStatuses.length === 0}>
+              {hiringStatuses.length === 0 && <option value="">— unavailable —</option>}
               {hiringStatuses.map((s) => <option key={s.id} value={s.code}>{s.label}</option>)}
             </select>
           </F>

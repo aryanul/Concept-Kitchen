@@ -1140,6 +1140,8 @@ app.get('/api/v1/job-profiles', authRequired, async (req, res, next) => {
   try {
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
     const deptId = typeof req.query.departmentId === 'string' ? req.query.departmentId : '';
+    const divisionId = typeof req.query.divisionId === 'string' ? req.query.divisionId : '';
+    const designationId = typeof req.query.designationId === 'string' ? req.query.designationId : '';
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Number(req.query.pageSize) || 20);
     const where: string[] = []; const params: unknown[] = [];
@@ -1148,19 +1150,32 @@ app.get('/api/v1/job-profiles', authRequired, async (req, res, next) => {
       const l = `%${search}%`; params.push(l, l, l, l);
     }
     if (deptId) { where.push('jp.department_id = ?'); params.push(deptId); }
+    // Profiles created before designation_id existed carry only the division and
+    // designation *names*, so match the FK when it is set and fall back to the name
+    // otherwise — filtering purely on the FK would silently hide every legacy row.
+    if (divisionId) {
+      where.push('(dg.division_id = ? OR (jp.designation_id IS NULL AND jp.division = (SELECT name FROM divisions WHERE id = ?)))');
+      params.push(divisionId, divisionId);
+    }
+    if (designationId) {
+      where.push('(jp.designation_id = ? OR (jp.designation_id IS NULL AND jp.designation = (SELECT name FROM designations WHERE id = ?)))');
+      params.push(designationId, designationId);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    // Only needed by the division filter, but harmless (and cheap) to always join.
+    const jpJoins = 'JOIN departments d ON d.id = jp.department_id LEFT JOIN designations dg ON dg.id = jp.designation_id';
     const rows = await query(
-            `SELECT jp.id, jp.jp_no, jp.title, jp.division, jp.designation, jp.jp_status,
+            `SELECT jp.id, jp.jp_no, jp.title, jp.division, jp.designation, jp.jp_status, jp.jp_completion_pct,
               jp.description, jp.requirements, jp.status, jp.created_at, jp.form_data,
               d.id AS department_id, d.name AS department_name,
               (SELECT COUNT(*) FROM job_listings jl WHERE jl.job_profile_id = jp.id AND jl.status IN ('Open','Published')) AS open_vacancies
        FROM job_profiles jp
-       JOIN departments d ON d.id = jp.department_id
+       ${jpJoins}
        ${whereSql} ORDER BY jp.jp_no LIMIT ? OFFSET ?`,
       [...params, pageSize, (page - 1) * pageSize]
     );
     const [cnt] = await query<{ total: number }>(
-      `SELECT COUNT(*) AS total FROM job_profiles jp JOIN departments d ON d.id = jp.department_id ${whereSql}`, params
+      `SELECT COUNT(*) AS total FROM job_profiles jp ${jpJoins} ${whereSql}`, params
     );
     res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
   } catch (err) { next(err); }
@@ -1170,7 +1185,8 @@ app.get('/api/v1/job-profiles/:id', authRequired, async (req, res, next) => {
   try {
     const rows = await query(
       `SELECT jp.id, jp.jp_no, jp.title, jp.alternate_title, jp.department_id, jp.designation_id,
-              jp.division, jp.designation, jp.jp_status, jp.description, jp.requirements, jp.status,
+              jp.division, jp.designation, jp.jp_status, jp.jp_completion_pct,
+              jp.description, jp.requirements, jp.status,
               jp.created_at, jp.location_applicable, jp.work_shift,
               jp.reporting_dept_id, jp.reporting_division, jp.reporting_designation, jp.form_data,
               d.name AS department_name,
@@ -1221,6 +1237,16 @@ app.get('/api/v1/job-profiles/:id', authRequired, async (req, res, next) => {
 });
 
 type JpLocationInput = { branchId?: unknown; locationId?: unknown; positions?: unknown };
+
+// jp_completion_pct is a TINYINT UNSIGNED: anything outside 0–100 (or non-numeric)
+// would either be rejected by the driver or silently truncated, so normalise here
+// rather than trusting the client's arithmetic. Absent/garbage input stores NULL,
+// which the UI renders as a bare status label with no percentage.
+function clampPct(value: unknown): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(100, Math.max(0, Math.round(n)));
+}
 
 async function resolveDesignation(designationId: unknown): Promise<{ name: string; departmentId: string | null; divisionName: string | null } | null> {
   if (typeof designationId !== 'string' || !designationId) return null;
@@ -1278,7 +1304,7 @@ async function replaceJpInterviewTemplates(jobProfileId: string, templateIds: un
 app.post('/api/v1/job-profiles', authRequired, async (req, res, next) => {
   try {
     const { title, alternateTitle, departmentId, division, designation, designationId,
-      description, requirements, jpStatus = 'Pending',
+      description, requirements, jpStatus = 'Pending', jpCompletionPct,
       locationApplicable, workShift, reportingDeptId, reportingDivision, reportingDesignation,
       formData, locations, shifts } = req.body ?? {};
 
@@ -1298,12 +1324,13 @@ app.post('/api/v1/job-profiles', authRequired, async (req, res, next) => {
     await query(
       `INSERT INTO job_profiles
         (id, jp_no, title, alternate_title, department_id, designation_id, division, designation, jp_status,
-         description, requirements, location_applicable, work_shift,
+         jp_completion_pct, description, requirements, location_applicable, work_shift,
          reporting_dept_id, reporting_division, reporting_designation, form_data)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, jpNo, finalTitle, alternateTitle || null, finalDepartmentId,
        resolved ? designationId : null,
        finalDivision || null, finalDesignation || '', jpStatus,
+       clampPct(jpCompletionPct),
        description || null, requirements || null, locationApplicable || null,
        workShift || null, reportingDeptId || null, reportingDivision || null,
        reportingDesignation || null, formData ? JSON.stringify(formData) : null]
@@ -1318,7 +1345,7 @@ app.post('/api/v1/job-profiles', authRequired, async (req, res, next) => {
 app.patch('/api/v1/job-profiles/:id', authRequired, async (req, res, next) => {
   try {
     const { title, alternateTitle, designation, division, designationId, description, requirements,
-      status, jpStatus, locationApplicable, workShift,
+      status, jpStatus, jpCompletionPct, locationApplicable, workShift,
       reportingDeptId, reportingDivision, reportingDesignation, formData,
       locations, shifts } = req.body ?? {};
 
@@ -1340,6 +1367,7 @@ app.patch('/api/v1/job-profiles/:id', authRequired, async (req, res, next) => {
     if (requirements         !== undefined) { sets.push('requirements = ?');           vals.push(requirements); }
     if (status               !== undefined) { sets.push('status = ?');                 vals.push(status); }
     if (jpStatus             !== undefined) { sets.push('jp_status = ?');              vals.push(jpStatus); }
+    if (jpCompletionPct      !== undefined) { sets.push('jp_completion_pct = ?');      vals.push(clampPct(jpCompletionPct)); }
     if (locationApplicable   !== undefined) { sets.push('location_applicable = ?');   vals.push(locationApplicable); }
     if (workShift            !== undefined) { sets.push('work_shift = ?');             vals.push(workShift); }
     if (reportingDeptId      !== undefined) { sets.push('reporting_dept_id = ?');      vals.push(reportingDeptId); }
@@ -1413,15 +1441,30 @@ app.get('/api/v1/job-profiles/:id/employees', authRequired, async (req, res, nex
 // GET /vacancies — derived from job_profile_locations.
 app.get('/api/v1/vacancies', authRequired, async (req, res, next) => {
   try {
-    const departmentId = typeof req.query.departmentId === 'string' ? req.query.departmentId : '';
-    const branchId     = typeof req.query.branchId === 'string'     ? req.query.branchId     : '';
-    const search       = typeof req.query.search === 'string'       ? req.query.search.trim(): '';
+    const departmentId  = typeof req.query.departmentId === 'string'  ? req.query.departmentId  : '';
+    const branchId      = typeof req.query.branchId === 'string'      ? req.query.branchId      : '';
+    const companyId     = typeof req.query.companyId === 'string'     ? req.query.companyId     : '';
+    const locationId    = typeof req.query.locationId === 'string'    ? req.query.locationId    : '';
+    const divisionId    = typeof req.query.divisionId === 'string'    ? req.query.divisionId    : '';
+    const designationId = typeof req.query.designationId === 'string' ? req.query.designationId : '';
+    const search        = typeof req.query.search === 'string'        ? req.query.search.trim() : '';
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize) || 20));
     const filters: string[] = [];
     const params:  unknown[] = [];
     if (departmentId) { filters.push('jp.department_id = ?'); params.push(departmentId); }
     if (branchId)     { filters.push('jpl.branch_id = ?');    params.push(branchId);     }
+    if (companyId)    { filters.push('b.company_id = ?');     params.push(companyId);    }
+    if (locationId)   { filters.push('jpl.location_id = ?');  params.push(locationId);   }
+    // Same legacy-row caveat as /job-profiles: match the FK when present, else the name.
+    if (divisionId) {
+      filters.push('(dg.division_id = ? OR (jp.designation_id IS NULL AND jp.division = (SELECT name FROM divisions WHERE id = ?)))');
+      params.push(divisionId, divisionId);
+    }
+    if (designationId) {
+      filters.push('(jp.designation_id = ? OR (jp.designation_id IS NULL AND jp.designation = (SELECT name FROM designations WHERE id = ?)))');
+      params.push(designationId, designationId);
+    }
     if (search) {
       filters.push('(jp.title LIKE ? OR jp.designation LIKE ? OR d.name LIKE ? OR b.name LIKE ?)');
       const like = `%${search}%`;
@@ -1444,7 +1487,7 @@ app.get('/api/v1/vacancies', authRequired, async (req, res, next) => {
               b.city                          AS branch_city,
               l.name                          AS location_name,
               l.city                          AS location_city,
-              'Concept Kitchen'               AS company_name,
+              COALESCE(hc.name, b.name)       AS company_name,
               (SELECT COUNT(*) FROM job_listings jl
                 WHERE jl.job_profile_id = jpl.job_profile_id
                   AND jl.branch_id      = jpl.branch_id
@@ -1453,7 +1496,9 @@ app.get('/api/v1/vacancies', authRequired, async (req, res, next) => {
        FROM job_profile_locations jpl
        JOIN job_profiles jp ON jp.id = jpl.job_profile_id
        JOIN branches b      ON b.id  = jpl.branch_id
+       LEFT JOIN hiring_companies hc ON hc.id = b.company_id
        LEFT JOIN locations l ON l.id = jpl.location_id
+       LEFT JOIN designations dg ON dg.id = jp.designation_id
        JOIN departments d   ON d.id  = jp.department_id
        ${where}
        ORDER BY d.name, b.name, l.name
@@ -1465,6 +1510,7 @@ app.get('/api/v1/vacancies', authRequired, async (req, res, next) => {
        FROM job_profile_locations jpl
        JOIN job_profiles jp ON jp.id = jpl.job_profile_id
        JOIN branches b      ON b.id  = jpl.branch_id
+       LEFT JOIN designations dg ON dg.id = jp.designation_id
        JOIN departments d   ON d.id  = jp.department_id
        ${where}`,
       params
@@ -1486,12 +1532,29 @@ async function nextListingNo(): Promise<{ no: string; sr: number }> {
 // GET /job-listings — list with derived applicant counts.
 app.get('/api/v1/job-listings', authRequired, async (req, res, next) => {
   try {
-    const departmentId = typeof req.query.departmentId === 'string' ? req.query.departmentId : '';
-    const status       = typeof req.query.status === 'string'       ? req.query.status       : '';
-    const search       = typeof req.query.search === 'string'       ? req.query.search.trim(): '';
+    const departmentId  = typeof req.query.departmentId === 'string'  ? req.query.departmentId  : '';
+    const companyId     = typeof req.query.companyId === 'string'     ? req.query.companyId     : '';
+    const branchId      = typeof req.query.branchId === 'string'      ? req.query.branchId      : '';
+    const locationId    = typeof req.query.locationId === 'string'    ? req.query.locationId    : '';
+    const divisionId    = typeof req.query.divisionId === 'string'    ? req.query.divisionId    : '';
+    const designationId = typeof req.query.designationId === 'string' ? req.query.designationId : '';
+    const status        = typeof req.query.status === 'string'        ? req.query.status        : '';
+    const search        = typeof req.query.search === 'string'        ? req.query.search.trim() : '';
     const filters: string[] = [];
     const params:  unknown[] = [];
     if (departmentId) { filters.push('jp.department_id = ?'); params.push(departmentId); }
+    if (companyId)    { filters.push('b.company_id = ?');     params.push(companyId);    }
+    if (branchId)     { filters.push('jl.branch_id = ?');     params.push(branchId);     }
+    if (locationId)   { filters.push('jl.location_id = ?');   params.push(locationId);   }
+    // Same legacy-row caveat as /job-profiles: match the FK when present, else the name.
+    if (divisionId) {
+      filters.push('(dg.division_id = ? OR (jp.designation_id IS NULL AND jp.division = (SELECT name FROM divisions WHERE id = ?)))');
+      params.push(divisionId, divisionId);
+    }
+    if (designationId) {
+      filters.push('(jp.designation_id = ? OR (jp.designation_id IS NULL AND jp.designation = (SELECT name FROM designations WHERE id = ?)))');
+      params.push(designationId, designationId);
+    }
     if (status)       { filters.push('jl.status = ?');         params.push(status); }
     if (search) {
       filters.push('(jp.title LIKE ? OR jp.designation LIKE ? OR jl.listing_no LIKE ? OR b.name LIKE ?)');
@@ -1515,6 +1578,7 @@ app.get('/api/v1/job-listings', authRequired, async (req, res, next) => {
        JOIN job_profiles jp ON jp.id = jl.job_profile_id
        JOIN branches b      ON b.id  = jl.branch_id
        LEFT JOIN locations l ON l.id = jl.location_id
+       LEFT JOIN designations dg ON dg.id = jp.designation_id
        JOIN departments d   ON d.id  = jp.department_id
        LEFT JOIN users u     ON u.id = jl.recruiter_user_id
        LEFT JOIN employees ru ON ru.id = u.employee_id

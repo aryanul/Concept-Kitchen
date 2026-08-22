@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Search, Eye, Pencil, Plus, SlidersHorizontal } from 'lucide-react';
+import { Search, Eye, Pencil, Plus } from 'lucide-react';
+import {
+  HierarchyFilters, useHierarchyMasters, EMPTY_HIERARCHY, type HierarchyValue,
+} from '../../components/filters';
 import { IconAction } from '../../components/ui/IconAction';
 import { api } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
@@ -13,6 +16,7 @@ import type { JpLocation } from '../../components/hiring/jp/LocationApplicableEd
 type JobProfile = {
   id: string; jp_no: string; title: string; alternate_title: string | null;
   division: string | null; designation: string | null; jp_status: string;
+  jp_completion_pct: number | string | null;
   description: string | null; requirements: string | null; status: string;
   department_id: string; department_name: string;
   open_vacancies: number | string; created_at: string;
@@ -43,7 +47,6 @@ type JobProfileDetail = JobProfile & {
   shifts?: JpShiftRow[];
   interview_templates?: JpInterviewTemplateRow[];
 };
-type Dept = { id: string; name: string };
 type Meta = { page: number; pageSize: number; total: number };
 type Resp = { data: JobProfile[]; meta: Meta };
 
@@ -52,6 +55,16 @@ const JP_STATUS_STYLE: Record<string, React.CSSProperties> = {
   'Partially Done':{ background: '#888',  color: '#fff', border: '1.5px solid #888', fontWeight: 600 },
   'Done':          { background: '#222',  color: '#fff', border: '1.5px solid #222', fontWeight: 700 },
 };
+
+// Profiles saved before jp_completion_pct existed have no stored percentage, and
+// the migration deliberately did not invent one for them. Render the bare status
+// label in that case rather than a misleading "0%".
+// mysql2 hands back numeric columns as strings in some paths, so coerce.
+function formatPct(pct: number | string | null | undefined): string {
+  if (pct === null || pct === undefined || pct === '') return '';
+  const n = Number(pct);
+  return Number.isFinite(n) ? ` · ${n}%` : '';
+}
 
 type Mode = 'list' | 'create' | 'edit';
 
@@ -63,29 +76,33 @@ export function JobProfilePage() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickedDesignation, setPickedDesignation] = useState<Designation | null>(null);
   const [profiles,  setProfiles]  = useState<JobProfile[]>([]);
-  const [depts,     setDepts]     = useState<Dept[]>([]);
   const [meta,      setMeta]      = useState<Meta>({ page: 1, pageSize: 5, total: 0 });
   const [loading,   setLoading]   = useState(true);
   const [search,    setSearch]    = useState('');
-  const [deptFilter, setDeptFilter] = useState('');
+  const [filters,   setFilters]   = useState<HierarchyValue>(EMPTY_HIERARCHY);
   const [page,      setPage]      = useState(1);
+  const masters = useHierarchyMasters();
+
+  // Serialised so the fetch effect re-runs on a value change rather than on every
+  // render — `filters` is a fresh object identity each time it is set.
+  const filterKey = JSON.stringify(filters);
 
   const fetchProfiles = () => {
     setLoading(true);
     const params: Record<string, unknown> = { page, pageSize: 5 };
     if (search) params.search = search;
-    if (deptFilter) params.departmentId = deptFilter;
+    if (filters.departmentId)  params.departmentId  = filters.departmentId;
+    if (filters.divisionId)    params.divisionId    = filters.divisionId;
+    if (filters.designationId) params.designationId = filters.designationId;
     api.get<Resp>('/job-profiles', { params })
       .then((r) => { setProfiles(r.data.data); setMeta(r.data.meta); })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchProfiles(); }, [search, deptFilter, page]);
-  useEffect(() => { setPage(1); }, [search, deptFilter]);
-  useEffect(() => {
-    api.get<{ data: Dept[] }>('/departments').then((r) => setDepts(r.data.data)).catch(() => {});
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchProfiles(); }, [search, filterKey, page]);
+  useEffect(() => { setPage(1); }, [search, filterKey]);
 
   const handleSaved = () => { setMode('list'); setEditTarget(null); setPickedDesignation(null); fetchProfiles(); };
   const handleCancel = () => { setMode('list'); setEditTarget(null); setPickedDesignation(null); };
@@ -129,12 +146,12 @@ export function JobProfilePage() {
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search Employees by Designation, Department...."
             style={{ width: '100%', height: 38, padding: '0 12px 0 36px', border: '1px solid var(--ck-line)', borderRadius: 8, fontSize: 13, background: 'var(--ck-surface)' }} />
         </div>
-        <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}
-          style={{ height: 38, padding: '0 30px 0 12px', border: '1px solid var(--ck-line)', borderRadius: 8, background: 'var(--ck-surface)', fontSize: 13, minWidth: 180 }}>
-          <option value="">All Department</option>
-          {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </select>
-        <Button variant="ghost" icon={SlidersHorizontal}>Filters</Button>
+        <HierarchyFilters
+          value={filters}
+          onChange={setFilters}
+          masters={masters}
+          fields={['departmentId', 'divisionId', 'designationId']}
+        />
       </div>
 
       <Card padding={0}>
@@ -151,7 +168,7 @@ export function JobProfilePage() {
             <JobProfileForm
               editId={editTarget?.id ?? null}
               initialData={mode === 'create' ? createInitialData : editInitialData}
-              depts={depts}
+              depts={masters.departments}
               onSaved={handleSaved}
               onCancel={handleCancel}
             />
@@ -187,7 +204,9 @@ export function JobProfilePage() {
                         <td style={{ padding: '14px 16px', color: 'var(--ck-ink-soft)' }}>{p.division ?? '—'}</td>
                         <td style={{ padding: '14px 16px', fontWeight: 600, color: 'var(--ck-ink)' }}>{p.designation ?? p.title}</td>
                         <td style={{ padding: '14px 16px' }}>
-                          <span style={{ ...pillStyle, padding: '5px 16px', borderRadius: 6, fontSize: 12.5, display: 'inline-block' }}>{p.jp_status}</span>
+                          <span style={{ ...pillStyle, padding: '5px 16px', borderRadius: 6, fontSize: 12.5, display: 'inline-block' }}>
+                            {p.jp_status}{formatPct(p.jp_completion_pct)}
+                          </span>
                         </td>
                         <td style={{ padding: '14px 16px' }}>
                           <div style={{ display: 'flex', gap: 6 }}>

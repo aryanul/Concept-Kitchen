@@ -4,3 +4,5 @@ export { Pagination } from './Pagination';
 export { SortableTh } from './SortableTh';
 export { SearchInput, FilterSelect, ClearFiltersButton } from './filterControls';
 export { inputStyle, selectStyle, labelStyle, thStyle } from './filterStyles';
+export { HierarchyFilters, useHierarchyMasters, EMPTY_HIERARCHY } from './HierarchyFilters';
+export type { HierarchyValue, HierarchyField } from './HierarchyFilters';

@@ -1,0 +1,55 @@
+name: Keep Render backend awake
+
+# Render's free tier spins the web service down after ~15 min with no incoming
+# traffic, and the next request then pays a 30-60s cold start. That penalty is
+# what ServerWakeGate (web/src/components/ServerWakeGate.tsx) exists to paper
+# over — this workflow attacks the cause instead, pinging the health endpoint
+# every 10 minutes so the service never idles long enough to be spun down.
+#
+# Ported from the sibling CK-accounting repo, with one change: the service URL
+# lives in a repository variable rather than being hardcoded, so this file does
+# not have to be edited per environment.
+#
+# SETUP (required — the job fails fast with a clear message until this is done):
+#   Repo → Settings → Secrets and variables → Actions → Variables → New variable
+#     Name:  RENDER_API_URL
+#     Value: https://<your-service>.onrender.com     (no trailing slash, no path)
+#
+# Caveat: GitHub only guarantees scheduled workflows run *approximately* on time,
+# and on a quiet repo a run can slip by a few minutes. Fine here — the tolerance
+# is "under ~15 min", not exact. Note also that GitHub disables schedules on
+# repos with no activity for 60 days.
+#
+# If the Render plan is ever upgraded off Free, this workflow becomes a no-op and
+# can be deleted.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check RENDER_API_URL is configured
+        env:
+          RENDER_API_URL: ${{ vars.RENDER_API_URL }}
+        run: |
+          if [ -z "$RENDER_API_URL" ]; then
+            echo "::error::Repository variable RENDER_API_URL is not set."
+            echo "Set it under Settings → Secrets and variables → Actions → Variables,"
+            echo "e.g. https://cknest-api.onrender.com (no trailing slash)."
+            exit 1
+          fi
+
+      - name: Ping /api/v1/healthz
+        env:
+          RENDER_API_URL: ${{ vars.RENDER_API_URL }}
+        # 70s max-time: if this ever catches the service already asleep (the very
+        # first run, or a gap while the workflow was disabled) a cold start can
+        # take 30-60s — give it room instead of failing the job needlessly. Retry
+        # once so a single blip does not show up as a red run.
+        run: |
+          curl -fsS --max-time 70 "${RENDER_API_URL%/}/api/v1/healthz" || \
+          curl -fsS --max-time 70 "${RENDER_API_URL%/}/api/v1/healthz"
