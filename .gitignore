@@ -20,3 +20,6 @@ npm-debug.log*
 .idea/
 .DS_Store
 Thumbs.db
+
+# QA report working files (screenshots + generated HTML)
+.qa-report/

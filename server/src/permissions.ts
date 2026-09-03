@@ -50,6 +50,13 @@ const MASTER: ActionKey[] = ['view', 'create', 'edit', 'delete', 'export'];
 const REPORT: ActionKey[] = ['view', 'export'];
 
 export const MODULES: PermissionModule[] = [
+  // ----------------------------------------------------------- General
+  // Every signed-in user sees the dashboard. It is a module rather than an
+  // ungoverned path so the summary counts still answer to *something* — and so
+  // it shows up in the coverage check below instead of silently falling through.
+  { key: 'dashboard.home', label: 'Dashboard', group: 'General', actions: ['view'],
+    resources: ['dashboard'] },
+
   // ------------------------------------------------- Phase 1 — Employment
   { key: 'employment.employees', label: 'Employee Master', group: 'Employment', actions: MASTER,
     resources: ['employees'] },
@@ -76,7 +83,7 @@ export const MODULES: PermissionModule[] = [
   { key: 'hiring.vacancies', label: 'Vacancies & Listings', group: 'Hiring', actions: WORKFLOW,
     resources: ['job-listings', 'vacancies'] },
   { key: 'hiring.applicants', label: 'Applicants & Interviews', group: 'Hiring', actions: WORKFLOW,
-    resources: ['applicants', 'prospects', 'interviews'] },
+    resources: ['applicants', 'prospects', 'interviews', 'job-listing-applicants'] },
   { key: 'hiring.onboarding', label: 'Onboarding', group: 'Hiring', actions: WORKFLOW,
     resources: ['onboarding'] },
   { key: 'hiring.masters', label: 'Hiring Masters', group: 'Hiring', actions: MASTER,
@@ -84,11 +91,11 @@ export const MODULES: PermissionModule[] = [
 
   // -------------------------------------------------- Phase 3 — Relieving
   { key: 'relieving.exit', label: 'Exit & Clearance', group: 'Relieving', actions: WORKFLOW,
-    resources: ['exit-clearance', 'relieving', 'fnf'] },
+    resources: ['exit-clearance', 'relieving', 'fnf', 'exits'] },
 
   // ------------------------------------------------------------- Masters
   { key: 'masters.org', label: 'Company / Branch / Location', group: 'Masters', actions: MASTER,
-    resources: ['branches', 'locations', 'companies'] },
+    resources: ['branches', 'locations', 'companies', 'settings'] },
   { key: 'masters.ddd', label: 'Department / Division / Designation', group: 'Masters', actions: MASTER,
     resources: ['departments', 'divisions', 'designations'] },
   { key: 'masters.shifts', label: 'Duty Shift Master', group: 'Masters', actions: MASTER,
@@ -101,7 +108,7 @@ export const MODULES: PermissionModule[] = [
     resources: ['training-modules', 'induction-templates', 'onboarding-templates',
       'document-templates', 'atm-tasks'] },
   { key: 'masters.lookups', label: 'Lookups & Tags', group: 'Masters', actions: MASTER,
-    resources: ['lookups', 'tags'] },
+    resources: ['lookups', 'tags', 'lookup-categories'] },
 
   // ------------------------------------------------------- Administration
   { key: 'admin.users', label: 'Users', group: 'Administration',
@@ -174,7 +181,8 @@ export const ROLE_DEFAULTS: Record<Exclude<Role, 'HR_ADMIN'>, (p: PermissionDefi
   // leave, filing a tour — goes through routes they may create on; nothing here
   // grants sight of anyone else's record, which is enforced per-route.
   EMPLOYEE: (p) =>
-    (['employment.leaves', 'employment.tours', 'employment.attendance'].includes(p.module)
+    p.module === 'dashboard.home'
+    || (['employment.leaves', 'employment.tours', 'employment.attendance'].includes(p.module)
       && ['view', 'create'].includes(p.action))
     || (p.module === 'admin.uploads' && p.action !== 'delete'),
 };
@@ -239,6 +247,17 @@ const SUFFIX_ACTIONS: Record<string, ActionKey> = {
 };
 
 /**
+ * Paths whose first segment understates what they return.
+ *
+ * `/dashboard/activity` is the org-wide audit trail rendered on the home page —
+ * the same data the Activity Log screen shows — so it must answer to the same
+ * permission, not to "may see the dashboard". Checked before the resource map.
+ */
+const PATH_OVERRIDES: Array<{ prefix: string; permission: string }> = [
+  { prefix: 'dashboard/activity', permission: 'admin.activity-log.view' },
+];
+
+/**
  * The permission a request needs, or null if the path is ungoverned.
  *
  * Deriving it from the route rather than declaring it on each handler is what
@@ -249,6 +268,10 @@ export function permissionForRequest(method: string, path: string): string | nul
   const parts = path.split('/').filter(Boolean);
   const resource = parts[0] ?? '';
   if (UNGOVERNED.has(resource)) return null;
+
+  const joined = parts.join('/');
+  const override = PATH_OVERRIDES.find((o) => joined === o.prefix || joined.startsWith(`${o.prefix}/`));
+  if (override) return override.permission;
 
   const moduleKey = RESOURCE_TO_MODULE.get(resource);
   if (!moduleKey) return null;
@@ -310,6 +333,32 @@ function describeModule(permissionKey: string): string {
 }
 
 /**
+ * Report any API resource that no module claims.
+ *
+ * `permissionForRequest` returns null for an unmapped resource, and null means
+ * *open to every signed-in user* — which is how `/dashboard`, `/exits`,
+ * `/lookup-categories`, `/settings` and `/job-listing-applicants` ended up
+ * ungoverned after the first pass: they simply were not on the list, and
+ * nothing said so. Silence is the wrong default for an access-control gap, so
+ * this shouts at boot instead of waiting for someone to notice.
+ *
+ * `routes` is the set of first path segments the app actually registers.
+ */
+export function auditCoverage(routes: Iterable<string>): string[] {
+  const gaps = [...new Set(routes)]
+    .filter((r) => r && !UNGOVERNED.has(r) && !RESOURCE_TO_MODULE.has(r))
+    .sort();
+  if (gaps.length) {
+    console.warn(
+      `[permissions] ${gaps.length} API resource(s) are governed by NOTHING and are open to `
+      + `every signed-in user: ${gaps.join(', ')}. Add each to a module's \`resources\` in `
+      + 'permissions.ts, or to UNGOVERNED if that is deliberate.'
+    );
+  }
+  return gaps;
+}
+
+/**
  * Seed `role_permissions` from the code defaults for any role that has no rows.
  * Runs at boot so a fresh database is governed immediately, and never touches a
  * role an admin has already customised.
@@ -317,15 +366,37 @@ function describeModule(permissionKey: string): string {
 export async function seedRolePermissions(): Promise<void> {
   const roles: Role[] = ['MANAGER', 'FINANCE', 'EMPLOYEE'];
   for (const role of roles) {
-    const [existing] = await query<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM role_permissions WHERE role = ?', [role]
+    const rows = await query<{ permissionKey: string }>(
+      'SELECT permission_key AS permissionKey FROM role_permissions WHERE role = ?', [role]
     );
-    if (Number(existing?.c ?? 0) > 0) continue;
-    for (const key of defaultPermissionsFor(role)) {
+    const defaults = defaultPermissionsFor(role);
+
+    // First boot for this role — lay down the full defaults.
+    if (rows.length === 0) {
+      for (const key of defaults) {
+        await query(
+          'INSERT IGNORE INTO role_permissions (role, permission_key) VALUES (?, ?)',
+          [role, key]
+        );
+      }
+      continue;
+    }
+
+    // Already customised. Only grant defaults belonging to a module the role has
+    // *no* rows for at all — i.e. a module added since this database was seeded.
+    // Anything within a module an admin has already touched is left exactly as
+    // they left it, so a deliberate untick is never quietly restored.
+    const held = new Set(rows.map((r) => r.permissionKey));
+    const modulesTouched = new Set([...held].map((k) => k.split('.').slice(0, -1).join('.')));
+    for (const key of defaults) {
+      if (held.has(key)) continue;
+      const moduleKey = key.split('.').slice(0, -1).join('.');
+      if (modulesTouched.has(moduleKey)) continue; // admin owns this module now
       await query(
         'INSERT IGNORE INTO role_permissions (role, permission_key) VALUES (?, ?)',
         [role, key]
       );
+      console.log(`[permissions] granted new module permission ${key} to ${role}`);
     }
   }
 }

@@ -77,9 +77,15 @@ export function CompanyBranchLocationFields({
     ? { display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }
     : { display: 'flex', flexDirection: 'column', gap: 12 };
 
+  // `flex: 1 1 150px` is for the inline (row) layout, where 150px is a minimum
+  // *width*. In the stacked layout the same rule makes it a 150px minimum
+  // HEIGHT, which left ~85px of dead space under every field. Applied only
+  // where it means what it was written to mean.
+  const fieldStyle: React.CSSProperties = inline ? { ...lbl, flex: '1 1 150px' } : lbl;
+
   return (
     <div style={wrap}>
-      <label style={lbl}>
+      <label style={fieldStyle}>
         <span style={lblSpan}>Company *</span>
         <select
           value={value.companyId}
@@ -92,7 +98,7 @@ export function CompanyBranchLocationFields({
         </select>
       </label>
 
-      <label style={lbl}>
+      <label style={fieldStyle}>
         <span style={lblSpan}>Branch *</span>
         <select
           value={value.branchId}
@@ -108,7 +114,7 @@ export function CompanyBranchLocationFields({
         </select>
       </label>
 
-      <label style={lbl}>
+      <label style={fieldStyle}>
         <span style={lblSpan}>Location {requireLocation ? '*' : '(optional)'}</span>
         <select
           value={value.locationId}
@@ -161,5 +167,5 @@ const inp: React.CSSProperties = {
 const lockedInp: React.CSSProperties = {
   background: 'var(--ck-line-soft)', color: 'var(--ck-muted)', cursor: 'not-allowed',
 };
-const lbl: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, flex: '1 1 150px' };
+const lbl: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 };
 const lblSpan: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: 'var(--ck-ink-soft)' };

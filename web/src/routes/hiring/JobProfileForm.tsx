@@ -428,6 +428,12 @@ function Step1({
         <FG label="Designation">
           <ReadOnlyField value={data.designation || '—'} />
         </FG>
+      </div>
+
+      {/* Given a row of its own rather than a third of the grid above: the
+          Company / Branch / Location table it renders needs the full width, and
+          in a 1/3 cell every company name wrapped onto four lines. */}
+      <div style={{ marginBottom: 16 }}>
         <FG label="Location Applicable*">
           <LocationApplicableEditor value={data.locations} onChange={(locations) => upd({ locations })} />
         </FG>

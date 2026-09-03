@@ -12,7 +12,7 @@ import {
 } from './auth';
 import { registerMasterRoutes } from './masters';
 import { registerUserRoutes, syncCkUsers } from './users';
-import { permissionGuard, seedRolePermissions } from './permissions';
+import { permissionGuard, seedRolePermissions, auditCoverage } from './permissions';
 import { registerRelievingRoutes } from './relieving';
 import { registerDocumentRoutes } from './documents';
 import { uploadToCloudinary } from './upload';
@@ -5063,8 +5063,27 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
 };
 app.use(errorHandler);
 
+/**
+ * The first path segment of every /api/v1 route Express has registered, read
+ * back off the router rather than maintained by hand — a list someone has to
+ * remember to update is exactly what let five resources go ungoverned.
+ */
+function registeredApiResources(): string[] {
+  const stack = (app as unknown as { _router?: { stack: Array<{ route?: { path: string } }> } })._router?.stack ?? [];
+  const out: string[] = [];
+  for (const layer of stack) {
+    const p = layer.route?.path;
+    if (typeof p !== 'string' || !p.startsWith('/api/v1/')) continue;
+    const segment = p.slice('/api/v1/'.length).split('/')[0];
+    if (segment) out.push(segment);
+  }
+  return out;
+}
+
 app.listen(port, () => {
   console.log(`[server] listening on http://localhost:${port}`);
+  // Shout if any resource is governed by nothing (see auditCoverage).
+  auditCoverage(registeredApiResources());
   // Give every role its default grants if nobody has customised them yet, so a
   // fresh database is governed from the first request rather than falling back
   // to code defaults on every permission check.
