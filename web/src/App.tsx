@@ -36,7 +36,6 @@ import {
   ScreeningTemplateMasterPage,
   OfferTemplateMasterPage,
   GiveawayTemplateMasterPage,
-  UserConsolePage,
   HolidayMasterPage,
   AttendanceRuleMasterPage,
   LookupMasterPage,
@@ -53,6 +52,8 @@ import { InductionTemplateMasterPage, OnboardingTemplateMasterPage } from './rou
 import { ActivityLogPage } from './routes/activity-log/ActivityLogPage';
 import { SyncSettingsPage } from './routes/settings/SyncSettingsPage';
 import { DocumentSettingsPage } from './routes/settings/DocumentSettingsPage';
+import { UsersPage } from './routes/admin/UsersPage';
+import { RolesPermissionsPage } from './routes/admin/RolesPermissionsPage';
 import { ExitListPage } from './routes/relieving/ExitListPage';
 import { ExitDetailPage } from './routes/relieving/ExitDetailPage';
 import { WipePage } from './routes/dev/WipePage';
@@ -83,7 +84,9 @@ export default function App() {
             <Route path="/masters/screening-templates" element={<ScreeningTemplateMasterPage />} />
             <Route path="/masters/offer-templates" element={<OfferTemplateMasterPage />} />
             <Route path="/masters/giveaways" element={<GiveawayTemplateMasterPage />} />
-            <Route path="/masters/users" element={<UserConsolePage />} />
+            <Route path="/masters/users" element={<UsersPage />} />
+            <Route path="/admin/users" element={<UsersPage />} />
+            <Route path="/admin/permissions" element={<RolesPermissionsPage />} />
             <Route path="/masters/holidays" element={<HolidayMasterPage />} />
             <Route path="/masters/attendance-rules" element={<AttendanceRuleMasterPage />} />
             <Route path="/masters/lookups" element={<LookupMasterPage />} />

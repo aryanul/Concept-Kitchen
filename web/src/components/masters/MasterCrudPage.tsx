@@ -164,6 +164,22 @@ export function MasterCrudPage<Row extends { id: string }>({
 
   const fields = useMemo(() => buildFields(rows, editing), [buildFields, rows, editing]);
 
+  // Deep link straight to the add form: other screens send users here to create
+  // a missing master row (e.g. the Job Profile's "+ Add Template"), and landing
+  // on a list they then have to hunt through is a worse handoff than landing on
+  // the form they came for.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get('new') !== '1') return;
+    setEditing(null);
+    setValues(rowToValues(null));
+    setOpen(true);
+    // Consume the flag so a refresh (or a back-navigation) doesn't reopen it.
+    url.searchParams.delete('new');
+    window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const openCreate = () => {
     setEditing(null);
     setValues(rowToValues(null));

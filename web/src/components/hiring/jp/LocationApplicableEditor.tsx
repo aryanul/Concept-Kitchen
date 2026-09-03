@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { useState } from 'react';
+import { Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Modal } from '../../ui/Modal';
 import { Button } from '../../ui/Button';
 import { IconAction } from '../../ui/IconAction';
-import { api } from '../../../lib/api';
+import {
+  CompanyBranchLocationFields, RemoveRowButton, useScopeNames,
+  EMPTY_SCOPE, type OrgScope,
+} from '../../org/CompanyBranchLocation';
 
 export type JpLocation = {
   branchId: string;
@@ -13,10 +16,8 @@ export type JpLocation = {
   // Display-only fields (populated by parent when hydrating from server)
   branchName?: string;
   locationName?: string;
+  companyName?: string;
 };
-
-type Branch = { id: string; name: string; city: string | null };
-type LocationMaster = { id: string; name: string; city: string | null; branch_id: string | null };
 
 export function LocationApplicableEditor({
   value,
@@ -26,42 +27,36 @@ export function LocationApplicableEditor({
   onChange: (next: JpLocation[]) => void;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [locations, setLocations] = useState<LocationMaster[]>([]);
-
-  const [branchId, setBranchId] = useState('');
-  const [locationId, setLocationId] = useState('');
+  const [scope, setScope] = useState<OrgScope>(EMPTY_SCOPE);
   const [positions, setPositions] = useState(1);
-
-  useEffect(() => {
-    if (!modalOpen) return;
-    api.get<{ data: Branch[] }>('/branches').then((r) => setBranches(r.data.data)).catch(() => {});
-    api.get<{ data: LocationMaster[] }>('/locations').then((r) => setLocations(r.data.data)).catch(() => {});
-  }, [modalOpen]);
-
-  const branchOptions = branches;
-  const locationOptions = branchId
-    ? locations.filter((l) => l.branch_id === branchId || !l.branch_id)
-    : locations;
+  const names = useScopeNames();
 
   const addLocation = () => {
-    if (!branchId) {
+    if (!scope.companyId) {
+      toast.error('Company is required');
+      return;
+    }
+    if (!scope.branchId) {
       toast.error('Branch is required');
       return;
     }
-    const dup = value.find((v) => v.branchId === branchId && v.locationId === (locationId || null));
+    const locationId = scope.locationId || null;
+    const dup = value.find((v) => v.branchId === scope.branchId && v.locationId === locationId);
     if (dup) {
-      toast.error('This branch + location combination is already added');
+      toast.error('This company + branch + location combination is already added');
       return;
     }
-    const branch = branches.find((b) => b.id === branchId);
-    const loc = locations.find((l) => l.id === locationId);
     onChange([...value, {
-      branchId, locationId: locationId || null,
+      branchId: scope.branchId,
+      locationId,
       positions: Math.max(1, Number(positions) || 1),
-      branchName: branch?.name, locationName: loc?.name,
+      // Company is not stored on the row — a branch belongs to exactly one
+      // company, so it is always derivable and can never drift out of sync.
+      companyName: names.companyName(scope.companyId),
+      branchName: names.branchName(scope.branchId),
+      locationName: locationId ? names.locationName(locationId) : undefined,
     }]);
-    setBranchId(''); setLocationId(''); setPositions(1);
+    setScope(EMPTY_SCOPE); setPositions(1);
     setModalOpen(false);
   };
 
@@ -82,20 +77,26 @@ export function LocationApplicableEditor({
         <table style={{ width: '100%', marginTop: 10, borderCollapse: 'collapse', fontSize: 12.5 }}>
           <thead>
             <tr style={{ background: 'var(--ck-bg)' }}>
+              <th style={th}>Company</th>
               <th style={th}>Branch</th>
               <th style={th}>Location</th>
               <th style={{ ...th, width: 110 }}>Positions</th>
-              <th style={{ ...th, width: 60 }}></th>
+              <th style={{ ...th, width: 44 }}></th>
             </tr>
           </thead>
           <tbody>
             {value.map((l, i) => (
               <tr key={`${l.branchId}-${l.locationId}-${i}`} style={{ borderBottom: '1px solid var(--ck-line)' }}>
-                <td style={td}>{l.branchName ?? l.branchId}</td>
-                <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>{l.locationName ?? (l.locationId ? l.locationId : '—')}</td>
+                {/* Rows hydrated from the server carry no companyName, so fall
+                    back to resolving it through the branch. */}
+                <td style={td}>{l.companyName ?? names.companyOfBranch(l.branchId)}</td>
+                <td style={td}>{l.branchName ?? names.branchName(l.branchId)}</td>
+                <td style={{ ...td, color: 'var(--ck-ink-soft)' }}>
+                  {l.locationName ?? (l.locationId ? names.locationName(l.locationId) : '—')}
+                </td>
                 <td style={{ ...td, fontWeight: 700 }}>{l.positions}</td>
-                <td style={td}>
-                  <IconAction icon={Trash2} label="Remove" hint="Remove this location" tone="danger" variant="plain" onClick={() => remove(i)} />
+                <td style={{ ...td, textAlign: 'center' }}>
+                  <RemoveRowButton onClick={() => remove(i)} hint="Remove this location" />
                 </td>
               </tr>
             ))}
@@ -103,22 +104,9 @@ export function LocationApplicableEditor({
         </table>
       )}
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Add Location" subtitle="Pick the branch / location and number of positions" width={480}>
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Add Location" subtitle="Pick the company / branch / location and number of positions" width={480}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <label style={lbl}>
-            <span style={lblSpan}>Branch / Company *</span>
-            <select value={branchId} onChange={(e) => { setBranchId(e.target.value); setLocationId(''); }} style={inp}>
-              <option value="">Select branch</option>
-              {branchOptions.map((b) => <option key={b.id} value={b.id}>{b.name}{b.city ? ` — ${b.city}` : ''}</option>)}
-            </select>
-          </label>
-          <label style={lbl}>
-            <span style={lblSpan}>Location (optional)</span>
-            <select value={locationId} onChange={(e) => setLocationId(e.target.value)} style={inp}>
-              <option value="">No specific location</option>
-              {locationOptions.map((l) => <option key={l.id} value={l.id}>{l.name}{l.city ? ` — ${l.city}` : ''}</option>)}
-            </select>
-          </label>
+          <CompanyBranchLocationFields value={scope} onChange={setScope} />
           <label style={lbl}>
             <span style={lblSpan}>Number of Positions *</span>
             <input type="number" min={1} value={positions} onChange={(e) => setPositions(Number(e.target.value))} style={inp} />

@@ -10,8 +10,16 @@ import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { useServerListQuery, Pagination, SearchInput, FilterSelect, ClearFiltersButton } from '../../components/filters';
+import {
+  ScopeGridEditor, ScopeCountCell, ScopeDetailModal, toScopePayload, type ScopeRow,
+} from '../../components/org/ScopeGridEditor';
 
-type Holiday = { id: string; date: string; name: string; kind: string; branch_names: string | null };
+type Holiday = {
+  id: string; date: string; name: string; kind: string;
+  branch_names: string | null;
+  /** Company/branch/location sets this holiday applies to; empty = everywhere. */
+  scopes: ScopeRow[];
+};
 type Branch = { id: string; name: string };
 const KIND_TONE: Record<string, { bg: string; fg: string }> = {
   Public:   { bg: 'oklch(0.95 0.05 250)', fg: 'oklch(0.45 0.13 250)' },
@@ -32,6 +40,12 @@ export function HolidaysPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editHoliday, setEditHoliday] = useState<Holiday | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
+
+  // Applicability lives outside react-hook-form: it is a repeatable grid, not a
+  // registerable input, and both modals need to seed it independently.
+  const [addScopes, setAddScopes] = useState<ScopeRow[]>([]);
+  const [editScopes, setEditScopes] = useState<ScopeRow[]>([]);
+  const [scopeView, setScopeView] = useState<Holiday | null>(null);
 
   // KPI tiles reflect ALL holidays, independent of the filtered/paginated table below.
   const [statTotal, setStatTotal] = useState(0);
@@ -73,13 +87,21 @@ export function HolidaysPage() {
   const editForm = useForm<FormValues>({ resolver: zodResolver(schema) });
 
   const onSubmit = async (data: FormValues) => {
-    try { await api.post('/holidays', data); toast.success('Holiday added'); reset(); setAddOpen(false); refresh(); }
+    try {
+      await api.post('/holidays', { ...data, scopes: toScopePayload(addScopes) });
+      toast.success('Holiday added');
+      reset(); setAddScopes([]); setAddOpen(false); refresh();
+    }
     catch { toast.error('Failed to add holiday'); }
   };
 
   const onEdit = async (data: FormValues) => {
     if (!editHoliday) return;
-    try { await api.patch(`/holidays/${editHoliday.id}`, data); toast.success('Holiday updated'); setEditHoliday(null); refresh(); }
+    try {
+      await api.patch(`/holidays/${editHoliday.id}`, { ...data, scopes: toScopePayload(editScopes) });
+      toast.success('Holiday updated');
+      setEditHoliday(null); refresh();
+    }
     catch { toast.error('Failed to update holiday'); }
   };
 
@@ -154,14 +176,29 @@ export function HolidaysPage() {
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--ck-ink)' }}>{h.name}</div>
-                  <div style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <MapPin size={13} />{h.branch_names || 'All Branches'}
+                  {/* Counts, not a run-on list of names — the full set is one
+                      click away in a read-only modal. */}
+                  <div style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginTop: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <MapPin size={13} />
+                    {(h.scopes ?? []).length === 0 ? (
+                      <span>All Companies / Branches</span>
+                    ) : (
+                      <>
+                        <ScopeCountCell scopes={distinctBy(h.scopes, (r) => r.company_id ?? '')}
+                          onOpen={() => setScopeView(h)} singular="company" plural="companies" />
+                        <ScopeCountCell scopes={distinctBy(h.scopes, (r) => r.branch_id)}
+                          onOpen={() => setScopeView(h)} singular="branch" plural="branches" />
+                        <ScopeCountCell scopes={h.scopes.filter((r) => r.location_id)}
+                          onOpen={() => setScopeView(h)} singular="location" plural="locations" />
+                      </>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ padding: '4px 12px', borderRadius: 999, fontSize: 11.5, fontWeight: 600, background: tone.bg, color: tone.fg }}>{h.kind}</span>
                   <Button size="sm" variant="ghost" onClick={() => {
                     setEditHoliday(h);
+                    setEditScopes(h.scopes ?? []);
                     editForm.reset({ date: h.date, name: h.name, kind: h.kind });
                   }}>Edit</Button>
                 </div>
@@ -172,9 +209,9 @@ export function HolidaysPage() {
         <Pagination page={page} totalPages={totalPages} total={total} pageSize={20} onPageChange={setPage} />
       </Card>
 
-      <Modal open={addOpen} onClose={() => { reset(); setAddOpen(false); }} title="Add Holiday" width={420}
+      <Modal open={addOpen} onClose={() => { reset(); setAddScopes([]); setAddOpen(false); }} title="Add Holiday" width={620}
         footer={<>
-          <Button onClick={() => { reset(); setAddOpen(false); }}>Cancel</Button>
+          <Button onClick={() => { reset(); setAddScopes([]); setAddOpen(false); }}>Cancel</Button>
           <Button variant="primary" type="submit" form="holiday-form" disabled={isSubmitting}>{isSubmitting ? 'Adding…' : 'Add Holiday'}</Button>
         </>}>
         <form id="holiday-form" onSubmit={handleSubmit(onSubmit)}>
@@ -188,11 +225,16 @@ export function HolidaysPage() {
                 <option value="Optional">Optional</option>
               </select>
             </F2>
+            <ScopeGridEditor
+              value={addScopes}
+              onChange={setAddScopes}
+              label="Applicable at (leave empty for every company and branch)"
+            />
           </div>
         </form>
       </Modal>
 
-      <Modal open={!!editHoliday} onClose={() => { setEditHoliday(null); editForm.reset(); }} title="Edit Holiday" width={420}
+      <Modal open={!!editHoliday} onClose={() => { setEditHoliday(null); editForm.reset(); }} title="Edit Holiday" width={620}
         footer={<>
           <Button onClick={() => { setEditHoliday(null); editForm.reset(); }}>Cancel</Button>
           <Button variant="primary" type="submit" form="edit-holiday-form" disabled={editForm.formState.isSubmitting}>{editForm.formState.isSubmitting ? 'Saving…' : 'Save'}</Button>
@@ -209,11 +251,37 @@ export function HolidaysPage() {
                 <option value="Optional">Optional</option>
               </select>
             </F2>
+            <ScopeGridEditor
+              value={editScopes}
+              onChange={setEditScopes}
+              label="Applicable at (leave empty for every company and branch)"
+            />
           </div>
         </form>
       </Modal>
+
+      <ScopeDetailModal
+        open={!!scopeView}
+        onClose={() => setScopeView(null)}
+        title={scopeView ? `${scopeView.name} — applicable at` : ''}
+        scopes={scopeView?.scopes ?? []}
+      />
     </div>
   );
+}
+
+/**
+ * Count of distinct values in a scope set — a holiday covering three branches
+ * of one company is "1 company / 3 branches", not "3 companies".
+ */
+function distinctBy(rows: ScopeRow[], key: (r: ScopeRow) => string): ScopeRow[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    const k = key(r);
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 }
 
 function StatTile({ icon: Cmp, label, value, tint }: { icon?: typeof CalendarDays; label: string; value: string; tint: number }) {

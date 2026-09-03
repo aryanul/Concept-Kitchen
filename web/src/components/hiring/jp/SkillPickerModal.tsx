@@ -12,7 +12,28 @@ export type Skill = {
   category: string | null;
   description: string | null;
   is_active: number;
+  // Skills mirrored from Concept Kitchen are grouped by the Skill Head / Skill
+  // Type hierarchy (migration 0041) and have NO `category`. Filtering on
+  // `category` alone therefore hid every CK-synced skill — which is why these
+  // pickers looked empty even with a fully populated Skill Master.
+  skill_type_name?: string | null;
+  skill_head_name?: string | null;
 };
+
+/**
+ * The label a skill is filed under: its own category if it has one, otherwise
+ * its Skill Type, otherwise its Skill Head.
+ */
+function groupOf(s: Skill): string {
+  return s.category || s.skill_type_name || s.skill_head_name || 'Uncategorized';
+}
+
+/** Every label a skill can be matched by, lowercased. */
+function labelsOf(s: Skill): string[] {
+  return [s.category, s.skill_type_name, s.skill_head_name]
+    .filter((v): v is string => typeof v === 'string' && v.length > 0)
+    .map((v) => v.toLowerCase());
+}
 
 type Props = {
   open: boolean;
@@ -58,38 +79,48 @@ export function SkillPickerModal({
     setNewName(''); setNewCategory('');
   }, [open, selected]);
 
+  const active = useMemo(() => allSkills.filter((s) => s.is_active !== 0), [allSkills]);
+
+  /**
+   * Rows matching the caller's requested categories. A skill counts as a match
+   * on its category, its Skill Type, or its Skill Head, so both locally-created
+   * and CK-synced skills are reachable.
+   */
+  const scoped = useMemo(() => {
+    if (!allowCategories || allowCategories.length === 0) return active;
+    const wanted = allowCategories.map((c) => c.toLowerCase());
+    return active.filter((s) => labelsOf(s).some((l) => wanted.includes(l)));
+  }, [active, allowCategories]);
+
+  // If the master has none of the requested categories, showing an empty modal
+  // is a dead end. Fall back to the whole master and say so, so the user can
+  // still pick something instead of being stuck.
+  const narrowed = scoped.length > 0 || !allowCategories?.length;
+  const pool = narrowed ? scoped : active;
+
   const categories = useMemo(() => {
     const set = new Set<string>();
-    for (const s of allSkills) if (s.category) set.add(s.category);
-    let list = Array.from(set).sort();
-    if (allowCategories) list = list.filter((c) => allowCategories.includes(c));
-    return list;
-  }, [allSkills, allowCategories]);
+    for (const s of pool) set.add(groupOf(s));
+    return Array.from(set).sort();
+  }, [pool]);
 
   const visible = useMemo(() => {
-    let list = allSkills.filter((s) => s.is_active !== 0);
-    if (allowCategories && allowCategories.length > 0) {
-      list = list.filter((s) => s.category && allowCategories.includes(s.category));
-    }
-    if (categoryFilter) list = list.filter((s) => s.category === categoryFilter);
+    let list = pool;
+    if (categoryFilter) list = list.filter((s) => groupOf(s) === categoryFilter);
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter((s) =>
         s.name.toLowerCase().includes(q)
-        || s.category?.toLowerCase().includes(q)
+        || labelsOf(s).some((l) => l.includes(q))
         || s.code?.toLowerCase().includes(q)
       );
     }
     return list;
-  }, [allSkills, search, categoryFilter, allowCategories]);
+  }, [pool, search, categoryFilter]);
 
-  // Group visible by category
   const grouped = useMemo(() => {
     const groups: Record<string, Skill[]> = {};
-    for (const s of visible) {
-      const cat = s.category ?? 'Uncategorized';
-      (groups[cat] ??= []).push(s);
-    }
+    for (const s of visible) (groups[groupOf(s)] ??= []).push(s);
     return groups;
   }, [visible]);
 
@@ -146,6 +177,15 @@ export function SkillPickerModal({
         )}
         <Button size="sm" icon={Plus} onClick={() => setAddOpen((o) => !o)}>New</Button>
       </div>
+
+      {!loading && !narrowed && (
+        <div style={{
+          padding: '8px 12px', marginBottom: 12, borderRadius: 8, fontSize: 12,
+          background: 'var(--ck-bg)', border: '1px solid var(--ck-line)', color: 'var(--ck-ink-soft)',
+        }}>
+          No skills are filed under {allowCategories?.join(' / ')} yet — showing the whole Skill Master.
+        </div>
+      )}
 
       {addOpen && (
         <div style={{ padding: 12, background: 'var(--ck-bg)', border: '1px solid var(--ck-line)', borderRadius: 8, marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>

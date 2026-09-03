@@ -169,3 +169,30 @@ export async function ckSkillMasters(path = '/SkillMaster'): Promise<CkSkillMast
       : [];
   });
 }
+
+// --- Specifications (lookup value sets) ------------------------------------
+
+/**
+ * CK's /Specification/* endpoints do NOT return the { id, name } shape the
+ * header comment above claims — they return
+ * { specId, typeId, specName, isActive, … }.
+ *
+ * Reading them with `ckList` matched nothing, so EVERY specification category
+ * (language, doc type, social media, marital status, caste, vaccination,
+ * nationality, religion) imported zero rows and the corresponding dropdowns in
+ * onboarding and the Employee Master came up empty. Verified against the live
+ * API: /Specification/CastCategory returns 4 rows in the specId/specName shape.
+ *
+ * The legacy { id, name } shape is still accepted so a CK rollback keeps working.
+ */
+export async function ckSpecifications(path: string): Promise<CkRow[]> {
+  const rows = await ckFetchArray(path);
+  return rows.flatMap((r) => {
+    const id = ref(pick(r, 'specId', 'id'));
+    const rawName = pick(r, 'specName', 'name');
+    if (id == null || typeof rawName !== 'string' || !rawName.trim()) return [];
+    // Retired values would otherwise keep showing up in every dropdown.
+    if (r.isActive === false) return [];
+    return [{ id, name: rawName.trim() }];
+  });
+}

@@ -22,9 +22,10 @@
 import { ulid } from 'ulid';
 import { query } from './db';
 import {
-  ckList, ckDepartments, ckDivisions, ckDesignations,
+  ckList, ckSpecifications, ckDepartments, ckDivisions, ckDesignations,
   ckSkillHeads, ckSkillTypes, ckSkillMasters, type CkRow,
 } from './ckApi';
+import { syncCkUsers } from './users';
 
 export type DomainStat = { inserted: number; updated: number };
 export type CkSyncSummary = {
@@ -190,15 +191,54 @@ async function upsertLookup(
   stat.inserted++;
 }
 
+// `categoryCode` MUST match the code the UI queries `/lookups?category=…` with,
+// or the values import into a category nothing reads. That is exactly what had
+// happened to caste: CK's rows landed in `cast_category` while onboarding and
+// the Employee Master both read `caste_category`.
 const SPECIFICATIONS: Array<{ path: string; categoryCode: string; categoryName: string }> = [
   { path: '/Specification/Language',        categoryCode: 'language',         categoryName: 'Language' },
   { path: '/Specification/DocType',         categoryCode: 'doc_type',         categoryName: 'Document Type' },
   { path: '/Specification/SocialMedia',     categoryCode: 'social_media',     categoryName: 'Social Media' },
   { path: '/Specification/MaritalStatus',   categoryCode: 'marital_status',   categoryName: 'Marital Status' },
-  { path: '/Specification/CastCategory',    categoryCode: 'cast_category',    categoryName: 'Caste Category' },
+  { path: '/Specification/CastCategory',    categoryCode: 'caste_category',   categoryName: 'Caste Category' },
   { path: '/Specification/VaccinationType', categoryCode: 'vaccination_type', categoryName: 'Vaccination Type' },
   { path: '/Specification/Nationality',     categoryCode: 'nationality',      categoryName: 'Nationality' },
   { path: '/Specification/Religion',        categoryCode: 'religion',         categoryName: 'Religion' },
+];
+
+/**
+ * Blood group and gender are NOT exposed by the CK API — there is no
+ * /Specification/BloodGroup or /Specification/Gender endpoint, and no
+ * specification typeId carries those values (verified by sweeping
+ * /Specification/ByType). They are therefore owned locally: the sync only
+ * guarantees the categories exist and are populated, so the onboarding and
+ * Employee Master dropdowns are never empty on a database that has not had
+ * `seed:lookups` run against it.
+ */
+/**
+ * The code IS the label here, matching seed-lookups. Employee and applicant
+ * rows store the lookup *code* (`blood_group = 'A+'`, `gender = 'Male'`), so
+ * inventing a second convention would orphan every record already saved.
+ *
+ * Note this is also why the code cannot be slugged from the label: slug() drops
+ * punctuation, so "A+" and "A-" would both collapse to "a" and — codes being
+ * unique per category — only the positive of each pair would ever be stored.
+ */
+const LOCAL_ONLY_LOOKUPS: Array<{
+  categoryCode: string;
+  categoryName: string;
+  values: string[];
+}> = [
+  {
+    categoryCode: 'blood_group',
+    categoryName: 'Blood Group',
+    values: ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'],
+  },
+  {
+    categoryCode: 'gender',
+    categoryName: 'Gender',
+    values: ['Male', 'Female', 'Other', 'Prefer not to say'],
+  },
 ];
 
 export async function ckSyncAll(): Promise<CkSyncSummary> {
@@ -328,11 +368,69 @@ export async function ckSyncAll(): Promise<CkSyncSummary> {
       try {
         const categoryId = await ensureCategory(spec.categoryCode, spec.categoryName);
         const s = stat(`lookups:${spec.categoryCode}`);
-        const rows = await ckList(spec.path);
+        // ckSpecifications, not ckList: CK returns specId/specName here.
+        const rows = await ckSpecifications(spec.path);
         await mapLimit(rows, CONCURRENCY, async (row) => {
           await upsertLookup(categoryId, row, s, lookupMirror);
         });
       } catch (e) { errors.push(`spec ${spec.categoryCode}: ${msg(e)}`); }
+    }
+
+    // Categories CK does not serve. Reconciled here so a fresh database has
+    // working dropdowns, and so an install left inconsistent by an older build
+    // heals itself on the next sync.
+    //
+    // Done in TypeScript rather than a migration on purpose: the equivalent
+    // multi-table DELETE ... JOIN against a derived table is not honoured by
+    // TiDB, and this also re-runs on every sync instead of exactly once.
+    for (const local of LOCAL_ONLY_LOOKUPS) {
+      try {
+        const categoryId = await ensureCategory(local.categoryCode, local.categoryName);
+        const s = stat(`lookups:${local.categoryCode}`);
+        const existing = await query<{ id: string; code: string; label: string }>(
+          'SELECT id, code, label FROM lookups WHERE category_id = ? ORDER BY id',
+          [categoryId],
+        );
+
+        // Index by label — the label is what a user actually sees and picks, so
+        // it is the identity here; the code is an implementation detail that a
+        // previous build got wrong.
+        const byLabel = new Map<string, Array<{ id: string; code: string }>>();
+        for (const r of existing) {
+          const key = r.label.trim().toUpperCase();
+          const bucket = byLabel.get(key) ?? [];
+          bucket.push({ id: r.id, code: r.code });
+          byLabel.set(key, bucket);
+        }
+
+        let order = 0;
+        for (const value of local.values) {
+          order += 1;
+          const rows = byLabel.get(value.toUpperCase()) ?? [];
+
+          if (rows.length === 0) {
+            await query(
+              'INSERT INTO lookups (id, category_id, code, label, sort_order, is_active) VALUES (?, ?, ?, ?, ?, 1)',
+              [ulid(), categoryId, value, value, order],
+            );
+            s.inserted++;
+            continue;
+          }
+
+          // Keep the row already on the canonical code if there is one, so any
+          // employee record pointing at it keeps resolving.
+          const keeper = rows.find((r) => r.code === value) ?? rows[0];
+          for (const dupe of rows) {
+            if (dupe.id === keeper.id) continue;
+            await query('DELETE FROM lookups WHERE id = ?', [dupe.id]);
+            s.updated++;
+          }
+          if (keeper.code !== value) {
+            await query('UPDATE lookups SET code = ?, sort_order = ? WHERE id = ?', [value, order, keeper.id]);
+            s.updated++;
+          }
+        }
+      } catch (e) { errors.push(`lookup ${local.categoryCode}: ${msg(e)}`); }
     }
   } catch (e) { errors.push(`specs: ${msg(e)}`); }
 
@@ -382,6 +480,15 @@ export async function ckSyncAll(): Promise<CkSyncSummary> {
       bump('skills', created);
     });
   } catch (e) { errors.push(`skills: ${msg(e)}`); }
+
+  // 11. CK staff → ck_users mirror, plus an Inactive sign-in for anyone new.
+  // Last on purpose: it is the only domain that creates *accounts*, so it runs
+  // after the reference data those accounts will be working against.
+  try {
+    const { mirrored, provisioned } = await syncCkUsers();
+    stats['ck-users'] = { inserted: mirrored, updated: 0 };
+    stats['staff-sign-ins'] = { inserted: provisioned, updated: 0 };
+  } catch (e) { errors.push(`ck-users: ${msg(e)}`); }
 
   const finishedAtMs = Date.now();
   return {

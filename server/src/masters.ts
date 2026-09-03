@@ -4,6 +4,7 @@ import { ulid } from 'ulid';
 import { authRequired, type Role } from './auth';
 import { query } from './db';
 import { writeAudit } from './audit';
+import { replaceScopes, type ScopeInput } from './scopes';
 
 function parseBool(value: unknown): number {
   return value === true || value === 1 || value === '1' || value === 'true' ? 1 : 0;
@@ -33,58 +34,10 @@ function updateSets(body: Record<string, unknown>, allowed: Array<{ key: string;
   return { sets, values };
 }
 
-// Top-level segments owned exclusively by masters routes (not in index.ts domain routes)
-const MASTER_SEGMENTS = new Set([
-  'atm-tasks', 'attendance-rules', 'branches', 'departments', 'designations',
-  'divisions', 'holidays', 'induction-templates', 'locations', 'lookups',
-  'onboarding-templates', 'salary-grades', 'shifts', 'skill-heads', 'skill-types',
-  'skills', 'tags', 'training-modules', 'users',
-]);
-
 export function registerMasterRoutes(app: Application) {
-  // Auto-audit every successful mutation across all ~84 master routes.
-  // We intercept res.json to capture the new ID (for POST), then write
-  // the audit entry on 'finish' so it never blocks the response.
-  app.use('/api/v1', (req, res, next) => {
-    if (!['POST', 'PATCH', 'PUT', 'DELETE'].includes(req.method)) return next();
-
-    // req.path has the '/api/v1' prefix stripped by Express
-    const parts = req.path.split('/').filter(Boolean);
-    const first = parts[0] ?? '';
-
-    const isMasterRoute =
-      MASTER_SEGMENTS.has(first) || first === 'hiring' || first === 'onboarding';
-    if (!isMasterRoute) return next();
-
-    // For nested paths like /hiring/companies or /onboarding/giveaways,
-    // combine first two segments as the resource name; otherwise use first.
-    const resource =
-      first === 'hiring' || first === 'onboarding'
-        ? `${first}/${parts[1] ?? ''}`
-        : first;
-
-    // URL-level resource ID (present on PATCH/PUT/DELETE)
-    const urlId = first === 'hiring' || first === 'onboarding' ? parts[2] : parts[1];
-
-    // Intercept res.json so we can capture the ID returned by POST handlers
-    let capturedId: string | undefined;
-    const origJson = res.json.bind(res);
-    (res as unknown as { json: typeof res.json }).json = function (body: unknown) {
-      capturedId = (body as Record<string, Record<string, string>>)?.data?.id;
-      return origJson(body);
-    };
-
-    res.on('finish', () => {
-      if (res.statusCode >= 400 || !req.user?.id) return;
-      const resourceId = capturedId ?? urlId ?? ulid();
-      const action =
-        req.method === 'POST'   ? 'create' :
-        req.method === 'DELETE' ? 'delete' : 'update';
-      writeAudit(req.user.id, action, resource, resourceId, null, null).catch(() => {});
-    });
-
-    next();
-  });
+  // Master mutations used to be audited by a middleware registered here. It now
+  // lives in auditMiddleware.ts and covers every /api/v1 route, master or not —
+  // see registerAuditMiddleware in index.ts.
 
   // Branches
   app.post('/api/v1/branches', authRequired, async (req, res, next) => {
@@ -206,7 +159,7 @@ export function registerMasterRoutes(app: Application) {
         kind, breakMin,
         graceArrivalMin, graceExitMin,
         otAfterMin, otMultiplier,
-        breaks,
+        breaks, scopes,
       } = req.body ?? {};
       if (!name || !startTime || !endTime || !kind) {
         return res.status(400).json({ error: { code: 'VALIDATION', message: 'name, startTime, endTime and kind required' } });
@@ -230,6 +183,7 @@ export function registerMasterRoutes(app: Application) {
         ]
       );
       if (Array.isArray(breaks)) await replaceShiftBreaks(id, breaks as BreakInput[]);
+      if (Array.isArray(scopes)) await replaceScopes('shift_scopes', 'shift_id', id, scopes as ScopeInput[]);
       res.status(201).json({ data: { id, code: shiftCode } });
     } catch (err) {
       next(err);
@@ -268,7 +222,10 @@ export function registerMasterRoutes(app: Application) {
       if (Array.isArray(body.breaks)) {
         await replaceShiftBreaks(req.params.id, body.breaks as BreakInput[]);
       }
-      if (!sets.length && !Array.isArray(body.breaks)) {
+      if (Array.isArray(body.scopes)) {
+        await replaceScopes('shift_scopes', 'shift_id', req.params.id, body.scopes as ScopeInput[]);
+      }
+      if (!sets.length && !Array.isArray(body.breaks) && !Array.isArray(body.scopes)) {
         return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
       }
       res.json({ data: { id: req.params.id } });
@@ -908,6 +865,21 @@ export function registerMasterRoutes(app: Application) {
 
   app.delete('/api/v1/hiring/interview-templates/:id', authRequired, async (req, res, next) => {
     try {
+      // ON DELETE CASCADE would quietly strip this template from every job
+      // profile that maps it. Refuse instead and make the caller unmap first.
+      const [inUse] = await query<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM job_profile_interview_templates WHERE interview_template_id = ?',
+        [req.params.id]
+      );
+      const count = Number(inUse?.c ?? 0);
+      if (count > 0) {
+        return res.status(409).json({
+          error: {
+            code: 'IN_USE',
+            message: `Mapped to ${count} job profile${count === 1 ? '' : 's'} — unmap it there before deleting.`,
+          },
+        });
+      }
       await query('DELETE FROM interview_templates WHERE id = ?', [req.params.id]);
       res.json({ data: { id: req.params.id } });
     } catch (err) {
@@ -942,73 +914,10 @@ export function registerMasterRoutes(app: Application) {
     }
   });
 
-  // Users console
-  app.get('/api/v1/users', authRequired, async (_req, res, next) => {
-    try {
-      const rows = await query(
-        `SELECT u.id, u.email, u.role, u.employee_id, u.created_at, u.updated_at,
-                e.code AS employee_code, e.first_name, e.last_name
-         FROM users u
-         LEFT JOIN employees e ON e.id = u.employee_id
-         ORDER BY u.created_at DESC`
-      );
-      res.json({ data: rows });
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  app.post('/api/v1/users', authRequired, async (req, res, next) => {
-    try {
-      const { email, password, role, employeeId } = req.body ?? {};
-      if (!email || !password || !role) {
-        return res.status(400).json({ error: { code: 'VALIDATION', message: 'email, password and role required' } });
-      }
-      const id = ulid();
-      const hash = await bcrypt.hash(password, 10);
-      await query('INSERT INTO users (id, email, password_hash, role, employee_id) VALUES (?, ?, ?, ?, ?)', [
-        id,
-        email,
-        hash,
-        role as Role,
-        employeeId || null,
-      ]);
-      res.status(201).json({ data: { id } });
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  app.patch('/api/v1/users/:id', authRequired, async (req, res, next) => {
-    try {
-      const { email, password, role, employeeId } = req.body ?? {};
-      const sets: string[] = [];
-      const values: unknown[] = [];
-      if (email !== undefined) { sets.push('email = ?'); values.push(email); }
-      if (role !== undefined) { sets.push('role = ?'); values.push(role as Role); }
-      if (employeeId !== undefined) { sets.push('employee_id = ?'); values.push(employeeId || null); }
-      if (password) {
-        const hash = await bcrypt.hash(password, 10);
-        sets.push('password_hash = ?');
-        values.push(hash);
-      }
-      if (!sets.length) return res.status(400).json({ error: { code: 'VALIDATION', message: 'No valid fields' } });
-      values.push(req.params.id);
-      await query(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`, values);
-      res.json({ data: { id: req.params.id } });
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  app.delete('/api/v1/users/:id', authRequired, async (req, res, next) => {
-    try {
-      await query('DELETE FROM users WHERE id = ?', [req.params.id]);
-      res.json({ data: { id: req.params.id } });
-    } catch (err) {
-      next(err);
-    }
-  });
+  // User administration (list / create / edit / delete, roles, permissions and
+  // Concept Kitchen staff provisioning) now lives in users.ts — see
+  // registerUserRoutes in index.ts. The four routes that used to sit here knew
+  // nothing about a person's name, account status or CK link.
 
   // ────────────────────────────────────────────────────────────────────────
   // Lookup categories + lookups (generic enum master used by Vacancy/Listing

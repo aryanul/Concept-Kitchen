@@ -19,7 +19,8 @@ import { Button } from '../../components/ui/Button';
 type Company = { id: string; name: string };
 type Branch = { id: string; name: string; company_id: string | null };
 type Named = { id: string; name: string };
-type Designation = { id: string; name: string };
+type Division = { id: string; name: string; department_id: string | null };
+type Designation = { id: string; name: string; division_id: string | null };
 type Grade = { id: string; code: string; kind: string };
 type Shift = { id: string; code: string; name: string };
 type LookupOpt = { code: string; label: string };
@@ -45,7 +46,7 @@ export function EmployeeCreatePage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [departments, setDepartments] = useState<Named[]>([]);
-  const [divisions, setDivisions] = useState<Named[]>([]);
+  const [divisions, setDivisions] = useState<Division[]>([]);
   const [designations, setDesignations] = useState<Designation[]>([]);
   const [grades, setGrades] = useState<Grade[]>([]);
   const [shifts, setShifts] = useState<Shift[]>([]);
@@ -74,7 +75,7 @@ export function EmployeeCreatePage() {
       api.get<{ data: Company[] }>('/hiring/companies', { params: { pageSize: 1000 } }),
       api.get<{ data: Branch[] }>('/branches'),
       api.get<{ data: Named[] }>('/departments'),
-      api.get<{ data: Named[] }>('/divisions'),
+      api.get<{ data: Division[] }>('/divisions'),
       api.get<{ data: Designation[] }>('/designations'),
       api.get<{ data: Grade[] }>('/salary-grades'),
       api.get<{ data: Shift[] }>('/shifts', { params: { pageSize: 1000 } }),
@@ -95,10 +96,20 @@ export function EmployeeCreatePage() {
     }).catch(() => toast.error('Failed to load reference data.'));
   }, []);
 
-  // Company narrows the branch list (a branch belongs to one company).
+  // Each level is scoped to its parent and locked until that parent is chosen —
+  // offering every branch in the group before a company is picked is how a
+  // branch from the wrong company ends up saved against an employee.
   const visibleBranches = useMemo(
-    () => (f.companyId ? branches.filter((b) => b.company_id === f.companyId) : branches),
+    () => branches.filter((b) => b.company_id === f.companyId),
     [branches, f.companyId],
+  );
+  const visibleDivisions = useMemo(
+    () => divisions.filter((d) => d.department_id === f.departmentId),
+    [divisions, f.departmentId],
+  );
+  const visibleDesignations = useMemo(
+    () => designations.filter((d) => d.division_id === f.divisionId),
+    [designations, f.divisionId],
   );
 
   const gross = Number(salary.grossMonthly) || 0;
@@ -226,23 +237,32 @@ export function EmployeeCreatePage() {
           </Select>
         </Field>
         <Field label="Branch *">
-          <Select value={f.branchId} onChange={(v) => set('branchId', v)} placeholder="Select branch">
+          <Select value={f.branchId} onChange={(v) => set('branchId', v)} placeholder="Select branch"
+            disabled={!f.companyId} lockedHint="Select a company first">
             {visibleBranches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
           </Select>
         </Field>
-        <Field label="Division">
-          <Select value={f.divisionId} onChange={(v) => set('divisionId', v)} placeholder="Select division">
-            {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </Select>
-        </Field>
+        {/* Department → Division → Designation, in hierarchy order: Division used
+            to sit above Department, which made the dependency impossible to see. */}
         <Field label="Department *">
-          <Select value={f.departmentId} onChange={(v) => set('departmentId', v)} placeholder="Select department">
+          <Select value={f.departmentId}
+            onChange={(v) => { set('departmentId', v); set('divisionId', ''); set('designation', ''); }}
+            placeholder="Select department">
             {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </Select>
         </Field>
+        <Field label="Division">
+          <Select value={f.divisionId}
+            onChange={(v) => { set('divisionId', v); set('designation', ''); }}
+            placeholder="Select division"
+            disabled={!f.departmentId} lockedHint="Select a department first">
+            {visibleDivisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </Select>
+        </Field>
         <Field label="Designation *">
-          <Select value={f.designation} onChange={(v) => set('designation', v)} placeholder="Select designation">
-            {designations.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
+          <Select value={f.designation} onChange={(v) => set('designation', v)} placeholder="Select designation"
+            disabled={!f.divisionId} lockedHint="Select a division first">
+            {visibleDesignations.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
           </Select>
         </Field>
         <Field label="Employment Type">
@@ -383,12 +403,26 @@ function Rupees({ value, onChange }: { value: string; onChange: (v: string) => v
   );
 }
 
-function Select({ value, onChange, placeholder, children }: { value: string; onChange: (v: string) => void; placeholder?: string; children: ReactNode }) {
+function Select({ value, onChange, placeholder, children, disabled, lockedHint }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; children: ReactNode;
+  /** Locked because the level above it has not been chosen yet. */
+  disabled?: boolean;
+  lockedHint?: string;
+}) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)}
-      style={{ ...inp, color: value ? 'var(--ck-ink)' : 'var(--ck-muted)' }}>
-      {placeholder && <option value="">{placeholder}</option>}
-      {children}
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      disabled={disabled}
+      title={disabled ? lockedHint : undefined}
+      style={{
+        ...inp,
+        color: value ? 'var(--ck-ink)' : 'var(--ck-muted)',
+        ...(disabled ? { background: 'var(--ck-line-soft)', cursor: 'not-allowed' } : null),
+      }}
+    >
+      {(placeholder || disabled) && <option value="">{disabled ? lockedHint : placeholder}</option>}
+      {!disabled && children}
     </select>
   );
 }

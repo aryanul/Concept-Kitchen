@@ -5,6 +5,8 @@ export type Role = 'HR_ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'FINANCE';
 
 export type AuthUser = {
   id: string;
+  /** Display name. Null on accounts created before names existed. */
+  name?: string | null;
   email: string;
   role: Role;
   employeeId: string | null;

@@ -8,7 +8,7 @@ import type { StepData } from '../../routes/hiring/JobProfileForm';
 
 type JpLocationRow = {
   id: string; branch_id: string; location_id: string | null; positions: number;
-  branch_name: string; location_name: string | null;
+  branch_name: string; location_name: string | null; company_name: string | null;
 };
 type JpShiftRow = {
   id: string; shift_id: string; shift_code: string; shift_name: string;
@@ -94,7 +94,10 @@ export function JobProfileDrawer({ profileId, onClose, onEdit }: Props) {
     ? profile.shifts.map((s) => `${s.shift_name} (${s.start_time}–${s.end_time})`).join(', ')
     : '—';
   const locationsLabel = profile?.locations && profile.locations.length > 0
-    ? profile.locations.map((l) => `${l.branch_name}${l.location_name ? ` / ${l.location_name}` : ''} (${l.positions} pos)`).join(' · ')
+    ? profile.locations
+        .map((l) => [l.company_name, l.branch_name, l.location_name]
+          .filter(Boolean).join(' / ') + ` (${l.positions} pos)`)
+        .join(' · ')
     : (profile?.location_applicable || '—');
   const desigName = (id: string | undefined) => id ? (designations.find((d) => d.id === id)?.name ?? '—') : '—';
 

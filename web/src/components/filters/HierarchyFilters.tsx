@@ -10,8 +10,10 @@
 //   Company  → Branch    → Location
 //   Department → Division → Designation
 // Picking a parent narrows its children and clears any now-invalid child value.
-// Leaving a parent blank shows every option for the child, so the bar still works
-// as a flat set of filters if you only care about one level.
+// A child whose parent is still blank is *locked*, not merely unfiltered: offering
+// every designation in the company before a division is chosen invites filter
+// combinations that contradict each other and return nothing. The locked select
+// reads "All", so the unfiltered state is still legible at a glance.
 
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../lib/api';
@@ -51,30 +53,52 @@ const EMPTY_MASTERS: Masters = {
   departments: [], divisions: [], designations: [],
 };
 
-// Fetched once per page mount and shared by every select in the bar. These are
-// small reference tables, so loading them whole beats a round-trip per keystroke.
+// These six reference tables change a few times a month at most, but every page
+// that mounted this hook re-fetched all six — six round-trips of "Loading…" on
+// each navigation. Cache them for the session instead: the first page to ask
+// pays, everyone after it renders from memory. `masterCache` holds the promise
+// rather than the value so two pages mounting at once share one set of requests.
+let masterCache: Promise<Masters> | null = null;
+let masterValue: Masters | null = null;
+
+function loadMasters(): Promise<Masters> {
+  if (masterCache) return masterCache;
+  const get = <T,>(url: string, params?: Record<string, unknown>) =>
+    api.get<{ data: T[] }>(url, { params }).then((r) => r.data.data).catch(() => [] as T[]);
+
+  masterCache = Promise.all([
+    // hiring/companies is paginated and defaults to 20 — ask for the full set so
+    // the dropdown isn't silently truncated.
+    get<Company>('/hiring/companies', { pageSize: 100 }),
+    get<Branch>('/branches'),
+    get<LocationRow>('/locations'),
+    get<Department>('/departments'),
+    get<Division>('/divisions'),
+    get<Designation>('/designations'),
+  ]).then(([companies, branches, locations, departments, divisions, designations]) => {
+    masterValue = { companies, branches, locations, departments, divisions, designations };
+    return masterValue;
+  });
+  return masterCache;
+}
+
+/**
+ * Forget the cached masters — call after editing a branch/division/designation
+ * so the next screen picks the change up instead of a session-old snapshot.
+ */
+export function invalidateHierarchyMasters(): void {
+  masterCache = null;
+  masterValue = null;
+}
+
 export function useHierarchyMasters(): Masters {
-  const [masters, setMasters] = useState<Masters>(EMPTY_MASTERS);
+  // Seeded synchronously from the cache, so a revisit paints filled dropdowns
+  // on the very first render rather than flashing empty selects.
+  const [masters, setMasters] = useState<Masters>(() => masterValue ?? EMPTY_MASTERS);
 
   useEffect(() => {
     let cancelled = false;
-    const get = <T,>(url: string, params?: Record<string, unknown>) =>
-      api.get<{ data: T[] }>(url, { params }).then((r) => r.data.data).catch(() => [] as T[]);
-
-    Promise.all([
-      // hiring/companies is paginated and defaults to 20 — ask for the full set so
-      // the dropdown isn't silently truncated.
-      get<Company>('/hiring/companies', { pageSize: 100 }),
-      get<Branch>('/branches'),
-      get<LocationRow>('/locations'),
-      get<Department>('/departments'),
-      get<Division>('/divisions'),
-      get<Designation>('/designations'),
-    ]).then(([companies, branches, locations, departments, divisions, designations]) => {
-      if (cancelled) return;
-      setMasters({ companies, branches, locations, departments, divisions, designations });
-    });
-
+    loadMasters().then((m) => { if (!cancelled) setMasters(m); });
     return () => { cancelled = true; };
   }, []);
 
@@ -95,33 +119,20 @@ const ALL_FIELDS: HierarchyField[] = [
 
 export function HierarchyFilters({ value, onChange, masters, fields = ALL_FIELDS }: Props) {
   const branches = useMemo(
-    () => (value.companyId ? masters.branches.filter((b) => b.company_id === value.companyId) : masters.branches),
+    () => (value.companyId ? masters.branches.filter((b) => b.company_id === value.companyId) : []),
     [masters.branches, value.companyId]
   );
   const locations = useMemo(
-    () => {
-      if (value.branchId) return masters.locations.filter((l) => l.branch_id === value.branchId);
-      // No branch chosen but a company is — still scope locations to that company's
-      // branches, otherwise the list contradicts the company filter above it.
-      if (value.companyId) {
-        const ids = new Set(branches.map((b) => b.id));
-        return masters.locations.filter((l) => l.branch_id && ids.has(l.branch_id));
-      }
-      return masters.locations;
-    },
-    [masters.locations, branches, value.branchId, value.companyId]
+    () => (value.branchId ? masters.locations.filter((l) => l.branch_id === value.branchId) : []),
+    [masters.locations, value.branchId]
   );
   const divisions = useMemo(
-    () => (value.departmentId ? masters.divisions.filter((d) => d.department_id === value.departmentId) : masters.divisions),
+    () => (value.departmentId ? masters.divisions.filter((d) => d.department_id === value.departmentId) : []),
     [masters.divisions, value.departmentId]
   );
   const designations = useMemo(
-    () => masters.designations.filter((d) => {
-      if (value.divisionId) return d.division_id === value.divisionId;
-      if (value.departmentId) return d.department_id === value.departmentId;
-      return true;
-    }),
-    [masters.designations, value.divisionId, value.departmentId]
+    () => (value.divisionId ? masters.designations.filter((d) => d.division_id === value.divisionId) : []),
+    [masters.designations, value.divisionId]
   );
 
   // Changing a parent invalidates its descendants — clear them in the same update
@@ -145,11 +156,15 @@ export function HierarchyFilters({ value, onChange, masters, fields = ALL_FIELDS
     ),
     branchId: (
       <FilterSelect key="branch" value={value.branchId} onChange={(v) => set({ branchId: v })}
-        options={opts(branches)} placeholder="All Branches" minWidth={160} />
+        options={opts(branches)} placeholder="All Branches" minWidth={160}
+        disabled={!value.companyId} disabledPlaceholder="All"
+        title={!value.companyId ? 'Select a Company first' : undefined} />
     ),
     locationId: (
       <FilterSelect key="location" value={value.locationId} onChange={(v) => set({ locationId: v })}
-        options={opts(locations)} placeholder="All Locations" minWidth={160} />
+        options={opts(locations)} placeholder="All Locations" minWidth={160}
+        disabled={!value.branchId} disabledPlaceholder="All"
+        title={!value.branchId ? 'Select a Branch first' : undefined} />
     ),
     departmentId: (
       <FilterSelect key="department" value={value.departmentId} onChange={(v) => set({ departmentId: v })}
@@ -157,11 +172,15 @@ export function HierarchyFilters({ value, onChange, masters, fields = ALL_FIELDS
     ),
     divisionId: (
       <FilterSelect key="division" value={value.divisionId} onChange={(v) => set({ divisionId: v })}
-        options={opts(divisions)} placeholder="All Divisions" minWidth={160} />
+        options={opts(divisions)} placeholder="All Divisions" minWidth={160}
+        disabled={!value.departmentId} disabledPlaceholder="All"
+        title={!value.departmentId ? 'Select a Department first' : undefined} />
     ),
     designationId: (
       <FilterSelect key="designation" value={value.designationId} onChange={(v) => set({ designationId: v })}
-        options={opts(designations)} placeholder="All Designations" minWidth={180} />
+        options={opts(designations)} placeholder="All Designations" minWidth={180}
+        disabled={!value.divisionId} disabledPlaceholder="All"
+        title={!value.divisionId ? 'Select a Division first' : undefined} />
     ),
   };
 

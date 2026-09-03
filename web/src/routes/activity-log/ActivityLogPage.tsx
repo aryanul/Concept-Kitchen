@@ -6,6 +6,7 @@ import {
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { api } from '../../lib/api';
+import { formatRelativeTime } from '../../lib/format';
 
 type ActivityEntry = {
   id: string;
@@ -50,12 +51,28 @@ const RESOURCE_LABELS: Record<string, string> = {
   'onboarding/assets': 'Asset', 'onboarding/presentations': 'Presentation',
 };
 
-const ALL_ACTIONS = [
-  'login', 'logout',
-  'create', 'update', 'delete', 'approve', 'activate', 'archive',
-  'exit', 'decide', 'run', 'disburse', 'settle', 'close', 'push_to_payroll',
-];
-const ALL_RESOURCES = Object.keys(RESOURCE_LABELS);
+/**
+ * Turn a raw audit value into something readable: `hiring/interview-templates`
+ * → "Hiring · Interview Templates", `push_to_payroll` → "Push To Payroll".
+ * Used for anything the label map above doesn't name explicitly, so a newly
+ * audited resource is legible without a code change.
+ */
+function humanise(value: string): string {
+  return value
+    .split('/')
+    .map((part) =>
+      part
+        .split(/[-_]/)
+        .filter(Boolean)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ')
+    )
+    .join(' · ');
+}
+
+function resourceLabel(resource: string): string {
+  return RESOURCE_LABELS[resource] ?? humanise(resource);
+}
 
 const ACTION_COLORS: Record<string, string> = {
   create: 'oklch(0.45 0.13 145)', update: 'oklch(0.45 0.13 250)', delete: 'oklch(0.45 0.13 20)',
@@ -84,15 +101,6 @@ function formatAbsolute(isoStr: string): string {
   });
 }
 
-function formatRelativeTime(isoStr: string): string {
-  const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
-  if (diff < 5)    return 'just now';
-  if (diff < 60)   return `${diff}s ago`;
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
-
 export function ActivityLogPage() {
   const [logs, setLogs] = useState<ActivityEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -109,6 +117,17 @@ export function ActivityLogPage() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
   const limit = 25;
+
+  // Filter options come from the log itself rather than a hard-coded list, so
+  // every audited action and module is filterable the moment it first appears.
+  const [facets, setFacets] = useState<{ actions: string[]; resources: string[] }>({
+    actions: [], resources: [],
+  });
+  useEffect(() => {
+    api.get<{ data: { actions: string[]; resources: string[] } }>('/activity-logs/facets')
+      .then((r) => setFacets(r.data.data))
+      .catch(() => { /* filters just stay empty; the table still works */ });
+  }, []);
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -268,8 +287,8 @@ export function ActivityLogPage() {
               style={selectStyle}
             >
               <option value="">All actions</option>
-              {ALL_ACTIONS.map((a) => (
-                <option key={a} value={a}>{a.charAt(0).toUpperCase() + a.slice(1)}</option>
+              {facets.actions.map((a) => (
+                <option key={a} value={a}>{humanise(a)}</option>
               ))}
             </select>
           </div>
@@ -285,8 +304,8 @@ export function ActivityLogPage() {
               style={selectStyle}
             >
               <option value="">All modules</option>
-              {ALL_RESOURCES.map((r) => (
-                <option key={r} value={r}>{RESOURCE_LABELS[r]}</option>
+              {facets.resources.map((r) => (
+                <option key={r} value={r}>{resourceLabel(r)}</option>
               ))}
             </select>
           </div>
@@ -412,7 +431,7 @@ export function ActivityLogPage() {
                 logs.map((entry, i) => {
                   const actionColor = ACTION_COLORS[entry.action] ?? 'var(--ck-muted)';
                   const actionBg    = ACTION_BG[entry.action]    ?? 'var(--ck-line-soft)';
-                  const resource    = RESOURCE_LABELS[entry.resource] ?? entry.resource;
+                  const resource    = resourceLabel(entry.resource);
                   const actor       = entry.actor_name ?? entry.actor_email ?? 'System';
                   const isEven      = i % 2 === 1;
                   return (

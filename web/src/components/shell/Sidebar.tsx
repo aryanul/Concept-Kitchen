@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Home, Briefcase, Users, LogOut, Settings, Trash2 as Trash2Icon,
@@ -6,14 +6,20 @@ import {
   Clock, CalendarDays, ClipboardCheck, Wallet, FileText, Banknote,
   TrendingUp, CalendarClock, Plane, Gift,
   Building2, LocateFixed, ClipboardList, Sparkles, BookOpen, Tag,
-  Presentation as PresentationIcon, MapPin, Activity, RefreshCw,
+  Presentation as PresentationIcon, MapPin, Activity, RefreshCw, ShieldCheck,
   type LucideIcon,
 } from 'lucide-react';
 import { Avatar } from '../ui/Avatar';
 import { BrandWordmark } from '../ui/BrandMark';
 import { useAuth } from '../../stores/auth';
+import { usePermissions } from '../../lib/permissions';
 
-type Leaf  = { id: string; path: string; label: string; icon?: LucideIcon };
+/**
+ * `permission` is the key the destination screen needs. The server guards every
+ * route regardless — this only stops the sidebar offering links that would come
+ * back 403. A leaf with no key is visible to anyone signed in.
+ */
+type Leaf  = { id: string; path: string; label: string; icon?: LucideIcon; permission?: string };
 type Group = { id: string; label: string; icon: LucideIcon; defaultOpen?: boolean; children: Leaf[] };
 type Item  = (Leaf & { icon: LucideIcon }) | Group;
 
@@ -24,52 +30,63 @@ type SidebarProps = {
 
 const NAV: Item[] = [
   { id: 'dashboard',    path: '/',             label: 'Dashboard',    icon: Home },
-  { id: 'activity-log', path: '/activity-log', label: 'Activity Log', icon: Activity },
+  { id: 'activity-log', path: '/activity-log', label: 'Activity Log', icon: Activity,
+    permission: 'admin.activity-log.view' },
   {
     id: 'hiring', label: 'Hiring', icon: Briefcase, children: [
-      { id: 'job-profile', path: '/job-profile', label: 'Job Profile' },
-      { id: 'vacancy',     path: '/vacancy',     label: 'Vacancy & Job Listing' },
-      { id: 'onboarding',  path: '/onboarding',  label: 'Induction & Onboarding' },
+      { id: 'job-profile', path: '/job-profile', label: 'Job Profile', permission: 'hiring.job-profiles.view' },
+      { id: 'vacancy',     path: '/vacancy',     label: 'Vacancy & Job Listing', permission: 'hiring.vacancies.view' },
+      { id: 'onboarding',  path: '/onboarding',  label: 'Induction & Onboarding', permission: 'hiring.onboarding.view' },
     ],
   },
   {
     id: 'employment', label: 'Employment', icon: Users, children: [
-      { id: 'employees',     path: '/employees',     label: 'Employee Master',          icon: Users },
-      { id: 'shifts',        path: '/shifts',        label: 'Duty Shifts & Rosters',    icon: Clock },
-      { id: 'holidays',      path: '/holidays',      label: 'Holidays',                 icon: CalendarDays },
-      { id: 'attendance',    path: '/attendance',    label: 'Attendance & Exceptions',  icon: ClipboardCheck },
-      { id: 'salary-master', path: '/salary-master', label: 'Salary Struc. & Compo.',   icon: Wallet },
+      { id: 'employees',     path: '/employees',     label: 'Employee Master',          icon: Users, permission: 'employment.employees.view' },
+      { id: 'shifts',        path: '/shifts',        label: 'Duty Shifts & Rosters',    icon: Clock, permission: 'masters.shifts.view' },
+      { id: 'holidays',      path: '/holidays',      label: 'Holidays',                 icon: CalendarDays, permission: 'masters.holidays.view' },
+      { id: 'attendance',    path: '/attendance',    label: 'Attendance & Exceptions',  icon: ClipboardCheck, permission: 'employment.attendance.view' },
+      { id: 'salary-master', path: '/salary-master', label: 'Salary Struc. & Compo.',   icon: Wallet, permission: 'employment.compensation.view' },
       { id: 'compensations', path: '/compensations', label: 'Compensation Master',      icon: Wallet },
-      { id: 'payroll',       path: '/payroll',       label: 'Payroll Runs & Pay-slips', icon: FileText },
-      { id: 'loans',         path: '/loans',         label: 'Advances & Loans',         icon: Banknote },
-      { id: 'increments',    path: '/increments',    label: 'Increments & Appraisals',  icon: TrendingUp },
-      { id: 'leaves',        path: '/leaves',        label: 'Leaves & Approvals',       icon: CalendarClock },
-      { id: 'tours',         path: '/tours',         label: 'Tour & Travel',            icon: Plane },
-      { id: 'incentives',    path: '/incentives',    label: 'Incentives & Perks',       icon: Gift },
+      { id: 'payroll',       path: '/payroll',       label: 'Payroll Runs & Pay-slips', icon: FileText, permission: 'employment.payroll.view' },
+      { id: 'loans',         path: '/loans',         label: 'Advances & Loans',         icon: Banknote, permission: 'employment.loans.view' },
+      { id: 'increments',    path: '/increments',    label: 'Increments & Appraisals',  icon: TrendingUp, permission: 'employment.increments.view' },
+      { id: 'leaves',        path: '/leaves',        label: 'Leaves & Approvals',       icon: CalendarClock, permission: 'employment.leaves.view' },
+      { id: 'tours',         path: '/tours',         label: 'Tour & Travel',            icon: Plane, permission: 'employment.tours.view' },
+      { id: 'incentives',    path: '/incentives',    label: 'Incentives & Perks',       icon: Gift, permission: 'employment.incentives.view' },
     ],
   },
-  { id: 'relieving', path: '/exit-clearance', label: 'Relieving', icon: LogOut },
+  { id: 'relieving', path: '/exit-clearance', label: 'Relieving', icon: LogOut, permission: 'relieving.exit.view' },
   {
     id: 'settings', label: 'Settings', icon: Settings, children: [
-      { id: 'settings-sync', path: '/settings', label: 'Master Data Sync', icon: RefreshCw },
-      { id: 'settings-documents', path: '/settings/documents', label: 'Document Templates', icon: FileText },
-      { id: 'masters-companies', path: '/masters/companies', label: 'Company Master', icon: Building2 },
-      { id: 'masters-branches', path: '/masters/branches', label: 'Branch Master', icon: Building2 },
-      { id: 'masters-locations', path: '/masters/locations', label: 'Location Master', icon: LocateFixed },
-      { id: 'masters-ddd', path: '/masters/ddd', label: 'DDD Master', icon: ClipboardList },
-      { id: 'masters-skills', path: '/masters/skills', label: 'Skill Master', icon: Sparkles },
-      { id: 'masters-shifts', path: '/masters/shifts', label: 'Shift Master', icon: Clock },
-      { id: 'masters-salary-grades', path: '/masters/salary-grades', label: 'Salary Grades', icon: Wallet },
-      { id: 'masters-holidays', path: '/masters/holidays', label: 'Holiday Master', icon: CalendarDays },
-      { id: 'masters-attendance-rules', path: '/masters/attendance-rules', label: 'Attendance Rules', icon: ClipboardCheck },
-      { id: 'masters-training-modules', path: '/masters/training-modules', label: 'Training Modules', icon: BookOpen },
-      { id: 'masters-induction-templates', path: '/masters/induction-templates', label: 'Induction Templates', icon: PresentationIcon },
-      { id: 'masters-onboarding-templates', path: '/masters/onboarding-templates', label: 'Onboarding Templates', icon: MapPin },
-      { id: 'masters-tags', path: '/masters/tags', label: 'Tag Master', icon: Tag },
-      { id: 'masters-giveaways', path: '/masters/giveaways', label: 'Give Aways', icon: Gift },
+      { id: 'settings-sync', path: '/settings', label: 'Master Data Sync', icon: RefreshCw, permission: 'admin.ck-sync.view' },
+      { id: 'settings-documents', path: '/settings/documents', label: 'Document Templates', icon: FileText, permission: 'masters.training.view' },
+      { id: 'masters-companies', path: '/masters/companies', label: 'Company Master', icon: Building2, permission: 'masters.org.view' },
+      { id: 'masters-branches', path: '/masters/branches', label: 'Branch Master', icon: Building2, permission: 'masters.org.view' },
+      { id: 'masters-locations', path: '/masters/locations', label: 'Location Master', icon: LocateFixed, permission: 'masters.org.view' },
+      { id: 'masters-ddd', path: '/masters/ddd', label: 'DDD Master', icon: ClipboardList, permission: 'masters.ddd.view' },
+      { id: 'masters-skills', path: '/masters/skills', label: 'Skill Master', icon: Sparkles, permission: 'masters.skills.view' },
+      { id: 'masters-shifts', path: '/masters/shifts', label: 'Shift Master', icon: Clock, permission: 'masters.shifts.view' },
+      { id: 'masters-salary-grades', path: '/masters/salary-grades', label: 'Salary Grades', icon: Wallet, permission: 'employment.compensation.view' },
+      { id: 'masters-holidays', path: '/masters/holidays', label: 'Holiday Master', icon: CalendarDays, permission: 'masters.holidays.view' },
+      { id: 'masters-attendance-rules', path: '/masters/attendance-rules', label: 'Attendance Rules', icon: ClipboardCheck, permission: 'employment.attendance.view' },
+      { id: 'masters-training-modules', path: '/masters/training-modules', label: 'Training Modules', icon: BookOpen, permission: 'masters.training.view' },
+      { id: 'masters-induction-templates', path: '/masters/induction-templates', label: 'Induction Templates', icon: PresentationIcon, permission: 'masters.training.view' },
+      { id: 'masters-onboarding-templates', path: '/masters/onboarding-templates', label: 'Onboarding Templates', icon: MapPin, permission: 'masters.training.view' },
+      { id: 'masters-interview-templates', path: '/masters/interview-templates', label: 'Interview Templates', icon: ClipboardList, permission: 'hiring.masters.view' },
+      { id: 'masters-tags', path: '/masters/tags', label: 'Tag Master', icon: Tag, permission: 'masters.lookups.view' },
+      { id: 'masters-giveaways', path: '/masters/giveaways', label: 'Give Aways', icon: Gift, permission: 'hiring.masters.view' },
     ],
   },
-  { id: 'dev-wipe', path: '/dev/wipe',  label: 'DB Wipe (Dev)', icon: Trash2Icon },
+  {
+    id: 'administration', label: 'Administration', icon: ShieldCheck, children: [
+      { id: 'admin-users', path: '/admin/users', label: 'Users', icon: Users,
+        permission: 'admin.users.view' },
+      { id: 'admin-permissions', path: '/admin/permissions', label: 'Roles & Permissions', icon: ShieldCheck,
+        permission: 'admin.permissions.view' },
+    ],
+  },
+  { id: 'dev-wipe', path: '/dev/wipe',  label: 'DB Wipe (Dev)', icon: Trash2Icon,
+    permission: 'admin.dev.manage' },
 ];
 
 const isGroup = (i: Item): i is Group => 'children' in i;
@@ -77,6 +94,23 @@ const isGroup = (i: Item): i is Group => 'children' in i;
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const user = useAuth((s) => s.user);
   const location = useLocation();
+  const { can, loaded } = usePermissions();
+
+  // Only what this person can actually open. A group whose children are all
+  // hidden disappears with them rather than sitting there empty.
+  //
+  // While the answer is still loading, show everything: blanking the sidebar for
+  // a moment on each sign-in looks like being locked out, and the server is the
+  // thing that actually refuses a request either way.
+  const nav = useMemo<Item[]>(() => {
+    if (!loaded) return NAV;
+    const allowed = (leaf: Leaf) => !leaf.permission || can(leaf.permission);
+    return NAV.flatMap<Item>((item) => {
+      if (!isGroup(item)) return allowed(item) ? [item] : [];
+      const children = item.children.filter(allowed);
+      return children.length ? [{ ...item, children }] : [];
+    });
+  }, [loaded, can]);
 
   // Auto-expand the group that owns the current route; collapse the rest
   const [open, setOpen] = useState<Record<string, boolean>>(() => {
@@ -101,7 +135,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       </div>
 
       <nav style={{ padding: '0 10px 16px', flex: 1, overflowY: 'auto' }}>
-        {NAV.map((item) => (
+        {nav.map((item) => (
           <div key={item.id} style={{ marginBottom: 2 }}>
             {isGroup(item) ? (
               <>

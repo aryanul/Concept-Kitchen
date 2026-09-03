@@ -256,6 +256,18 @@ export function JobProfileForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.designation]);
 
+  // Step 2's Role and Team restate what Step 1 already knows — the designation
+  // and the division. Making the user retype them was busywork and let the two
+  // steps disagree, so carry them across. Only fills blanks: anything the user
+  // has typed is left alone.
+  useEffect(() => {
+    const patch: Partial<StepData> = {};
+    if (data.designation && !data.shortDescRole.trim()) patch.shortDescRole = data.designation;
+    if (data.division && !data.shortDescTeam.trim()) patch.shortDescTeam = data.division;
+    if (Object.keys(patch).length) upd(patch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.designation, data.division]);
+
   return (
     <div style={{ display: 'flex', height: '100%', minHeight: 600 }}>
       {/* Left nav */}
@@ -312,7 +324,7 @@ export function JobProfileForm({
           {activeStep === 6 && <Step6 data={data} upd={upd} />}
           {activeStep === 7 && <StepInduction data={data} upd={upd} />}
           {activeStep === 8 && <StepOnboarding data={data} upd={upd} />}
-          {activeStep === 9 && <Step7 data={data} upd={upd} allDesignations={allDesignations} />}
+          {activeStep === 9 && <Step7 data={data} upd={upd} depts={depts} divisions={divisions} allDesignations={allDesignations} />}
           {activeStep === 10 && <Step8 data={data} upd={upd} />}
           {activeStep === 11 && <Step9 editId={editId} />}
           {activeStep === 12 && <Step10 data={data} upd={upd} />}
@@ -489,12 +501,26 @@ function ReadOnlyField({ value }: { value: string }) {
 // ─── Step 2 — Job Description ─────────────────────────────────────────────────
 function Step2({ data, upd, divisions, allDesignations }: { data: StepData; upd: (p: Partial<StepData>) => void; divisions: Division[]; allDesignations: DesignationOpt[] }) {
   const comboStyle: React.CSSProperties = { ...inp, border: 'none', background: 'transparent', color: 'var(--ck-ink)' };
+
+  // Suggestions follow the department/division chosen in Step 1 — offering every
+  // designation in the company here contradicts the Basic Job Information above.
+  // Falls back to the full list while Step 1 is still blank.
+  const teamOptions = data.departmentId
+    ? divisions.filter((d) => d.department_id === data.departmentId)
+    : divisions;
+  const roleOptions = (() => {
+    const divisionId = divisions.find((d) => d.name === data.division)?.id;
+    if (divisionId) return allDesignations.filter((d) => d.division_id === divisionId);
+    if (data.departmentId) return allDesignations.filter((d) => d.department_id === data.departmentId);
+    return allDesignations;
+  })();
+
   return (
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
       <SectionTitle>Short Description</SectionTitle>
       <DescTable rows={[
-        ['Role',      <Combobox key="role" value={data.shortDescRole} onChange={(v) => upd({ shortDescRole: v })} options={allDesignations.map((d) => d.name)} placeholder="Type or pick a role…" style={comboStyle} />],
-        ['Team',      <Combobox key="team" value={data.shortDescTeam} onChange={(v) => upd({ shortDescTeam: v })} options={divisions.map((d) => d.name)} placeholder="Type or pick a team…" style={comboStyle} />],
+        ['Role',      <Combobox key="role" value={data.shortDescRole} onChange={(v) => upd({ shortDescRole: v })} options={roleOptions.map((d) => d.name)} placeholder="Type or pick a role…" style={comboStyle} />],
+        ['Team',      <Combobox key="team" value={data.shortDescTeam} onChange={(v) => upd({ shortDescTeam: v })} options={teamOptions.map((d) => d.name)} placeholder="Type or pick a team…" style={comboStyle} />],
         ['Key Focus', <SkillCell key="focus" values={data.shortDescFocus} onChange={(v) => upd({ shortDescFocus: v })} category="Hard Skills" extraCategories={['Department Functions']} label="Key Focus" />],
       ]} />
 
@@ -906,24 +932,80 @@ function StepOnboarding({ data, upd }: { data: StepData; upd: (p: Partial<StepDa
   );
 }
 
+/** One rung of the career-path preview: the role, plus where it sits. */
+function PathCard({
+  name, context, caption, current = false, compact = false,
+}: {
+  name: string; context: string; caption?: string; current?: boolean; compact?: boolean;
+}) {
+  return (
+    <span style={{
+      display: 'inline-flex', flexDirection: 'column', gap: 2,
+      padding: compact ? '4px 10px' : '7px 14px', borderRadius: 8,
+      background: current ? '#222' : 'var(--ck-line-soft)',
+      color: current ? '#fff' : 'var(--ck-ink-soft)',
+      border: current ? 'none' : '1px solid var(--ck-line)',
+    }}>
+      <span style={{ fontWeight: 600, fontSize: compact ? 12 : 13 }}>{name}</span>
+      {(context || caption) && (
+        <span style={{ fontSize: 10.5, opacity: current ? 0.75 : 1, color: current ? '#fff' : 'var(--ck-muted)' }}>
+          {[caption, context].filter(Boolean).join(' — ')}
+        </span>
+      )}
+    </span>
+  );
+}
+
 // ─── Step 7 — Career Path (Hierarchy Master) ─────────────────────────────────
 function Step7({
   data,
   upd,
+  depts,
+  divisions,
   allDesignations,
 }: {
   data: StepData;
   upd: (p: Partial<StepData>) => void;
+  depts: Dept[];
+  divisions: Division[];
   allDesignations: DesignationOpt[];
 }) {
   const [lateralPickerOpen, setLateralPickerOpen] = useState(false);
-  const designationName = (id: string) => allDesignations.find((d) => d.id === id)?.name ?? '—';
 
-  // Filter out the current JP's own designation from the options (can't promote to yourself)
-  const optionsExcludingSelf = allDesignations.filter((d) => d.id !== data.designationId);
+  // Narrowing the role lists by Department → Division. The Designation Master
+  // runs to hundreds of rows across the group, so an unfiltered dropdown made
+  // finding the right promotion role impractical. Seeded from the profile's own
+  // department/division, which is the overwhelmingly common case.
+  const ownDivisionId = divisions.find((d) => d.name === data.division)?.id ?? '';
+  const [filterDept, setFilterDept] = useState(data.departmentId);
+  const [filterDivision, setFilterDivision] = useState(ownDivisionId);
+
+  const filterDivisions = filterDept
+    ? divisions.filter((d) => d.department_id === filterDept)
+    : [];
+
+  const byId = (id: string) => allDesignations.find((d) => d.id === id);
+  const designationName = (id: string) => byId(id)?.name ?? '—';
+
+  /** Department / Division caption for a designation, for the preview cards. */
+  const contextOf = (id: string) => {
+    const d = byId(id);
+    if (!d) return '';
+    const dept = depts.find((x) => x.id === d.department_id)?.name;
+    const div = divisions.find((x) => x.id === d.division_id)?.name;
+    return [dept, div].filter(Boolean).join(' · ');
+  };
+
+  // Can't be your own parent, promotion or lateral move.
+  const options = allDesignations.filter((d) => {
+    if (d.id === data.designationId) return false;
+    if (filterDivision) return d.division_id === filterDivision;
+    if (filterDept) return d.department_id === filterDept;
+    return true;
+  });
 
   const lateralSelected = data.careerLateralDesignationIds
-    .map((id) => allDesignations.find((d) => d.id === id))
+    .map((id) => byId(id))
     .filter(Boolean) as DesignationOpt[];
 
   return (
@@ -933,22 +1015,54 @@ function Step7({
         Configure how this role fits into the organisational hierarchy. All three fields draw from the Designation Master.
       </div>
 
+      {/* Narrows every role picker below. Division stays locked until a
+          department is chosen, matching the rest of the app. */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginBottom: 18 }}>
+        <FG label="Filter by Department">
+          <select
+            value={filterDept}
+            onChange={(e) => { setFilterDept(e.target.value); setFilterDivision(''); }}
+            style={inp}
+          >
+            <option value="">All Departments</option>
+            {depts.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </FG>
+        <FG label="Filter by Division">
+          <select
+            value={filterDivision}
+            onChange={(e) => setFilterDivision(e.target.value)}
+            disabled={!filterDept}
+            title={!filterDept ? 'Select a Department first' : undefined}
+            style={{ ...inp, ...(filterDept ? null : { background: 'var(--ck-line-soft)', cursor: 'not-allowed' }) }}
+          >
+            <option value="">All</option>
+            {filterDept && filterDivisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </FG>
+      </div>
+
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginBottom: 20 }}>
         <FG label="Parent Role">
           <select value={data.careerParentDesignationId} onChange={(e) => upd({ careerParentDesignationId: e.target.value })} style={inp}>
             <option value="">— Select —</option>
-            {optionsExcludingSelf.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            {options.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
           <span style={{ fontSize: 11, color: 'var(--ck-muted)', marginTop: 4 }}>Who this role reports up to.</span>
         </FG>
         <FG label="Next Promotion Role">
           <select value={data.careerNextPromotionDesignationId} onChange={(e) => upd({ careerNextPromotionDesignationId: e.target.value })} style={inp}>
             <option value="">— Select —</option>
-            {optionsExcludingSelf.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            {options.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
           <span style={{ fontSize: 11, color: 'var(--ck-muted)', marginTop: 4 }}>Standard upward career step.</span>
         </FG>
       </div>
+      {options.length === 0 && (filterDept || filterDivision) && (
+        <div style={{ marginBottom: 16, fontSize: 12, color: 'var(--ck-muted)' }}>
+          No other designations in this department / division — widen the filter above.
+        </div>
+      )}
 
       <FG label="Lateral Movement Options">
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
@@ -980,7 +1094,7 @@ function Step7({
       <DesignationMultiPicker
         open={lateralPickerOpen}
         onClose={() => setLateralPickerOpen(false)}
-        designations={optionsExcludingSelf}
+        designations={options}
         // Don't allow picking the parent / next-promotion as lateral too — that's confusing
         excludeIds={[data.careerParentDesignationId, data.careerNextPromotionDesignationId].filter(Boolean)}
         selectedIds={data.careerLateralDesignationIds}
@@ -992,28 +1106,47 @@ function Step7({
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--ck-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
             Preview
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', fontSize: 13 }}>
-            {data.careerParentDesignationId && (
-              <span style={{ padding: '6px 12px', background: 'var(--ck-line-soft)', borderRadius: 8, color: 'var(--ck-ink-soft)' }}>
-                {designationName(data.careerParentDesignationId)}
-              </span>
-            )}
-            <span style={{ color: 'var(--ck-muted)' }}>↓</span>
-            <span style={{ padding: '6px 12px', background: '#222', color: '#fff', borderRadius: 8, fontWeight: 600 }}>
-              {data.designation || 'This role'}
-            </span>
+          {/* Read bottom-up: seniority increases going up the ladder. The old
+              preview drew the promotion *below* this role, which said the
+              opposite of what it meant. Each card carries its department ·
+              division so a cross-division move is obvious at a glance. */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6, fontSize: 13 }}>
             {data.careerNextPromotionDesignationId && (
               <>
-                <span style={{ color: 'var(--ck-muted)' }}>↓</span>
-                <span style={{ padding: '6px 12px', background: 'var(--ck-line-soft)', borderRadius: 8, color: 'var(--ck-ink-soft)' }}>
-                  {designationName(data.careerNextPromotionDesignationId)}
-                </span>
+                <PathCard
+                  name={designationName(data.careerNextPromotionDesignationId)}
+                  context={contextOf(data.careerNextPromotionDesignationId)}
+                  caption="Next promotion"
+                />
+                <span style={{ color: 'var(--ck-muted)', paddingLeft: 14 }}>↑</span>
+              </>
+            )}
+            <PathCard
+              name={data.designation || 'This role'}
+              context={[
+                depts.find((d) => d.id === data.departmentId)?.name,
+                data.division,
+              ].filter(Boolean).join(' · ')}
+              caption="This role"
+              current
+            />
+            {data.careerParentDesignationId && (
+              <>
+                <span style={{ color: 'var(--ck-muted)', paddingLeft: 14 }}>↑</span>
+                <PathCard
+                  name={designationName(data.careerParentDesignationId)}
+                  context={contextOf(data.careerParentDesignationId)}
+                  caption="Reports to"
+                />
               </>
             )}
           </div>
           {lateralSelected.length > 0 && (
-            <div style={{ marginTop: 12, fontSize: 12, color: 'var(--ck-muted)' }}>
-              ↔ Lateral: {lateralSelected.map((d) => d.name).join(', ')}
+            <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: 'var(--ck-muted)' }}>↔ Lateral moves:</span>
+              {lateralSelected.map((d) => (
+                <PathCard key={d.id} name={d.name} context={contextOf(d.id)} compact />
+              ))}
             </div>
           )}
         </div>
@@ -1441,10 +1574,6 @@ type InterviewTemplate = { id: string; title: string; description: string | null
 function Step11({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => void }) {
   const [templates, setTemplates] = useState<InterviewTemplate[]>([]);
   const [loading, setLoading]     = useState(true);
-  const [addOpen, setAddOpen]     = useState(false);
-  const [newTitle, setNewTitle]   = useState('');
-  const [newDesc, setNewDesc]     = useState('');
-  const [saving, setSaving]       = useState(false);
   const [viewing, setViewing]     = useState<InterviewTemplate | null>(null);
 
   const fetchTemplates = () => {
@@ -1457,18 +1586,24 @@ function Step11({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => 
 
   useEffect(fetchTemplates, []);
 
-  const saveTemplate = async () => {
-    if (!newTitle.trim()) return;
-    setSaving(true);
-    try {
-      await api.post('/hiring/interview-templates', { title: newTitle.trim(), description: newDesc.trim() || undefined });
-      toast.success('Template added to master');
-      setNewTitle(''); setNewDesc(''); setAddOpen(false);
-      fetchTemplates();
-    } catch {
-      toast.error('Failed to add template');
-    } finally { setSaving(false); }
+  // Templates are reference data owned by the Interview Template master, so
+  // "+ Add Template" sends the user there rather than duplicating a cut-down
+  // create form here. Opened in a new tab deliberately: this Job Profile form
+  // holds unsaved state that navigating away would discard.
+  const openMaster = () => {
+    window.open('/masters/interview-templates?new=1', '_blank', 'noopener');
+    toast.info('Opened the Interview Template master in a new tab.', {
+      description: 'Add the template there, then come back — the list refreshes automatically.',
+    });
   };
+
+  // Pick the new template up when the user switches back from the master tab.
+  useEffect(() => {
+    const onFocus = () => fetchTemplates();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleMap = (id: string) => {
     const has = data.interviewTemplateIds.includes(id);
@@ -1481,18 +1616,19 @@ function Step11({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => 
     <div style={{ background: 'var(--ck-surface)', borderRadius: 10, padding: 24, border: '1px solid var(--ck-line)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <SectionTitle>Interview Templates</SectionTitle>
-        <Button size="sm" variant="primary" icon={Plus} onClick={() => setAddOpen(true)}>+ Add Template</Button>
+        <Button size="sm" variant="primary" icon={Plus} onClick={openMaster}>+ Add Template</Button>
       </div>
 
       <div style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginBottom: 16 }}>
         Tick the templates that should be used during interviews for this Job Profile. Multiple templates can be combined (e.g. one generic + one specialised).
+        Templates themselves are managed in <strong>Settings → Interview Templates</strong> (the Interview Template master).
       </div>
 
       {loading ? (
         <div style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)' }}>Loading templates…</div>
       ) : templates.length === 0 ? (
         <div style={{ padding: 32, textAlign: 'center', color: 'var(--ck-muted)', fontSize: 13 }}>
-          No templates in the master yet. Click "+ Add Template" to create one.
+          No templates in the master yet. Click "+ Add Template" to create one in the Interview Template master.
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 14 }}>
@@ -1538,23 +1674,6 @@ function Step11({ data, upd }: { data: StepData; upd: (p: Partial<StepData>) => 
       {data.interviewTemplateIds.length > 0 && (
         <div style={{ marginTop: 18, padding: 12, background: 'var(--ck-bg)', border: '1px solid var(--ck-line)', borderRadius: 8, fontSize: 12.5, color: 'var(--ck-ink-soft)' }}>
           <strong style={{ color: 'var(--ck-ink)' }}>{data.interviewTemplateIds.length}</strong> template{data.interviewTemplateIds.length === 1 ? '' : 's'} mapped to this Job Profile. Save to persist.
-        </div>
-      )}
-
-      {/* Add template inline */}
-      {addOpen && (
-        <div style={{ marginTop: 16, padding: 16, background: 'var(--ck-bg)', borderRadius: 10, border: '1px solid var(--ck-line)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ck-ink)' }}>New Interview Template</div>
-          <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="Template title *"
-            style={{ height: 36, padding: '0 10px', border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)' }} />
-          <textarea value={newDesc} onChange={(e) => setNewDesc(e.target.value)} rows={3} placeholder="Description (optional)"
-            style={{ padding: 10, border: '1px solid var(--ck-line)', borderRadius: 7, fontSize: 13, background: 'var(--ck-surface)', resize: 'vertical' }} />
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <Button size="sm" onClick={() => { setAddOpen(false); setNewTitle(''); setNewDesc(''); }}>Cancel</Button>
-            <Button size="sm" variant="primary" disabled={saving || !newTitle.trim()} onClick={saveTemplate}>
-              {saving ? 'Saving…' : 'Add to Master'}
-            </Button>
-          </div>
         </div>
       )}
 

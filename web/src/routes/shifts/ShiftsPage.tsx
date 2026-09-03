@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Clock, MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Clock, Pencil, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, apiErrorMessage } from '../../lib/api';
 import { Card } from '../../components/ui/Card';
@@ -9,6 +9,9 @@ import { Modal } from '../../components/ui/Modal';
 import { StatusPill } from '../../components/ui/StatusPill';
 import { IconAction } from '../../components/ui/IconAction';
 import { useServerListQuery, Pagination, SearchInput, FilterSelect, ClearFiltersButton, SortableTh } from '../../components/filters';
+import {
+  ScopeGridEditor, ScopeCountCell, ScopeDetailModal, toScopePayload, type ScopeRow,
+} from '../../components/org/ScopeGridEditor';
 
 type ShiftBreak = {
   id?: string;
@@ -39,6 +42,8 @@ type Shift = {
   ot_after_min: number;
   ot_multiplier: number | string;
   breaks: ShiftBreak[];
+  /** The company/branch/location sets this shift runs at (migration 0044). */
+  scopes: ScopeRow[];
 };
 
 type Branch = { id: string; code: string; name: string; city: string };
@@ -47,9 +52,7 @@ type FormState = {
   code: string;
   name: string;
   description: string;
-  company: string;
-  branchId: string;
-  location: string;
+  scopes: ScopeRow[];
   status: 'ACTIVE' | 'INACTIVE';
   startTime: string;
   endTime: string;
@@ -66,9 +69,7 @@ const EMPTY_FORM: FormState = {
   code: '',
   name: '',
   description: '',
-  company: '',
-  branchId: '',
-  location: '',
+  scopes: [],
   status: 'ACTIVE',
   startTime: '09:00',
   endTime: '18:00',
@@ -92,6 +93,20 @@ const inpReadonly: React.CSSProperties = { ...inp, background: 'var(--ck-bg)', c
 type Filters = { branchId: string; status: string; kind: string };
 type SortKey = 'code' | 'name' | 'branch_name';
 
+/**
+ * Count of distinct values in a scope set — a shift mapped to three branches of
+ * one company is "1 company / 3 branches", not "3 companies".
+ */
+function distinctBy(rows: ScopeRow[], key: (r: ScopeRow) => string): ScopeRow[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    const k = key(r);
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
 export function ShiftsPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
 
@@ -105,6 +120,9 @@ export function ShiftsPage() {
 
   const [rotationOpen, setRotationOpen] = useState(false);
   const [rotation, setRotation] = useState<string[]>([]);
+
+  /** The shift whose full scope list is being read; null when the modal is shut. */
+  const [scopeView, setScopeView] = useState<Shift | null>(null);
 
   const {
     rows: pageRows, loading, total, totalPages, page, setPage,
@@ -137,9 +155,7 @@ export function ShiftsPage() {
       code: s.code,
       name: s.name,
       description: s.description ?? '',
-      company: s.company ?? '',
-      branchId: s.branch_id ?? '',
-      location: s.location ?? '',
+      scopes: s.scopes ?? [],
       status: s.status,
       startTime: s.start_time,
       endTime: s.end_time,
@@ -175,9 +191,7 @@ export function ShiftsPage() {
         code: form.code || undefined,
         name: form.name,
         description: form.description || null,
-        company: form.company || null,
-        branchId: form.branchId || null,
-        location: form.location || null,
+        scopes: toScopePayload(form.scopes),
         status: form.status,
         startTime: form.startTime,
         endTime: form.endTime,
@@ -267,17 +281,7 @@ export function ShiftsPage() {
               <tr style={{ textAlign: 'left' }}>
                 <SortableTh<SortKey> label="SHIFT DETAILS" sortKey="name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort}
                   style={{ padding: '12px 22px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.06em', textTransform: 'none', borderTop: '1px solid var(--ck-line)', borderBottom: '1px solid var(--ck-line)', background: 'transparent' }} />
-                {['COMPANY'].map((h) => (
-                  <th
-                    key={h}
-                    style={{ padding: '12px 22px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.06em', borderTop: '1px solid var(--ck-line)', borderBottom: '1px solid var(--ck-line)' }}
-                  >
-                    {h}
-                  </th>
-                ))}
-                <SortableTh<SortKey> label="LOCATION" sortKey="branch_name" sortBy={sortBy} sortDir={sortDir} onSort={toggleSort}
-                  style={{ padding: '12px 22px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.06em', textTransform: 'none', borderTop: '1px solid var(--ck-line)', borderBottom: '1px solid var(--ck-line)', background: 'transparent' }} />
-                {['TIMING', 'STATUS', 'ACTIONS'].map((h) => (
+                {['COMPANIES', 'BRANCHES', 'LOCATIONS', 'TIMING', 'STATUS', 'ACTIONS'].map((h) => (
                   <th
                     key={h}
                     style={{ padding: '12px 22px', fontSize: 11, fontWeight: 600, color: 'var(--ck-muted)', letterSpacing: '0.06em', borderTop: '1px solid var(--ck-line)', borderBottom: '1px solid var(--ck-line)' }}
@@ -308,19 +312,29 @@ export function ShiftsPage() {
                         </div>
                       </div>
                     </td>
+                    {/* A shift can map to a dozen sites. Spelling every name out
+                        destroyed the column widths, so each cell is a count that
+                        opens the full read-only list. */}
                     <td style={{ padding: '16px 22px', verticalAlign: 'middle' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <CompanyGlyph />
-                        <div>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ck-ink)' }}>{s.company || 'Concept Kitchen'}</div>
-                          <div style={{ fontSize: 11.5, color: 'var(--ck-muted)' }}>{s.location || '—'}</div>
-                        </div>
-                      </div>
+                      <ScopeCountCell
+                        scopes={distinctBy(s.scopes ?? [], (r) => r.company_id ?? r.company_name ?? '')}
+                        onOpen={() => setScopeView(s)}
+                        singular="company" plural="companies"
+                      />
                     </td>
                     <td style={{ padding: '16px 22px', verticalAlign: 'middle' }}>
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--ck-ink-soft)', fontSize: 13 }}>
-                        <MapPin size={14} /> {s.branch_name || '—'}
-                      </div>
+                      <ScopeCountCell
+                        scopes={distinctBy(s.scopes ?? [], (r) => r.branch_id)}
+                        onOpen={() => setScopeView(s)}
+                        singular="branch" plural="branches"
+                      />
+                    </td>
+                    <td style={{ padding: '16px 22px', verticalAlign: 'middle' }}>
+                      <ScopeCountCell
+                        scopes={(s.scopes ?? []).filter((r) => r.location_id)}
+                        onOpen={() => setScopeView(s)}
+                        singular="location" plural="locations"
+                      />
                     </td>
                     <td style={{ padding: '16px 22px', verticalAlign: 'middle' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -349,6 +363,13 @@ export function ShiftsPage() {
 
         <Pagination page={page} totalPages={totalPages} total={total} pageSize={5} onPageChange={setPage} />
       </Card>
+
+      <ScopeDetailModal
+        open={!!scopeView}
+        onClose={() => setScopeView(null)}
+        title={scopeView ? `${scopeView.name} — applicable at` : ''}
+        scopes={scopeView?.scopes ?? []}
+      />
 
       <Modal
         open={formOpen}
@@ -380,31 +401,22 @@ export function ShiftsPage() {
               style={{ ...inp, height: 'auto', padding: 10, resize: 'vertical' }}
             />
           </Field>
-          <Grid2>
-            <Field label="Company">
-              <select value={form.company} onChange={(e) => setForm({ ...form, company: e.target.value })} style={inp}>
-                <option value="">Select Company</option>
-                <option value="Concept Kitchen">Concept Kitchen</option>
-              </select>
-            </Field>
-            <Field label="Branch">
-              <select value={form.branchId} onChange={(e) => setForm({ ...form, branchId: e.target.value })} style={inp}>
-                <option value="">Select Branch</option>
-                {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
-            </Field>
-          </Grid2>
-          <Grid2>
-            <Field label="Location">
-              <input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Production Floor A" style={inp} />
-            </Field>
-            <Field label="Status">
-              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as 'ACTIVE' | 'INACTIVE' })} style={inp}>
-                <option value="ACTIVE">Active</option>
-                <option value="INACTIVE">Inactive</option>
-              </select>
-            </Field>
-          </Grid2>
+          <Field label="Status">
+            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as 'ACTIVE' | 'INACTIVE' })} style={{ ...inp, maxWidth: 240 }}>
+              <option value="ACTIVE">Active</option>
+              <option value="INACTIVE">Inactive</option>
+            </select>
+          </Field>
+        </Section>
+
+        {/* A shift is rarely tied to one site — add as many company/branch/location
+            sets as it actually runs at. */}
+        <Section title="Applicable Company / Branch / Location">
+          <ScopeGridEditor
+            value={form.scopes}
+            onChange={(scopes) => setForm({ ...form, scopes })}
+            label="Add each company / branch / location this shift runs at"
+          />
         </Section>
 
         <Section title="Timing & Hours">
@@ -614,10 +626,3 @@ function CheckboxRow({ label, checked, onChange }: { label: string; checked: boo
   );
 }
 
-function CompanyGlyph() {
-  return (
-    <div style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--ck-line-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--ck-muted)' }}>C</span>
-    </div>
-  );
-}

@@ -5,6 +5,7 @@ import {
 } from '../../components/filters';
 import { IconAction } from '../../components/ui/IconAction';
 import { api } from '../../lib/api';
+import { cacheKey, readCache, writeCache, isFresh, invalidateCache } from '../../lib/listCache';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
@@ -24,7 +25,7 @@ type JobProfile = {
 };
 type JpLocationRow = {
   id: string; branch_id: string; location_id: string | null; positions: number;
-  branch_name: string; location_name: string | null;
+  branch_name: string; location_name: string | null; company_name: string | null;
 };
 type JpShiftRow = {
   id: string; shift_id: string; shift_code: string; shift_name: string;
@@ -68,6 +69,21 @@ function formatPct(pct: number | string | null | undefined): string {
 
 type Mode = 'list' | 'create' | 'edit';
 
+/**
+ * Up to five page buttons centred on the current page. The old version always
+ * rendered 1–5, so on page 9 of 12 none of the visible numbers was reachable.
+ */
+function pageWindow(page: number, totalPages: number): number[] {
+  const span = Math.min(5, totalPages);
+  const start = Math.max(1, Math.min(page - 2, totalPages - span + 1));
+  return Array.from({ length: span }, (_, i) => start + i);
+}
+
+const CACHE_NAME = 'job-profiles';
+// Five rows left most of the card empty and forced paging for a modest list;
+// ten fills the table without making the payload noticeably heavier.
+const PAGE_SIZE = 10;
+
 export function JobProfilePage() {
   const [mode,      setMode]      = useState<Mode>('list');
   const [editTarget, setEditTarget] = useState<JobProfile | null>(null);
@@ -75,9 +91,6 @@ export function JobProfilePage() {
   const [viewId, setViewId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickedDesignation, setPickedDesignation] = useState<Designation | null>(null);
-  const [profiles,  setProfiles]  = useState<JobProfile[]>([]);
-  const [meta,      setMeta]      = useState<Meta>({ page: 1, pageSize: 5, total: 0 });
-  const [loading,   setLoading]   = useState(true);
   const [search,    setSearch]    = useState('');
   const [filters,   setFilters]   = useState<HierarchyValue>(EMPTY_HIERARCHY);
   const [page,      setPage]      = useState(1);
@@ -87,15 +100,38 @@ export function JobProfilePage() {
   // render — `filters` is a fresh object identity each time it is set.
   const filterKey = JSON.stringify(filters);
 
-  const fetchProfiles = () => {
-    setLoading(true);
-    const params: Record<string, unknown> = { page, pageSize: 5 };
-    if (search) params.search = search;
-    if (filters.departmentId)  params.departmentId  = filters.departmentId;
-    if (filters.divisionId)    params.divisionId    = filters.divisionId;
-    if (filters.designationId) params.designationId = filters.designationId;
+  const params: Record<string, unknown> = { page, pageSize: PAGE_SIZE };
+  if (search) params.search = search;
+  if (filters.departmentId)  params.departmentId  = filters.departmentId;
+  if (filters.divisionId)    params.divisionId    = filters.divisionId;
+  if (filters.designationId) params.designationId = filters.designationId;
+  const key = cacheKey(CACHE_NAME, params);
+
+  // Seed from cache so revisiting this page (or stepping back a page) paints
+  // rows on the first render instead of an empty table under "Loading…".
+  const cached = readCache<Resp>(key);
+  const [profiles,  setProfiles]  = useState<JobProfile[]>(cached?.data ?? []);
+  const [meta,      setMeta]      = useState<Meta>(cached?.meta ?? { page: 1, pageSize: PAGE_SIZE, total: 0 });
+  const [loading,   setLoading]   = useState(!cached);
+
+  const fetchProfiles = (opts?: { force?: boolean }) => {
+    const hit = readCache<Resp>(key);
+    if (hit && !opts?.force) {
+      // Show what we have immediately; only sit in a loading state with nothing
+      // on screen when there is genuinely nothing to show.
+      setProfiles(hit.data);
+      setMeta(hit.meta);
+      setLoading(false);
+      if (isFresh(key)) return; // recent enough — skip the network entirely
+    } else {
+      setLoading(true);
+    }
     api.get<Resp>('/job-profiles', { params })
-      .then((r) => { setProfiles(r.data.data); setMeta(r.data.meta); })
+      .then((r) => {
+        writeCache(key, r.data);
+        setProfiles(r.data.data);
+        setMeta(r.data.meta);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -104,7 +140,11 @@ export function JobProfilePage() {
   useEffect(() => { fetchProfiles(); }, [search, filterKey, page]);
   useEffect(() => { setPage(1); }, [search, filterKey]);
 
-  const handleSaved = () => { setMode('list'); setEditTarget(null); setPickedDesignation(null); fetchProfiles(); };
+  const handleSaved = () => {
+    setMode('list'); setEditTarget(null); setPickedDesignation(null);
+    invalidateCache(CACHE_NAME); // a save must not be followed by the pre-save row
+    fetchProfiles({ force: true });
+  };
   const handleCancel = () => { setMode('list'); setEditTarget(null); setPickedDesignation(null); };
 
   const createInitialData: Partial<StepData> | undefined = pickedDesignation
@@ -224,11 +264,18 @@ export function JobProfilePage() {
             {/* Pagination */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderTop: '1px solid var(--ck-line)', fontSize: 12.5 }}>
               <div style={{ color: 'var(--ck-muted)' }}>
-                {loading ? 'Loading…' : `Showing ${Math.min((page - 1) * meta.pageSize + 1, meta.total)} to ${Math.min(page * meta.pageSize, meta.total)} of ${meta.total} results`}
+                {loading && profiles.length === 0
+                  ? 'Loading…'
+                  : `Showing ${Math.min((page - 1) * meta.pageSize + 1, meta.total)} to ${Math.min(page * meta.pageSize, meta.total)} of ${meta.total} results`}
+                {/* Cached rows are already on screen — say we're refreshing rather
+                    than blanking the table the user is reading. */}
+                {loading && profiles.length > 0 && (
+                  <span style={{ marginLeft: 8, color: 'var(--ck-faint)' }}>· refreshing…</span>
+                )}
               </div>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <Button size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</Button>
-                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => i + 1).map((n) => (
+                {pageWindow(page, totalPages).map((n) => (
                   <button key={n} onClick={() => setPage(n)}
                     style={{ width: 32, height: 32, borderRadius: 6,
                       border: `1px solid ${page === n ? 'var(--ck-ink)' : 'var(--ck-line)'}`,
@@ -318,6 +365,7 @@ function buildInitialData(profile: JobProfile | null): Partial<StepData> | undef
     positions: Number(l.positions) || 1,
     branchName: l.branch_name,
     locationName: l.location_name ?? undefined,
+    companyName: l.company_name ?? undefined,
   }));
   const workShifts: string[] = (detail.shifts ?? []).map((s) => s.shift_id);
   const interviewTemplateIds: string[] = (detail.interview_templates ?? []).map((t) => t.interview_template_id);

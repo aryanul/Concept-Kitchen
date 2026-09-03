@@ -47,17 +47,34 @@ type FilterSelectProps = {
   options: FilterOption[];
   placeholder?: string;
   minWidth?: number;
+  /** Locked because the parent level above it has not been chosen yet. */
+  disabled?: boolean;
+  /** Shown in place of the placeholder while disabled, e.g. "Select Department first". */
+  disabledPlaceholder?: string;
+  /** Hover explanation — pair with `disabled` so the lock isn't a mystery. */
+  title?: string;
 };
 
-export function FilterSelect({ label, value, onChange, options, placeholder = 'All', minWidth }: FilterSelectProps) {
+export function FilterSelect({
+  label, value, onChange, options, placeholder = 'All', minWidth,
+  disabled = false, disabledPlaceholder, title,
+}: FilterSelectProps) {
   const select = (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      style={minWidth ? { ...selectStyle, minWidth } : selectStyle}
+      disabled={disabled}
+      title={title}
+      style={{
+        ...selectStyle,
+        ...(minWidth ? { minWidth } : null),
+        ...(disabled
+          ? { cursor: 'not-allowed', opacity: 0.55, background: 'var(--ck-line-soft)' }
+          : null),
+      }}
     >
-      <option value="">{placeholder}</option>
-      {options.map((o) => (
+      <option value="">{disabled ? (disabledPlaceholder ?? placeholder) : placeholder}</option>
+      {!disabled && options.map((o) => (
         <option key={o.value} value={o.value}>{o.label}</option>
       ))}
     </select>

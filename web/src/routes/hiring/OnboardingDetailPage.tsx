@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Plus, Printer, Trash2, Mail, Phone as PhoneIcon, Activity as ActivityIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '../../lib/api';
+import { inrPaiseToRupeesShort } from '../../lib/format';
 import { Avatar } from '../../components/ui/Avatar';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
@@ -108,7 +109,10 @@ type Location = { id: string; name: string };
 type PhonePool = { id: string; number: string; status: string };
 
 type TabKey = 'pre' | 'induction' | 'onboarding' | 'trainings' | 'activities';
-type SalaryGrade = { id: string; code: string; kind: string };
+type SalaryGrade = {
+  id: string; code: string; kind: string;
+  min_gross?: number | string | null; max_gross?: number | string | null;
+};
 type OnboardingActivity = {
   id: string; ao_id: string; applicant_id: string; actor_user_id: string | null;
   actor_name: string | null; actor_email: string | null;
@@ -126,6 +130,10 @@ export function OnboardingDetailPage() {
   const [loading, setLoading] = useState(true);
   const [closeOpen, setCloseOpen] = useState(false);
   const [grades, setGrades] = useState<SalaryGrade[]>([]);
+  // Distinguish "still loading", "the master is empty" and "the request failed".
+  // Previously all three rendered as a silently empty dropdown with no way for
+  // the user to tell which had happened.
+  const [gradesState, setGradesState] = useState<'loading' | 'ok' | 'error'>('loading');
 
   const fetchAll = async () => {
     setLoading(true);
@@ -143,7 +151,8 @@ export function OnboardingDetailPage() {
   useEffect(() => { if (applicantId) fetchAll(); }, [applicantId]);
   useEffect(() => {
     api.get<{ data: SalaryGrade[] }>('/salary-grades', { params: { pageSize: 200 } })
-      .then((r) => setGrades(r.data.data ?? [])).catch(() => {});
+      .then((r) => { setGrades(r.data.data ?? []); setGradesState('ok'); })
+      .catch(() => setGradesState('error'));
   }, []);
 
 
@@ -225,6 +234,7 @@ export function OnboardingDetailPage() {
           applicantId={applicantId}
           applicantName={applicant.full_name}
           grades={grades}
+          gradesState={gradesState}
           onClose={() => setCloseOpen(false)}
           onSaved={() => { setCloseOpen(false); fetchAll(); }}
         />
@@ -233,8 +243,9 @@ export function OnboardingDetailPage() {
   );
 }
 
-function CloseArchiveModal({ applicantId, applicantName, grades, onClose, onSaved }: {
+function CloseArchiveModal({ applicantId, applicantName, grades, gradesState, onClose, onSaved }: {
   applicantId: string; applicantName: string; grades: SalaryGrade[];
+  gradesState: 'loading' | 'ok' | 'error';
   onClose: () => void; onSaved: () => void;
 }) {
   const [gradeId, setGradeId] = useState('');
@@ -281,10 +292,41 @@ function CloseArchiveModal({ applicantId, applicantName, grades, onClose, onSave
       {createEmployee && (
         <label style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
           <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--ck-ink-soft)' }}>Salary grade *</span>
-          <select value={gradeId} onChange={(e) => setGradeId(e.target.value)} style={inp}>
-            <option value="">Select grade</option>
-            {grades.map((g) => <option key={g.id} value={g.id}>{g.code} · {g.kind}</option>)}
+          <select value={gradeId} onChange={(e) => setGradeId(e.target.value)} style={inp}
+            disabled={gradesState !== 'ok' || grades.length === 0}>
+            <option value="">
+              {gradesState === 'loading' ? 'Loading grades…'
+                : gradesState === 'error' ? 'Could not load grades'
+                : grades.length === 0 ? 'No salary grades defined'
+                : 'Select grade'}
+            </option>
+            {grades.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.code} · {g.kind}
+                {g.min_gross != null && g.max_gross != null
+                  ? ` · ${inrPaiseToRupeesShort(g.min_gross)}–${inrPaiseToRupeesShort(g.max_gross)}`
+                  : ''}
+              </option>
+            ))}
           </select>
+
+          {/* The dropdown was arriving empty with no explanation. Say which of
+              the two causes it is, and give the user the way out. */}
+          {gradesState === 'error' && (
+            <span style={{ fontSize: 11.5, color: 'var(--ck-danger-fg)' }}>
+              Salary grades failed to load. Reload the page and try again.
+            </span>
+          )}
+          {gradesState === 'ok' && grades.length === 0 && (
+            <span style={{ fontSize: 11.5, color: 'var(--ck-danger-fg)' }}>
+              The Salary Grade master is empty, so no grade can be picked. Add at least one in{' '}
+              <a href="/masters/salary-grades" target="_blank" rel="noopener noreferrer"
+                style={{ color: 'var(--ck-accent)', fontWeight: 600 }}>
+                Settings → Salary Grades
+              </a>, or untick "Create employees record" to archive without creating one.
+            </span>
+          )}
+
           <span style={{ fontSize: 11.5, color: 'var(--ck-muted)' }}>
             Other fields (branch, department, designation, CTC, joining date) come from the offer and onboarding header.
           </span>

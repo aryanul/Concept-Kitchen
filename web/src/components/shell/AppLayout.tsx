@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
+import { IdleSessionGuard } from '../IdleSessionGuard';
 
 export function AppLayout() {
   const location = useLocation();
@@ -14,6 +15,9 @@ export function AppLayout() {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--ck-bg)' }}>
+      {/* Signs out after 30 min idle, and keeps active sessions alive */}
+      <IdleSessionGuard />
+
       {/* Mobile backdrop */}
       {sidebarOpen && (
         <div

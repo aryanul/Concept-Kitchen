@@ -6,12 +6,19 @@ import bcrypt from 'bcryptjs';
 import multer from 'multer';
 import { ulid } from 'ulid';
 import { query } from './db';
-import { signAccessToken, authRequired, requireRole, type Role } from './auth';
+import {
+  signAccessToken, authRequired, requireRole, readUserFromToken,
+  SESSION_IDLE_MINUTES, type Role,
+} from './auth';
 import { registerMasterRoutes } from './masters';
+import { registerUserRoutes, syncCkUsers } from './users';
+import { permissionGuard, seedRolePermissions } from './permissions';
 import { registerRelievingRoutes } from './relieving';
 import { registerDocumentRoutes } from './documents';
 import { uploadToCloudinary } from './upload';
 import { writeAudit } from './audit';
+import { registerAuditMiddleware } from './auditMiddleware';
+import { replaceScopes, type ScopeInput } from './scopes';
 import { enrollFace, deletePerson, faceApiConfigured, FaceApiError } from './faceApi';
 import { ckApiConfigured } from './ckApi';
 import { ckSyncAll } from './ckSync';
@@ -42,8 +49,20 @@ app.use(
 );
 app.use(express.json({ limit: '8mb' })); // headroom for base64 photo data URLs in request bodies
 
+// Audits every successful mutation on /api/v1. Registered before ANY route so
+// nothing can slip past it; handlers that write their own richer entry still
+// take precedence (see auditMiddleware.ts).
+registerAuditMiddleware(app);
+
+// Role-based access control. Registered before ANY route so a new endpoint is
+// governed by existing rather than by someone remembering to guard it. Reads
+// the bearer token itself because each route's own authRequired has not run
+// yet — see permissionGuard's note on 401 vs 403.
+app.use('/api/v1', permissionGuard(readUserFromToken));
+
 // Master routes registered AFTER global middleware so req.body / CORS headers are available
 registerMasterRoutes(app);
+registerUserRoutes(app);
 registerRelievingRoutes(app);
 registerDocumentRoutes(app);
 
@@ -126,8 +145,8 @@ app.post('/api/v1/auth/login', async (req, res, next) => {
         error: { code: 'VALIDATION', message: 'email and password are required' },
       });
     }
-    const rows = await query<UserRow>(
-      'SELECT id, email, password_hash, role, employee_id FROM users WHERE email = ? LIMIT 1',
+    const rows = await query<UserRow & { status: string; name: string | null }>(
+      'SELECT id, name, email, password_hash, role, status, employee_id FROM users WHERE email = ? LIMIT 1',
       [email]
     );
     const user = rows[0];
@@ -137,6 +156,21 @@ app.post('/api/v1/auth/login', async (req, res, next) => {
     if (!user) return reject();
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) return reject();
+
+    // Staff provisioned from Concept Kitchen start Inactive, and an admin can
+    // switch anyone off. Said plainly — unlike a wrong password, this is not
+    // something the user can fix by trying again.
+    if (user.status === 'Inactive') {
+      return res.status(403).json({
+        error: {
+          code: 'FORBIDDEN',
+          message: 'This account is not active. Ask an HR Admin to activate it.',
+        },
+      });
+    }
+
+    await query('UPDATE users SET last_login_at = CURRENT_TIMESTAMP(3) WHERE id = ?', [user.id])
+      .catch(() => { /* a stamp is not worth failing a sign-in over */ });
 
     const token = signAccessToken({
       id: user.id,
@@ -154,8 +188,61 @@ app.post('/api/v1/auth/login', async (req, res, next) => {
     res.json({
       data: {
         token,
+        idleMinutes: SESSION_IDLE_MINUTES,
         user: {
           id: user.id,
+          name: user.name ?? null,
+          email: user.email,
+          role: user.role,
+          employeeId: user.employee_id,
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Slide the session window forward. The client calls this while the user is
+ * actively interacting, so an active session never expires out from under them;
+ * stop interacting for SESSION_IDLE_MINUTES and the token simply lapses.
+ *
+ * The user row is re-read rather than trusted from the old token, so a role
+ * change or a deletion takes effect on the next slide instead of persisting
+ * until the original token would have died.
+ */
+app.post('/api/v1/auth/refresh', authRequired, async (req, res, next) => {
+  try {
+    const rows = await query<Omit<UserRow, 'password_hash'> & { status: string; name: string | null }>(
+      'SELECT id, name, email, role, status, employee_id FROM users WHERE id = ? LIMIT 1',
+      [req.user!.id]
+    );
+    const user = rows[0];
+    if (!user) {
+      return res
+        .status(401)
+        .json({ error: { code: 'UNAUTHORIZED', message: 'User no longer exists' } });
+    }
+    // Deactivating someone must take effect within the session window rather
+    // than waiting for their current token to lapse.
+    if (user.status === 'Inactive') {
+      return res
+        .status(401)
+        .json({ error: { code: 'UNAUTHORIZED', message: 'This account has been deactivated.' } });
+    }
+    const token = signAccessToken({
+      id: user.id,
+      role: user.role,
+      employeeId: user.employee_id,
+    });
+    res.json({
+      data: {
+        token,
+        idleMinutes: SESSION_IDLE_MINUTES,
+        user: {
+          id: user.id,
+          name: user.name ?? null,
           email: user.email,
           role: user.role,
           employeeId: user.employee_id,
@@ -178,8 +265,8 @@ app.post('/api/v1/auth/logout', authRequired, async (req, res, next) => {
 
 app.get('/api/v1/auth/me', authRequired, async (req, res, next) => {
   try {
-    const rows = await query<Omit<UserRow, 'password_hash'>>(
-      'SELECT id, email, role, employee_id FROM users WHERE id = ? LIMIT 1',
+    const rows = await query<Omit<UserRow, 'password_hash'> & { status: string; name: string | null }>(
+      'SELECT id, name, email, role, status, employee_id FROM users WHERE id = ? LIMIT 1',
       [req.user!.id]
     );
     const user = rows[0];
@@ -192,6 +279,7 @@ app.get('/api/v1/auth/me', authRequired, async (req, res, next) => {
       data: {
         user: {
           id: user.id,
+          name: user.name ?? null,
           email: user.email,
           role: user.role,
           employeeId: user.employee_id,
@@ -265,7 +353,13 @@ app.get('/api/v1/shifts', authRequired, async (req, res, next) => {
       const like = `%${search}%`;
       params.push(like, like, like);
     }
-    if (branchId) { where.push('s.branch_id = ?'); params.push(branchId); }
+    // A shift now maps to many branches (shift_scopes), so "shifts at branch X"
+    // is an EXISTS over that set. The legacy s.branch_id is still checked so
+    // rows saved before migration 0044 stay findable.
+    if (branchId) {
+      where.push('(s.branch_id = ? OR EXISTS (SELECT 1 FROM shift_scopes sc2 WHERE sc2.shift_id = s.id AND sc2.branch_id = ?))');
+      params.push(branchId, branchId);
+    }
     if (status) { where.push('s.status = ?'); params.push(status); }
     if (kind) { where.push('s.kind = ?'); params.push(kind); }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -309,13 +403,48 @@ app.get('/api/v1/shifts', authRequired, async (req, res, next) => {
         ids
       );
     }
+    // The company/branch/location sets this shift applies to. Fetched in one
+    // batched query for the whole page rather than per row.
+    type ScopeRow = {
+      id: string; shift_id: string;
+      company_id: string | null; branch_id: string; location_id: string | null;
+      company_name: string | null; branch_name: string; location_name: string | null;
+    };
+    let scopes: ScopeRow[] = [];
+    if (ids.length) {
+      const placeholders = ids.map(() => '?').join(',');
+      scopes = await query<ScopeRow>(
+        `SELECT sc.id, sc.shift_id, sc.company_id, sc.branch_id, sc.location_id,
+                COALESCE(c.name, cb.name) AS company_name,
+                sb.name AS branch_name, l.name AS location_name
+           FROM shift_scopes sc
+           JOIN branches sb ON sb.id = sc.branch_id
+           LEFT JOIN hiring_companies c ON c.id = sc.company_id
+           LEFT JOIN hiring_companies cb ON cb.id = sb.company_id
+           LEFT JOIN locations l ON l.id = sc.location_id
+          WHERE sc.shift_id IN (${placeholders})
+          ORDER BY sc.sort_order, sb.name`,
+        ids
+      );
+    }
+
     const breaksByShift = new Map<string, typeof breaks>();
     for (const br of breaks) {
       const list = breaksByShift.get(br.shift_id) ?? [];
       list.push(br);
       breaksByShift.set(br.shift_id, list);
     }
-    const data = rows.map((r) => ({ ...r, breaks: breaksByShift.get(r.id) ?? [] }));
+    const scopesByShift = new Map<string, ScopeRow[]>();
+    for (const sc of scopes) {
+      const list = scopesByShift.get(sc.shift_id) ?? [];
+      list.push(sc);
+      scopesByShift.set(sc.shift_id, list);
+    }
+    const data = rows.map((r) => ({
+      ...r,
+      breaks: breaksByShift.get(r.id) ?? [],
+      scopes: scopesByShift.get(r.id) ?? [],
+    }));
     res.json({ data, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
   } catch (err) {
     next(err);
@@ -343,33 +472,66 @@ app.get('/api/v1/holidays', authRequired, async (req, res, next) => {
     if (dateFrom) { where.push('h.date >= ?'); params.push(dateFrom); }
     if (dateTo) { where.push('h.date < DATE_ADD(?, INTERVAL 1 DAY)'); params.push(dateTo); }
     if (branchId) {
-      where.push('EXISTS (SELECT 1 FROM holiday_branches hb2 WHERE hb2.holiday_id = h.id AND hb2.branch_id = ?)');
+      where.push('EXISTS (SELECT 1 FROM holiday_scopes hs2 WHERE hs2.holiday_id = h.id AND hs2.branch_id = ?)');
       params.push(branchId);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const rows = await query(
-      `SELECT h.id, h.date, h.name, h.kind,
-              GROUP_CONCAT(b.name ORDER BY b.code SEPARATOR ', ') AS branch_names
-       FROM holidays h
-       LEFT JOIN holiday_branches hb ON hb.holiday_id = h.id
-       LEFT JOIN branches b ON b.id = hb.branch_id
-       ${whereSql}
-       GROUP BY h.id
-       ORDER BY ${sortBy} ${sortDir}
-       LIMIT ? OFFSET ?`,
-      [...params, pageSize, (page - 1) * pageSize]
-    );
-    const [cnt] = await query<{ total: number }>(
-      `SELECT COUNT(*) AS total FROM (
-         SELECT h.id FROM holidays h
-         LEFT JOIN holiday_branches hb ON hb.holiday_id = h.id
+    const [rows, [cnt]] = await Promise.all([
+      query<{ id: string }>(
+        `SELECT h.id, h.date, h.name, h.kind
+         FROM holidays h
          ${whereSql}
-         GROUP BY h.id
-       ) t`,
-      params
-    );
-    res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
+         ORDER BY ${sortBy} ${sortDir}
+         LIMIT ? OFFSET ?`,
+        [...params, pageSize, (page - 1) * pageSize]
+      ),
+      query<{ total: number }>(
+        `SELECT COUNT(*) AS total FROM holidays h ${whereSql}`, params
+      ),
+    ]);
+
+    // A holiday applies to a set of company/branch/location rows (migration
+    // 0044). Fetch them for the whole page in one query rather than per row.
+    type HolidayScope = {
+      id: string; holiday_id: string;
+      company_id: string | null; branch_id: string; location_id: string | null;
+      company_name: string | null; branch_name: string; location_name: string | null;
+    };
+    const ids = rows.map((r) => r.id);
+    let scopes: HolidayScope[] = [];
+    if (ids.length) {
+      const placeholders = ids.map(() => '?').join(',');
+      scopes = await query<HolidayScope>(
+        `SELECT hs.id, hs.holiday_id, hs.company_id, hs.branch_id, hs.location_id,
+                COALESCE(c.name, cb.name) AS company_name,
+                b.name AS branch_name, l.name AS location_name
+           FROM holiday_scopes hs
+           JOIN branches b ON b.id = hs.branch_id
+           LEFT JOIN hiring_companies c ON c.id = hs.company_id
+           LEFT JOIN hiring_companies cb ON cb.id = b.company_id
+           LEFT JOIN locations l ON l.id = hs.location_id
+          WHERE hs.holiday_id IN (${placeholders})
+          ORDER BY hs.sort_order, b.name`,
+        ids
+      );
+    }
+    const byHoliday = new Map<string, HolidayScope[]>();
+    for (const sc of scopes) {
+      const list = byHoliday.get(sc.holiday_id) ?? [];
+      list.push(sc);
+      byHoliday.set(sc.holiday_id, list);
+    }
+    const data = rows.map((r) => {
+      const list = byHoliday.get(r.id) ?? [];
+      return {
+        ...r,
+        scopes: list,
+        // Kept for callers still reading the old flat label.
+        branch_names: list.length ? list.map((s) => s.branch_name).join(', ') : null,
+      };
+    });
+    res.json({ data, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
   } catch (err) {
     next(err);
   }
@@ -448,6 +610,28 @@ app.post('/api/v1/upload', authRequired, multerUpload.single('file'), async (req
   } catch (err) {
     next(err);
   }
+});
+
+/**
+ * The distinct actions and modules actually present in the log.
+ *
+ * The Activity Log page used to hard-code both filter lists, so anything not on
+ * those lists was unfilterable — and now that every mutation is audited, that
+ * list would never keep up. Reading the real values keeps the filters honest.
+ */
+app.get('/api/v1/activity-logs/facets', authRequired, async (_req, res, next) => {
+  try {
+    const [actions, resources] = await Promise.all([
+      query<{ action: string }>('SELECT DISTINCT action FROM audit_logs ORDER BY action'),
+      query<{ resource: string }>('SELECT DISTINCT resource FROM audit_logs ORDER BY resource'),
+    ]);
+    res.json({
+      data: {
+        actions: actions.map((r) => r.action).filter(Boolean),
+        resources: resources.map((r) => r.resource).filter(Boolean),
+      },
+    });
+  } catch (err) { next(err); }
 });
 
 app.get('/api/v1/activity-logs', authRequired, async (req, res, next) => {
@@ -1164,19 +1348,27 @@ app.get('/api/v1/job-profiles', authRequired, async (req, res, next) => {
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
     // Only needed by the division filter, but harmless (and cheap) to always join.
     const jpJoins = 'JOIN departments d ON d.id = jp.department_id LEFT JOIN designations dg ON dg.id = jp.designation_id';
-    const rows = await query(
-            `SELECT jp.id, jp.jp_no, jp.title, jp.division, jp.designation, jp.jp_status, jp.jp_completion_pct,
-              jp.description, jp.requirements, jp.status, jp.created_at, jp.form_data,
-              d.id AS department_id, d.name AS department_name,
-              (SELECT COUNT(*) FROM job_listings jl WHERE jl.job_profile_id = jp.id AND jl.status IN ('Open','Published')) AS open_vacancies
-       FROM job_profiles jp
-       ${jpJoins}
-       ${whereSql} ORDER BY jp.jp_no LIMIT ? OFFSET ?`,
-      [...params, pageSize, (page - 1) * pageSize]
-    );
-    const [cnt] = await query<{ total: number }>(
-      `SELECT COUNT(*) AS total FROM job_profiles jp ${jpJoins} ${whereSql}`, params
-    );
+    // Deliberately narrow: form_data is a multi-KB JSON blob and
+    // description/requirements are long text, none of which the list renders.
+    // Shipping them per row is what made this table feel slow — the detail
+    // route (GET /job-profiles/:id) is where the editor gets them from.
+    // The page query and the count are independent, so run them together
+    // rather than paying two sequential round-trips to TiDB.
+    const [rows, [cnt]] = await Promise.all([
+      query(
+        `SELECT jp.id, jp.jp_no, jp.title, jp.division, jp.designation,
+                jp.jp_status, jp.jp_completion_pct, jp.status, jp.created_at,
+                d.id AS department_id, d.name AS department_name,
+                (SELECT COUNT(*) FROM job_listings jl WHERE jl.job_profile_id = jp.id AND jl.status IN ('Open','Published')) AS open_vacancies
+         FROM job_profiles jp
+         ${jpJoins}
+         ${whereSql} ORDER BY jp.jp_no LIMIT ? OFFSET ?`,
+        [...params, pageSize, (page - 1) * pageSize]
+      ),
+      query<{ total: number }>(
+        `SELECT COUNT(*) AS total FROM job_profiles jp ${jpJoins} ${whereSql}`, params
+      ),
+    ]);
     res.json({ data: rows, meta: { page, pageSize, total: Number(cnt?.total ?? 0) } });
   } catch (err) { next(err); }
 });
@@ -1205,11 +1397,16 @@ app.get('/api/v1/job-profiles/:id', authRequired, async (req, res, next) => {
     const row = rows[0] as Record<string, unknown> | undefined;
     if (!row) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Job profile not found' } });
     const locations = await query(
+      // Company is not stored on the row: a branch belongs to exactly one
+      // company, so it is joined through rather than duplicated (and able to
+      // drift) on every job-profile location.
       `SELECT jpl.id, jpl.branch_id, jpl.location_id, jpl.positions,
               b.name AS branch_name, b.city AS branch_city,
+              b.company_id, c.name AS company_name,
               l.name AS location_name
        FROM job_profile_locations jpl
        JOIN branches b ON b.id = jpl.branch_id
+       LEFT JOIN hiring_companies c ON c.id = b.company_id
        LEFT JOIN locations l ON l.id = jpl.location_id
        WHERE jpl.job_profile_id = ?
        ORDER BY jpl.sort_order, jpl.created_at`,
@@ -2062,7 +2259,15 @@ app.post('/api/v1/hiring/companies', authRequired, async (req, res, next) => {
 // Interview templates (Step 11)
 app.get('/api/v1/hiring/interview-templates', authRequired, async (_req, res, next) => {
   try {
-    const rows = await query('SELECT * FROM interview_templates ORDER BY created_at');
+    // usage_count lets the master screen block a delete that would silently
+    // unmap the template from live job profiles.
+    const rows = await query(
+      `SELECT t.*,
+              (SELECT COUNT(*) FROM job_profile_interview_templates jpit
+                WHERE jpit.interview_template_id = t.id) AS usage_count
+         FROM interview_templates t
+        ORDER BY t.title`
+    );
     res.json({ data: rows });
   } catch (err) { next(err); }
 });
@@ -4162,16 +4367,15 @@ app.post('/api/v1/attendance/punch', authRequired, async (req, res, next) => {
 // Add holiday
 app.post('/api/v1/holidays', authRequired, async (req, res, next) => {
   try {
-    const { date, name, kind, branchIds } = req.body ?? {};
+    const { date, name, kind, scopes } = req.body ?? {};
     if (!date || !name || !kind) return res.status(400).json({ error: { code: 'VALIDATION', message: 'date, name, kind required' } });
     const id = ulid();
     await query('INSERT INTO holidays (id, date, name, kind) VALUES (?, ?, ?, ?)', [id, date, name, kind]);
-    if (Array.isArray(branchIds) && branchIds.length) {
-      for (const bid of branchIds) {
-        await query('INSERT INTO holiday_branches (holiday_id, branch_id) VALUES (?, ?)', [id, bid]);
-      }
+    // An empty (or absent) set means the holiday applies everywhere.
+    if (Array.isArray(scopes)) {
+      await replaceScopes('holiday_scopes', 'holiday_id', id, scopes as ScopeInput[]);
     }
-    await writeAudit(req.user!.id, 'create', 'holiday', id, null, { date, name, kind, branchIds: branchIds ?? [] });
+    await writeAudit(req.user!.id, 'create', 'holiday', id, null, { date, name, kind, scopes: scopes ?? [] });
     res.status(201).json({ data: { id } });
   } catch (err) { next(err); }
 });
@@ -4179,7 +4383,7 @@ app.post('/api/v1/holidays', authRequired, async (req, res, next) => {
 // Edit holiday
 app.patch('/api/v1/holidays/:id', authRequired, async (req, res, next) => {
   try {
-    const { name, kind, date } = req.body ?? {};
+    const { name, kind, date, scopes } = req.body ?? {};
     const before = await query('SELECT * FROM holidays WHERE id = ? LIMIT 1', [req.params.id]);
     if (name || kind || date) {
       const updates: string[] = [];
@@ -4189,6 +4393,11 @@ app.patch('/api/v1/holidays/:id', authRequired, async (req, res, next) => {
       if (date) { updates.push('date = ?'); vals.push(date); }
       vals.push(req.params.id);
       await query(`UPDATE holidays SET ${updates.join(', ')} WHERE id = ?`, vals);
+    }
+    // Only touched when the caller sends the key — omitting it leaves the
+    // existing applicability alone rather than silently clearing it.
+    if (Array.isArray(scopes)) {
+      await replaceScopes('holiday_scopes', 'holiday_id', req.params.id, scopes as ScopeInput[]);
     }
     const after = await query('SELECT * FROM holidays WHERE id = ? LIMIT 1', [req.params.id]);
     await writeAudit(req.user!.id, 'update', 'holiday', req.params.id, before[0] ?? null, after[0] ?? null);
@@ -4856,6 +5065,10 @@ app.use(errorHandler);
 
 app.listen(port, () => {
   console.log(`[server] listening on http://localhost:${port}`);
+  // Give every role its default grants if nobody has customised them yet, so a
+  // fresh database is governed from the first request rather than falling back
+  // to code defaults on every permission check.
+  seedRolePermissions().catch((e) => console.error('[permissions] seed failed:', e));
   // Arm unattended CK master-data syncs (twice-daily on login + midnight IST).
   initCkSchedule().catch((e) => console.error('[ck-sync] schedule init failed:', e));
 });

@@ -65,7 +65,6 @@ type TrainingModule = { id: string; code: string; name: string; description: str
 type Company = { id: string; ck_id: number | null; lc_no: string; name: string; branch: string | null; city: string | null; location: string | null };
 type InterviewTemplate = { id: string; title: string; description: string | null; image_url: string | null; is_default: number | boolean };
 type GiveawayTemplate = { id: string; name: string; is_default: number | boolean };
-type UserRow = { id: string; email: string; role: string; employee_id: string | null; employee_code?: string | null; first_name?: string | null; last_name?: string | null };
 type Department = { id: string; ck_id: number | null; name: string };
 
 /** True for rows mirrored in from Concept Kitchen's sync — their CK-owned fields are
@@ -1107,51 +1106,6 @@ function OnboardingItemList({ kind }: { kind: 'program' | 'tour' | 'activity' })
         isActive: Boolean(values.isActive),
       })}
       searchKeys={['title', 'category', 'sub_category']}
-    />
-  );
-}
-
-export function UserConsolePage() {
-  const [employees, setEmployees] = useState<Array<{ id: string; code: string; first_name: string; last_name: string }>>([]);
-
-  useEffect(() => {
-    api.get('/employees', { params: { page: 1, pageSize: 1000 } }).then((r) => {
-      const list = Array.isArray(r.data?.data) ? r.data.data : [];
-      setEmployees(list);
-    }).catch(() => setEmployees([]));
-  }, []);
-
-  const employeeOptions = employees.map((employee) => ({ label: `${employee.first_name} ${employee.last_name} (${employee.code})`, value: employee.id }));
-
-  return (
-    <MasterCrudPage<UserRow>
-      title="User Console"
-      subtitle="Manage app users, roles and employee links."
-      endpoint="/users"
-      columns={[
-        { header: 'Email', render: (row) => <Strong>{row.email}</Strong>, sortable: true, sortValue: (row) => row.email },
-        { header: 'Role', render: (row) => row.role },
-        { header: 'Employee', render: (row) => row.employee_code ? `${row.employee_code}` : '—' },
-      ]}
-      buildFields={() => [
-        { name: 'email', label: 'Email', type: 'text', placeholder: 'hr@cknest.local', required: true },
-        { name: 'password', label: 'Password', type: 'text', placeholder: 'Set on create / reset on edit' },
-        { name: 'role', label: 'Role', type: 'select', options: [
-          { label: 'HR Admin', value: 'HR_ADMIN' },
-          { label: 'Manager', value: 'MANAGER' },
-          { label: 'Employee', value: 'EMPLOYEE' },
-          { label: 'Finance', value: 'FINANCE' },
-        ], required: true },
-        { name: 'employeeId', label: 'Employee', type: 'select', options: employeeOptions },
-      ]}
-      rowToValues={(row) => row ? { email: row.email, password: '', role: row.role, employeeId: row.employee_id ?? '' } : { email: '', password: '', role: 'HR_ADMIN', employeeId: '' }}
-      buildPayload={(values) => ({
-        email: values.email,
-        password: values.password || undefined,
-        role: values.role,
-        employeeId: values.employeeId || undefined,
-      })}
-      searchKeys={['email', 'role']}
     />
   );
 }

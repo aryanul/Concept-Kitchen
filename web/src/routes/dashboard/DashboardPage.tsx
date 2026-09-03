@@ -10,6 +10,7 @@ import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
 import { api } from '../../lib/api';
+import { formatRelativeTime } from '../../lib/format';
 import { useAuth, type AuthUser } from '../../stores/auth';
 
 type MeResponse = { data: { user: AuthUser } };
@@ -377,14 +378,6 @@ const ACTION_BG: Record<string, string> = {
   login: 'oklch(0.96 0.04 195)',
   logout: 'oklch(0.96 0.04 60)',
 };
-
-function formatRelativeTime(isoStr: string): string {
-  const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000);
-  if (diff < 5) return 'just now';
-  if (diff < 60) return `${diff}s ago`;
-  if (diff < 120) return '1m ago';
-  return `${Math.floor(diff / 60)}m ago`;
-}
 
 function ActivityRow({ entry }: { entry: ActivityEntry }) {
   const actionColor = ACTION_COLORS[entry.action] ?? 'var(--ck-muted)';
