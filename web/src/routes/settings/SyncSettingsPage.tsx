@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, CheckCircle2, AlertTriangle, Database, Lock } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card } from '../../components/ui/Card';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { Button } from '../../components/ui/Button';
+import { Tabs } from '../../components/ui/Tabs';
+import { StatusPill } from '../../components/ui/StatusPill';
+import { SearchInput, FilterSelect } from '../../components/filters';
 import { api } from '../../lib/api';
 import { useAuth } from '../../stores/auth';
 
@@ -33,26 +36,192 @@ const TABLE_LABELS: Record<string, string> = {
   lookups: 'Specifications (lookups)',
 };
 
+type Row = Record<string, unknown>;
+type ColumnDef = { key: string; label: string; align?: 'right' };
+type DomainDef = { key: string; label: string; columns: ColumnDef[]; hasStatus?: boolean; fetch: () => Promise<Row[]> };
+
+async function getList(url: string, params?: Record<string, unknown>): Promise<Row[]> {
+  try {
+    const r = await api.get<{ data: Row[] }>(url, params ? { params } : undefined);
+    return r.data?.data ?? [];
+  } catch {
+    return [];
+  }
+}
+
+function withStatus(rows: Row[]): Row[] {
+  return rows.map((r) => ({ ...r, status: Number(r.is_active) ? 'Active' : 'Inactive' }));
+}
+
+async function fetchCompanies(): Promise<Row[]> {
+  const pageSize = 100;
+  let page = 1;
+  let all: Row[] = [];
+  for (;;) {
+    try {
+      const r = await api.get<{ data: Row[]; meta?: { total?: number } }>('/hiring/companies', { params: { page, pageSize } });
+      const rows = r.data?.data ?? [];
+      all = all.concat(rows);
+      const total = Number(r.data?.meta?.total ?? all.length);
+      if (rows.length === 0 || all.length >= total) break;
+      page += 1;
+    } catch {
+      break;
+    }
+  }
+  return all;
+}
+
+async function fetchSpecifications(): Promise<Row[]> {
+  try {
+    const r = await api.get<{ data: Array<{ name: string; values?: Array<{ code: string; label: string; ck_id?: number | null }> }> }>(
+      '/lookup-categories',
+      { params: { includeValues: 1 } }
+    );
+    const categories = r.data?.data ?? [];
+    const rows: Row[] = [];
+    for (const cat of categories) {
+      for (const v of cat.values ?? []) {
+        rows.push({
+          category: cat.name,
+          code: v.code,
+          label: v.label,
+          source: v.ck_id != null ? 'Concept Kitchen' : 'Local',
+        });
+      }
+    }
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+const DOMAINS: DomainDef[] = [
+  {
+    key: 'companies', label: 'Companies',
+    columns: [
+      { key: 'ck_id', label: 'CK ID' }, { key: 'lc_no', label: 'LC No.' }, { key: 'name', label: 'Name' },
+      { key: 'city', label: 'City' }, { key: 'branch', label: 'Branch' },
+    ],
+    fetch: fetchCompanies,
+  },
+  {
+    key: 'branches', label: 'Branches',
+    columns: [
+      { key: 'ck_id', label: 'CK ID' }, { key: 'code', label: 'Code' }, { key: 'name', label: 'Name' },
+      { key: 'city', label: 'City' }, { key: 'kind', label: 'Kind' }, { key: 'company_name', label: 'Company' },
+    ],
+    fetch: () => getList('/branches'),
+  },
+  {
+    key: 'locations', label: 'Locations',
+    columns: [
+      { key: 'ck_id', label: 'CK ID' }, { key: 'code', label: 'Code' }, { key: 'name', label: 'Name' },
+      { key: 'city', label: 'City' }, { key: 'state', label: 'State' }, { key: 'branch_name', label: 'Branch' },
+      { key: 'status', label: 'Status' },
+    ],
+    hasStatus: true,
+    fetch: async () => withStatus(await getList('/locations')),
+  },
+  {
+    key: 'departments', label: 'Departments',
+    columns: [{ key: 'ck_id', label: 'CK ID' }, { key: 'name', label: 'Name' }],
+    fetch: () => getList('/departments'),
+  },
+  {
+    key: 'divisions', label: 'Divisions',
+    columns: [
+      { key: 'ck_id', label: 'CK ID' }, { key: 'code', label: 'Code' }, { key: 'name', label: 'Name' },
+      { key: 'department_name', label: 'Department' }, { key: 'status', label: 'Status' },
+    ],
+    hasStatus: true,
+    fetch: async () => withStatus(await getList('/divisions')),
+  },
+  {
+    key: 'designations', label: 'Designations',
+    columns: [
+      { key: 'ck_id', label: 'CK ID' }, { key: 'code', label: 'Code' }, { key: 'name', label: 'Name' },
+      { key: 'department_name', label: 'Department' }, { key: 'division_name', label: 'Division' },
+      { key: 'status', label: 'Status' },
+    ],
+    hasStatus: true,
+    fetch: async () => withStatus(await getList('/designations')),
+  },
+  {
+    key: 'skill-heads', label: 'Skill Heads',
+    columns: [
+      { key: 'ck_id', label: 'CK ID' }, { key: 'name', label: 'Name' },
+      { key: 'skill_type_count', label: 'Skill Types', align: 'right' }, { key: 'status', label: 'Status' },
+    ],
+    hasStatus: true,
+    fetch: async () => withStatus(await getList('/skill-heads')),
+  },
+  {
+    key: 'skill-types', label: 'Skill Types',
+    columns: [
+      { key: 'ck_id', label: 'CK ID' }, { key: 'name', label: 'Name' }, { key: 'skill_head_name', label: 'Skill Head' },
+      { key: 'skill_count', label: 'Skills', align: 'right' }, { key: 'status', label: 'Status' },
+    ],
+    hasStatus: true,
+    fetch: async () => withStatus(await getList('/skill-types')),
+  },
+  {
+    key: 'skills', label: 'Skills',
+    columns: [
+      { key: 'ck_id', label: 'CK ID' }, { key: 'code', label: 'Code' }, { key: 'name', label: 'Name' },
+      { key: 'skill_head_name', label: 'Skill Head' }, { key: 'skill_type_name', label: 'Skill Type' },
+      { key: 'status', label: 'Status' },
+    ],
+    hasStatus: true,
+    fetch: async () => withStatus(await getList('/skills')),
+  },
+  {
+    key: 'specifications', label: 'Specifications',
+    columns: [
+      { key: 'category', label: 'Category' }, { key: 'code', label: 'Code' }, { key: 'label', label: 'Label' },
+      { key: 'source', label: 'Source' },
+    ],
+    fetch: fetchSpecifications,
+  },
+];
+
 export function SyncSettingsPage() {
   const role = useAuth((s) => s.user?.role);
   const isAdmin = role === 'HR_ADMIN';
 
   const [configured, setConfigured] = useState(true);
-  const [counts, setCounts] = useState<Record<string, number>>({});
   const [syncing, setSyncing] = useState(false);
   const [summary, setSummary] = useState<SyncSummary | null>(null);
+
+  const [tabData, setTabData] = useState<Record<string, Row[]>>(() => Object.fromEntries(DOMAINS.map((d) => [d.key, []])));
+  const [tabsLoading, setTabsLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState(DOMAINS[0].key);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
 
   const loadStatus = useCallback(async () => {
     try {
       const r = await api.get<StatusResponse>('/ck/status');
       setConfigured(r.data.data.configured);
-      setCounts(r.data.data.counts);
     } catch {
       /* status is best-effort */
     }
   }, []);
 
-  useEffect(() => { loadStatus(); }, [loadStatus]);
+  const loadTabData = useCallback(async () => {
+    setTabsLoading(true);
+    const results = await Promise.all(DOMAINS.map((d) => d.fetch()));
+    setTabData(Object.fromEntries(DOMAINS.map((d, i) => [d.key, results[i]])));
+    setTabsLoading(false);
+  }, []);
+
+  useEffect(() => { loadStatus(); loadTabData(); }, [loadStatus, loadTabData]);
+
+  function changeTab(key: string) {
+    setActiveTab(key);
+    setSearch('');
+    setStatusFilter('');
+  }
 
   async function handleResync() {
     setSyncing(true);
@@ -68,6 +237,7 @@ export function SyncSettingsPage() {
         toast.warning(`Synced with ${s.errors.length} issue(s) — ${totalIn} added, ${totalUp} updated`);
       }
       loadStatus();
+      loadTabData();
     } catch (err) {
       const e = err as { response?: { status?: number; data?: { error?: { message?: string } } } };
       if (e.response?.status === 503) {
@@ -88,6 +258,17 @@ export function SyncSettingsPage() {
     fontSize: 11, fontWeight: 600, color: 'var(--ck-faint)',
     textTransform: 'uppercase', letterSpacing: '0.04em',
   };
+
+  const activeDomain = DOMAINS.find((d) => d.key === activeTab) ?? DOMAINS[0];
+  const rows = useMemo(() => tabData[activeTab] ?? [], [tabData, activeTab]);
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (statusFilter && String(row.status ?? '') !== statusFilter) return false;
+      if (!q) return true;
+      return activeDomain.columns.some((c) => String(row[c.key] ?? '').toLowerCase().includes(q));
+    });
+  }, [rows, search, statusFilter, activeDomain]);
 
   return (
     <div>
@@ -133,7 +314,7 @@ export function SyncSettingsPage() {
       {!isAdmin && (
         <Card style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', fontSize: 13, color: 'var(--ck-muted)' }}>
-            <Lock size={16} /> Only HR Admins can trigger a sync. You can view current coverage below.
+            <Lock size={16} /> Only HR Admins can trigger a sync. You can browse current coverage below.
           </div>
         </Card>
       )}
@@ -151,23 +332,86 @@ export function SyncSettingsPage() {
         </div>
       </Card>
 
-      {/* Coverage counts */}
+      {/* Browsable coverage, segregated by domain with search + status filtering */}
+      <Tabs
+        tabs={DOMAINS.map((d) => ({ key: d.key, label: d.label, count: tabData[d.key]?.length ?? 0 }))}
+        active={activeTab}
+        onChange={changeTab}
+      />
       <Card padding={0} style={{ marginBottom: 16 }}>
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--ck-line)' }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--ck-ink)' }}>Current coverage</span>
-          <span style={{ fontSize: 12.5, color: 'var(--ck-muted)', marginLeft: 8 }}>
-            rows currently linked to Concept Kitchen
-          </span>
+        <div
+          style={{
+            display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center',
+            padding: '14px 20px', borderBottom: '1px solid var(--ck-line)', background: 'var(--ck-surface-alt)',
+          }}
+        >
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder={`Search ${activeDomain.label.toLowerCase()}…`}
+            showButton={false}
+            width={260}
+          />
+          {activeDomain.hasStatus && (
+            <FilterSelect
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[{ label: 'Active', value: 'Active' }, { label: 'Inactive', value: 'Inactive' }]}
+              placeholder="All Statuses"
+              minWidth={150}
+            />
+          )}
+          <div style={{ marginLeft: 'auto', fontSize: 12.5, color: 'var(--ck-muted)' }}>
+            {tabsLoading ? 'Loading…' : `${filteredRows.length.toLocaleString('en-IN')} of ${rows.length.toLocaleString('en-IN')} rows`}
+          </div>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 1, background: 'var(--ck-line-soft)' }}>
-          {Object.entries(TABLE_LABELS).map(([key, label]) => (
-            <div key={key} style={{ background: 'var(--ck-surface)', padding: '14px 18px' }}>
-              <div style={labelStyle}>{label}</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--ck-ink)', marginTop: 4 }}>
-                {counts[key] ?? 0}
-              </div>
-            </div>
-          ))}
+
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: 'var(--ck-bg)', textAlign: 'left' }}>
+                {activeDomain.columns.map((c) => (
+                  <th
+                    key={c.key}
+                    style={{
+                      padding: '10px 16px', fontSize: 11.5, fontWeight: 600, color: 'var(--ck-muted)',
+                      letterSpacing: '0.04em', textAlign: c.align ?? 'left',
+                    }}
+                  >
+                    {c.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {!tabsLoading && filteredRows.length === 0 && (
+                <tr>
+                  <td colSpan={activeDomain.columns.length} style={{ padding: 48, textAlign: 'center', color: 'var(--ck-muted)' }}>
+                    No records found.
+                  </td>
+                </tr>
+              )}
+              {filteredRows.map((row, i) => (
+                <tr
+                  key={i}
+                  style={{ borderTop: '1px solid var(--ck-line)' }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--ck-surface-alt)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = '')}
+                >
+                  {activeDomain.columns.map((c) => (
+                    <td
+                      key={c.key}
+                      style={{ padding: '10px 16px', verticalAlign: 'middle', textAlign: c.align ?? 'left', color: 'var(--ck-ink-soft)' }}
+                    >
+                      {c.key === 'status'
+                        ? <StatusPill status={String(row.status ?? 'Inactive')} />
+                        : (row[c.key] == null || row[c.key] === '' ? '—' : String(row[c.key]))}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </Card>
 
@@ -195,7 +439,7 @@ export function SyncSettingsPage() {
               <tbody>
                 {Object.entries(summary.stats).map(([key, s]) => (
                   <tr key={key}>
-                    <td style={{ padding: '9px 20px', borderBottom: '1px solid var(--ck-line-soft)', fontSize: 13, color: 'var(--ck-ink)' }}>{key}</td>
+                    <td style={{ padding: '9px 20px', borderBottom: '1px solid var(--ck-line-soft)', fontSize: 13, color: 'var(--ck-ink)' }}>{TABLE_LABELS[key] ?? key}</td>
                     <td style={{ padding: '9px 20px', borderBottom: '1px solid var(--ck-line-soft)', fontSize: 13, textAlign: 'right', color: s.inserted ? 'var(--ck-success, #16a34a)' : 'var(--ck-muted)', fontWeight: s.inserted ? 600 : 400 }}>{s.inserted}</td>
                     <td style={{ padding: '9px 20px', borderBottom: '1px solid var(--ck-line-soft)', fontSize: 13, textAlign: 'right', color: 'var(--ck-ink-soft)' }}>{s.updated}</td>
                   </tr>
